@@ -1,158 +1,412 @@
-/* server.js — RabbitLoader “connect” flow (Laravel-equivalent) */
+// app.js - RabbitLoader Shopify App (Full RL Console First)
+require('dotenv').config();
 
 const express = require('express');
-const morgan = require('morgan');
+const axios = require('axios');
+const bodyParser = require('body-parser');
+const cookieParser = require('cookie-parser');
+const mongoose = require("mongoose");
 
 const app = express();
-app.use(express.json());
-app.use(morgan('tiny'));
-
-/**
- * Minimal persistence (replace with Mongo/Redis/DB)
- * Map key: shop (myshopify host). Value: { short_id, rabbit_api_res }
- */
-const store = new Map();
-
-/** Env */
 const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
-// This must match your Shopify app handle (as it appears at /admin/apps/<handle>)
-const SHOPIFY_APP_HANDLE = process.env.SHOPIFY_APP_HANDLE || 'rabbitloader-1';
 
-/** Utils */
-function assertShop(host) {
-  if (!host || !/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(host)) {
-    const e = new Error('Invalid or missing ?shop=<your-shop>.myshopify.com');
-    e.status = 400;
-    throw e;
+// MongoDB Connection
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+});
+
+// Define schema
+const ShopSchema = new mongoose.Schema({
+  shop: { type: String, unique: true },
+  access_token: String,
+  short_id: String,    // RabbitLoader DID
+  api_token: String,   // RL API token
+  connected_at: Date,
+  history: Array
+});
+
+const ShopModel = mongoose.model("Shop", ShopSchema);
+
+// Shopify Config
+const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
+const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
+const SHOPIFY_SCOPES = 'read_themes,write_themes';
+const APP_URL = process.env.APP_URL;
+
+// RabbitLoader Config
+const SHOPIFY_PLATFORM_VERSION = '2023-10';
+const RABBITLOADER_PLUGIN_VERSION = '1.0.0';
+
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// ---------------- Helper Functions ----------------
+async function getShopInfo(shop, accessToken) {
+  try {
+    const response = await axios.get(`https://${shop}/admin/api/2023-04/shop.json`, {
+      headers: { 'X-Shopify-Access-Token': accessToken }
+    });
+    return response.data.shop;
+  } catch (error) {
+    console.error('❌ Error fetching shop info:', error?.response?.data || error.message);
+    return null;
   }
 }
 
-/** Robust base64 decode for rl-token (handles +/space issues) */
-function decodeRlToken(b64) {
-  if (!b64) throw new Error('Empty rl-token');
-  const fixed = b64.replace(/ /g, '+'); // guard against + turned into spaces
-  const json = Buffer.from(fixed, 'base64').toString('utf8');
-  return JSON.parse(json);
+async function logEvent(shop, type, message) {
+  try {
+    const historyItem = {
+      type,
+      message,
+      timestamp: new Date().toISOString()
+    };
+    
+    await ShopModel.updateOne(
+      { shop },
+      { 
+        $push: { 
+          history: { 
+            $each: [historyItem], 
+            $position: 0, 
+            $slice: 5 
+          } 
+        } 
+      },
+      { upsert: true }
+    );
+  } catch (error) {
+    console.error('Error logging event:', error);
+  }
 }
 
-/**
- * HOME — also the RL callback target.
- * RL will redirect back to this route (your app’s home in Admin) with ?rl-token=...
- * We also require ?shop=... so we can key storage.
- */
-app.get('/', async (req, res) => {
+// ---------------- Shopify OAuth ----------------
+app.get('/shopify/auth', (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  if (!shop) {
+    return res.type('html').send(`
+      <div style="font-family:sans-serif;margin:2rem;text-align:center">
+        <h2>🔗 Connect Your Shopify Store</h2>
+        <p>Please provide your shop URL:</p>
+        <form method="GET" action="/shopify/auth">
+          <input type="text" name="shop" placeholder="yourstore.myshopify.com" style="padding:10px;margin:10px;width:300px">
+          <button type="submit" style="padding:10px 20px;background:#0066cc;color:white;border:none;cursor:pointer">Connect</button>
+        </form>
+      </div>
+    `);
+  }
+  
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(shop)) {
+    return res.status(400).send('Invalid shop format. Please use: yourstore.myshopify.com');
+  }
+
+  const redirectUri = `${APP_URL}/shopify/auth/callback`;
+  const installUrl =
+    `https://${shop}/admin/oauth/authorize` +
+    `?client_id=${encodeURIComponent(SHOPIFY_API_KEY)}` +
+    `&scope=${encodeURIComponent(SHOPIFY_SCOPES)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}`;
+
+  res.redirect(installUrl);
+});
+
+app.get('/shopify/auth/callback', async (req, res) => {
+  const { shop, code } = req.query;
+  if (!shop || !code) return res.status(400).send('Missing shop or code');
+
   try {
-    const shop = String(req.query.shop || '').trim();
-    assertShop(shop);
+    const tokenRes = await axios.post(`https://${shop}/admin/oauth/access_token`, {
+      client_id: SHOPIFY_API_KEY,
+      client_secret: SHOPIFY_API_SECRET,
+      code,
+    });
 
-    const rlToken = req.query['rl-token'];
+    await ShopModel.updateOne(
+      { shop },
+      { $set: { access_token: tokenRes.data.access_token } },
+      { upsert: true }
+    );
 
-    if (rlToken) {
-      // Decode & persist
-      const payload = decodeRlToken(String(rlToken));
-      if (!payload.did) {
-        return res.status(400).send('Invalid rl-token: missing "did"');
-      }
-
-      store.set(shop, {
-        short_id: payload.did,
-        rabbit_api_res: payload, // keep full decoded payload
-      });
-
-      // In Laravel they also update a Shopify metafield with short_id — you can do that here too.
-      // await writeShopMetafield(shop, 'rabbitloader.short_id', payload.did)
-
-      return res
-        .status(200)
-        .send(
-          `<h1>RabbitLoader Connected</h1>
-           <p>Shop: ${shop}</p>
-           <p>Short ID (did): ${payload.did}</p>
-           <pre>${escapeHtml(JSON.stringify(payload, null, 2))}</pre>`
-        );
-    }
-
-    // No rl-token — show current status and a connect link
-    const rec = store.get(shop);
-    const connected = Boolean(rec?.short_id);
-
-    res
-      .status(200)
-      .send(
-        `<h1>RabbitLoader ${connected ? 'is connected' : 'not connected'}</h1>
-         <p>Shop: ${shop}</p>
-         ${
-           connected
-             ? `<p>Short ID: ${rec.short_id}</p>`
-             : `<a href="/connect-rabbitloader?shop=${encodeURIComponent(
-                 shop
-               )}">Connect RabbitLoader</a>`
-         }`
-      );
+    logEvent(shop, "auth", "Shopify OAuth completed");
+    console.log(`✅ Shopify OAuth success for ${shop}`);
+    res.redirect(`/?shop=${encodeURIComponent(shop)}`);
   } catch (err) {
-    res.status(err.status || 500).send(err.message || 'Error');
+    console.error('OAuth error:', err?.response?.data || err.message);
+    res.status(500).send('Shopify OAuth failed');
   }
 });
 
-/**
- * CONNECT → build the exact RL URL and redirect the merchant.
- * Mirrors the Laravel logic:
- *   - site_url = storefront base (we use https://<shop> as a safe default)
- *   - redirect_url = https://<shop>/admin/apps/<handle>?  (note the trailing '?')
- */
-app.get('/connect-rabbitloader', (req, res) => {
-  try {
-    const shop = String(req.query.shop || '').trim();
-    assertShop(shop);
+// ---------------- RabbitLoader Connect (redirect to RL Console) ----------------
+app.get('/connect-rabbitloader', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const rec = await ShopModel.findOne({ shop });
 
-    // If you have the real storefront domain, use that. Fallback to myshopify.
-    const siteUrl = req.query.site_url
-      ? String(req.query.site_url)
+  if (!shop || !rec?.access_token) {
+    return res.status(400).send('Missing shop or Shopify access token');
+  }
+
+  try {
+    const shopInfo = await getShopInfo(shop, rec.access_token);
+    if (!shopInfo) return res.status(500).send('Could not fetch shop info');
+
+    const siteUrl = shopInfo.primary_domain
+      ? `https://${shopInfo.primary_domain.host}`
       : `https://${shop}`;
 
-    // This must be the ADMIN app URL on the myshopify host, and MUST end with '?'.
-    const redirectBackToAdmin = `https://${shop}/admin/apps/${SHOPIFY_APP_HANDLE}?`;
+    const redirectUrl = `${APP_URL}/?shop=${encodeURIComponent(shop)}`;
 
-    // Build RL URL (encode params ONCE)
-    const rl = new URL('https://rabbitloader.com/account/');
-    rl.searchParams.set('source', 'shopify');
-    rl.searchParams.set('action', 'connect');
-    rl.searchParams.set('site_url', siteUrl);
-    rl.searchParams.set('redirect_url', redirectBackToAdmin);
-    rl.searchParams.set('cms_v', '2023-10');
-    rl.searchParams.set('plugin_v', '1.0.0');
+    const rlUrl =
+      `https://rabbitloader.com/account/` +
+      `?source=shopify&action=connect` +
+      `&site_url=${encodeURIComponent(siteUrl)}` +
+      `&redirect_url=${encodeURIComponent(redirectUrl)}` +
+      `&cms_v=${SHOPIFY_PLATFORM_VERSION}` +
+      `&plugin_v=${RABBITLOADER_PLUGIN_VERSION}`;
 
-    return res.redirect(302, rl.toString());
-  } catch (err) {
-    res.status(err.status || 500).send(err.message || 'Error');
+    console.log(`🔗 Redirecting ${shop} to RabbitLoader Console`);
+    res.redirect(302, rlUrl);
+  } catch (error) {
+    console.error('❌ Error in connect:', error);
+    res.status(500).send('RabbitLoader connect failed');
   }
 });
 
-/** Status endpoint to inspect what we saved */
-app.get('/debug/rabbitloader', (req, res) => {
+// ---------------- Script Injection ----------------
+app.get('/inject-script', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const rec = await ShopModel.findOne({ shop });
+  if (!rec?.short_id) return res.status(400).send('RabbitLoader not connected');
+
   try {
-    const shop = String(req.query.shop || '').trim();
-    assertShop(shop);
-    const rec = store.get(shop) || null;
-    res.json({ shop, record: rec });
+    const themeRes = await axios.get(`https://${shop}/admin/api/2023-04/themes.json`, {
+      headers: { 'X-Shopify-Access-Token': rec.access_token },
+    });
+    const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
+    if (!activeTheme) return res.status(500).send('No active theme found');
+
+    const layoutRes = await axios.get(
+      `https://${shop}/admin/api/2023-04/themes/${activeTheme.id}/assets.json`,
+      { params: { 'asset[key]': 'layout/theme.liquid' },
+        headers: { 'X-Shopify-Access-Token': rec.access_token } }
+    );
+    let content = layoutRes.data.asset?.value || '';
+
+    const newScriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+    if (!content.includes(newScriptTag)) {
+      if (content.includes('</head>')) {
+        content = content.replace('</head>', `  ${newScriptTag}\n</head>`);
+      } else {
+        content = newScriptTag + '\n' + content;
+      }
+      await axios.put(
+        `https://${shop}/admin/api/2023-04/themes/${activeTheme.id}/assets.json`,
+        { asset: { key: 'layout/theme.liquid', value: content } },
+        { headers: { 'X-Shopify-Access-Token': rec.access_token } }
+      );
+      logEvent(shop, "inject", `Injected script for DID ${rec.short_id}`);
+      return res.send(`✅ Script injected with DID ${rec.short_id}`);
+    }
+
+    res.send("ℹ️ Script already present.");
   } catch (err) {
-    res.status(err.status || 500).json({ error: err.message || 'Error' });
+    console.error('Injection failed:', err?.response?.data || err.message);
+    res.status(500).send('Script injection failed');
   }
 });
 
-/** Helpers */
-function escapeHtml(s) {
-  return s
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;');
-}
+// ---------------- Revert Script ----------------
+app.get('/revert-script', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const rec = await ShopModel.findOne({ shop });
+  if (!rec?.access_token || !rec?.short_id) return res.status(400).send('Shop not authenticated or not connected');
 
-/** Start */
+  try {
+    const themeRes = await axios.get(`https://${shop}/admin/api/2023-04/themes.json`, {
+      headers: { 'X-Shopify-Access-Token': rec.access_token },
+    });
+    const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
+    if (!activeTheme) return res.status(500).send('No active theme found');
+
+    const layoutRes = await axios.get(
+      `https://${shop}/admin/api/2023-04/themes/${activeTheme.id}/assets.json`,
+      { params: { 'asset[key]': 'layout/theme.liquid' },
+        headers: { 'X-Shopify-Access-Token': rec.access_token } }
+    );
+    let content = layoutRes.data.asset?.value || '';
+
+    const scriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+    if (content.includes(scriptTag)) {
+      content = content.replace(scriptTag, '');
+      await axios.put(
+        `https://${shop}/admin/api/2023-04/themes/${activeTheme.id}/assets.json`,
+        { asset: { key: 'layout/theme.liquid', value: content } },
+        { headers: { 'X-Shopify-Access-Token': rec.access_token } }
+      );
+      logEvent(shop, "revert", `Removed script for DID ${rec.short_id}`);
+      return res.send(`🗑️ Script removed for DID ${rec.short_id}`);
+    }
+
+    res.send("ℹ️ No RabbitLoader script found.");
+  } catch (err) {
+    console.error('Revert failed:', err?.response?.data || err.message);
+    res.status(500).send('Failed to revert script');
+  }
+});
+
+// ---------------- Disconnect RabbitLoader ----------------
+app.get('/disconnect-rabbitloader', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const rec = await ShopModel.findOne({ shop });
+  if (!rec?.access_token) return res.status(400).send('Shop not authenticated');
+
+  try {
+    if (rec.short_id) {
+      const themeRes = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes.json`, {
+        headers: { 'X-Shopify-Access-Token': rec.access_token },
+      });
+      const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
+      if (activeTheme) {
+        const layoutRes = await axios.get(
+          `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+          { params: { 'asset[key]': 'layout/theme.liquid' },
+            headers: { 'X-Shopify-Access-Token': rec.access_token } }
+        );
+        let content = layoutRes.data.asset?.value || '';
+        const scriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+        if (content.includes(scriptTag)) {
+          content = content.replace(scriptTag, '');
+          await axios.put(
+            `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+            { asset: { key: 'layout/theme.liquid', value: content } },
+            { headers: { 'X-Shopify-Access-Token': rec.access_token } }
+          );
+        }
+      }
+    }
+
+    logEvent(shop, "disconnect", `Disconnected RabbitLoader (removed DID ${rec.short_id})`);
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $set: {
+          short_id: null,
+          api_token: null,
+          connected_at: null
+        }
+      }
+    );
+
+    res.redirect(`/?shop=${encodeURIComponent(shop)}&disconnected=true`);
+  } catch (err) {
+    console.error('❌ Disconnect failed:', err?.response?.data || err.message);
+    res.status(500).send('Failed to disconnect RabbitLoader');
+  }
+});
+
+// ---------------- Webhooks ----------------
+app.post('/webhooks/app/uninstalled', async (req, res) => {
+  const shop = req.headers['x-shopify-shop-domain'];
+  await ShopModel.deleteOne({ shop });
+  console.log(`🗑️ Shop ${shop} uninstalled, record deleted`);
+  res.sendStatus(200);
+});
+
+// ---------------- Main App UI ----------------
+app.get('/', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const rlToken = req.query['rl-token'];
+  const connected = req.query.connected;
+  const disconnected = req.query.disconnected;
+
+  if (!shop) {
+    return res.redirect('/shopify/auth');
+  }
+
+  const rec = await ShopModel.findOne({ shop });
+  if (!rec?.access_token) {
+    return res.redirect(`/shopify/auth?shop=${encodeURIComponent(shop)}`);
+  }
+
+  // RL returned token after console connect
+  if (rlToken) {
+    try {
+      const decoded = Buffer.from(rlToken, 'base64').toString('utf8');
+      const tokenData = JSON.parse(decoded);
+      if (tokenData.did) {
+        await ShopModel.updateOne(
+          { shop },
+          { $set: { short_id: tokenData.did, api_token: tokenData.api_token || null, connected_at: new Date() } },
+          { upsert: true }
+        );
+        logEvent(shop, "connect", `Connected with DID ${tokenData.did}`);
+        console.log(`✅ RabbitLoader connected for ${shop} with DID ${tokenData.did}`);
+        return res.redirect(`/?shop=${encodeURIComponent(shop)}&connected=true`);
+      }
+    } catch (err) {
+      console.warn('⚠️ Invalid rl-token format, will fallback to API');
+    }
+  }
+
+  // fallback: fetch RL token from API
+  const shopInfo = await getShopInfo(shop, rec.access_token);
+  const siteUrl = shopInfo?.primary_domain?.host
+    ? `https://${shopInfo.primary_domain.host}`
+    : `https://${shop}`;
+
+  const rlData = await fetchRLToken(siteUrl);
+  if (rlData?.did) {
+    await ShopModel.updateOne(
+      { shop },
+      { $set: { short_id: rlData.did, api_token: rlData.api_token || null, connected_at: new Date() } },
+      { upsert: true }
+    );
+    logEvent(shop, "connect", `Connected with DID ${rlData.did}`);
+    console.log(`✅ RabbitLoader connected for ${shop} with DID ${rlData.did}`);
+    // Update rec for UI display
+    rec.short_id = rlData.did;
+  }
+
+  const isRLConnected = !!rec?.short_id;
+  res.type('html').send(`
+    <div style="font-family:sans-serif;margin:2rem;max-width:800px">
+      <h1>🚀 RabbitLoader for Shopify</h1>
+      <p><strong>Store:</strong> ${shop}</p>
+      <p><strong>Shopify Connected:</strong> ✅</p>
+      <p><strong>RabbitLoader Connected:</strong> ${isRLConnected ? '✅' : '❌'}</p>
+      ${connected === 'true' ? `<div style="background:#d1ecf1;padding:1rem">🎉 Just connected!</div>` : ''}
+      ${disconnected === 'true' ? `<div style="background:#f8d7da;padding:1rem">🔌 Disconnected from RabbitLoader.</div>` : ''}
+      ${!isRLConnected ? `
+        <a href="/connect-rabbitloader?shop=${encodeURIComponent(shop)}"
+           style="background:#0066cc;color:white;padding:15px 30px;text-decoration:none;border-radius:6px;font-weight:bold">
+          🔗 Activate RabbitLoader
+        </a>` : `
+        <div style="background:#d4edda;padding:2rem;border-radius:8px">
+          <h2>✅ RabbitLoader Active!</h2>
+          <p><strong>DID:</strong> <code>${rec.short_id}</code></p>
+          <div style="margin-top:1.5rem">
+            <a href="/inject-script?shop=${encodeURIComponent(shop)}"
+               style="background:#28a745;color:white;padding:12px 24px;border-radius:4px;margin-right:10px;display:inline-block">
+              🔧 Inject Script
+            </a>
+            <a href="/revert-script?shop=${encodeURIComponent(shop)}"
+               style="background:#ffc107;color:black;padding:12px 24px;border-radius:4px;margin-right:10px;display:inline-block">
+              🗑️ Revert Script
+            </a>
+            <a href="/disconnect-rabbitloader?shop=${encodeURIComponent(shop)}"
+               onclick="return confirm('⚠️ Are you sure you want to disconnect RabbitLoader?');"
+               style="background:#dc3545;color:white;padding:12px 24px;border-radius:4px;display:inline-block">
+              🔌 Disconnect RabbitLoader
+            </a>
+          </div>
+        </div>
+      `}
+    </div>
+  `);
+});
+
 app.listen(PORT, () => {
-  console.log(`Server on ${BASE_URL}`);
-  console.log(
-    `Visit: ${BASE_URL}/?shop=<your-shop>.myshopify.com  (or /connect-rabbitloader?shop=...)`
-  );
+  console.log(`🚀 Running on port ${PORT}`);
+  console.log(`📱 App URL: ${APP_URL}`);
+  console.log(`🔗 OAuth: ${APP_URL}/shopify/auth/callback`);
 });

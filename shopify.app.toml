@@ -3,14 +3,13 @@
 client_id = "09d41e81fb0d15dd76bc6586d4f9ddd2"
 name = "RL2"
 handle = "rl2"
-application_url = "https://dd85e436536c.ngrok-free.app/"
+application_url = "https://4f257cfaf684.ngrok-free.app/"
 embedded = true
 
 [webhooks]
 api_version = "2025-07"
 
 [auth]
-redirect_urls = [ "https://dd85e436536c.ngrok-free.app/shopify/auth/callback" ]
-
+redirect_urls = [ "https://4f257cfaf684.ngrok-free.app/shopify/auth/callback" ]
 [pos]
 embedded = false
