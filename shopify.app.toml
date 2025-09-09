@@ -11,5 +11,6 @@ api_version = "2024-01"
 
 [auth]
 redirect_urls = [ "https://shopify.rb8.in/shopify/auth/callback" ]
+
 [pos]
-embedded = false
+embedded = true
