@@ -479,42 +479,15 @@ app.get('/', async (req, res) => {
   }
 
   const isRLConnected = !!rec?.short_id;
-  res.type('html').send(`
-    <div style="font-family:sans-serif;margin:2rem;max-width:800px">
-      <h1>🚀 RabbitLoader for Shopify</h1>
-      <p><strong>Store:</strong> ${shop}</p>
-      <p><strong>Shopify Connected:</strong> ✅</p>
-      <p><strong>RabbitLoader Connected:</strong> ${isRLConnected ? '✅' : '❌'}</p>
-      ${connected === 'true' ? `<div style="background:#d1ecf1;padding:1rem">🎉 Just connected!</div>` : ''}
-      ${disconnected === 'true' ? `<div style="background:#f8d7da;padding:1rem">🔌 Disconnected from RabbitLoader.</div>` : ''}
-      ${!isRLConnected ? `
-        <a href="/connect-rabbitloader?shop=${encodeURIComponent(shop)}"
-           style="background:#0066cc;color:white;padding:15px 30px;text-decoration:none;border-radius:6px;font-weight:bold">
-          🔗 Activate RabbitLoader
-        </a>` : `
-        <div style="background:#d4edda;padding:2rem;border-radius:8px">
-          <h2>✅ RabbitLoader Active!</h2>
-          <p><strong>DID:</strong> <code>${rec.short_id}</code></p>
-          <div style="margin-top:1.5rem">
-            <a href="/inject-script?shop=${encodeURIComponent(shop)}"
-               style="background:#28a745;color:white;padding:12px 24px;border-radius:4px;margin-right:10px;display:inline-block">
-              🔧 Inject Script
-            </a>
-            <a href="/revert-script?shop=${encodeURIComponent(shop)}"
-               style="background:#ffc107;color:black;padding:12px 24px;border-radius:4px;margin-right:10px;display:inline-block">
-              🗑️ Revert Script
-            </a>
-            <a href="/disconnect-rabbitloader?shop=${encodeURIComponent(shop)}"
-               onclick="return confirm('⚠️ Are you sure you want to disconnect RabbitLoader?');"
-               style="background:#dc3545;color:white;padding:12px 24px;border-radius:4px;display:inline-block">
-              🔌 Disconnect RabbitLoader
-            </a>
-          </div>
-        </div>
-      `}
-      <script src="/script.js?v=${Date.now()}"></script>
-    </div>
-  `);
+  
+  // Serve the appropriate HTML file based on connection status
+  if (isRLConnected) {
+    // Serve dashboard.html for connected users
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  } else {
+    // Serve index.html for non-connected users  
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  }
 });
 
 app.listen(PORT, () => {
