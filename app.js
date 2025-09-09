@@ -49,6 +49,7 @@ app.use((req, res, next) => {
     "Content-Security-Policy",
     "frame-ancestors https://admin.shopify.com https://*.myshopify.com"
   );
+  res.setHeader('X-Frame-Options', 'ALLOWALL');
   next();
 });
 

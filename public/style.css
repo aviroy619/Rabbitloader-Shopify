@@ -523,3 +523,21 @@ body {
         margin: 4px 0;
     }
 }
+#disconnectedState {
+    display: block !important;
+}
+
+.disconnected-section {
+    text-align: center;
+    padding: 2rem;
+}
+
+.btn.btn-primary {
+    display: inline-block !important;
+    background: #007cba;
+    color: white;
+    padding: 12px 24px;
+    text-decoration: none;
+    border-radius: 4px;
+    font-weight: bold;
+}

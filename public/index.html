@@ -5,6 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RabbitLoader - Shopify Dashboard</title>
     <link rel="stylesheet" href="style.css">
+    <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
+    <script>
+        // Initialize Shopify App Bridge for embedded app
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.top !== window.self) {
+                // We're in an iframe (embedded)
+                const AppBridge = window['app-bridge'];
+                const createApp = AppBridge.createApp;
+                
+                const app = createApp({
+                    apiKey: '09d41e81fb0d15dd76bc6586d4f9ddd2',
+                    host: new URLSearchParams(window.location.search).get('host')
+                });
+                
+                console.log('Shopify App Bridge initialized');
+            } else {
+                console.log('Not running in embedded mode');
+            }
+        });
+    </script>
 </head>
 <body>
     <!-- Loading State -->
