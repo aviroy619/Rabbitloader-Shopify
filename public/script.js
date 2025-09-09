@@ -142,11 +142,26 @@ class Dashboard {
 
     // Show disconnected state (connect flow)
     showDisconnectedState() {
+        console.log('showDisconnectedState called');
         const disconnectedState = document.getElementById('disconnectedState');
         const connectedState = document.getElementById('connectedState');
         
-        if (disconnectedState) disconnectedState.style.display = 'block';
-        if (connectedState) connectedState.style.display = 'none';
+        console.log('disconnectedState element:', disconnectedState);
+        console.log('connectedState element:', connectedState);
+        
+        if (disconnectedState) {
+            disconnectedState.style.display = 'block';
+            console.log('Set disconnectedState to block');
+        } else {
+            console.error('disconnectedState element not found!');
+        }
+        
+        if (connectedState) {
+            connectedState.style.display = 'none';
+            console.log('Set connectedState to none');
+        } else {
+            console.log('connectedState element not found (this is ok)');
+        }
     }
 
     // Show connected state (dashboard)
