@@ -10,11 +10,14 @@ const mongoose = require("mongoose");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// MongoDB Connection
+// MongoDB Connection with proper logging
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 });
+
+mongoose.connection.on('connected', () => console.log('✅ MongoDB connected'));
+mongoose.connection.on('error', err => console.error('❌ MongoDB error:', err));
 
 // Define schema
 const ShopSchema = new mongoose.Schema({
@@ -32,6 +35,7 @@ const ShopModel = mongoose.model("Shop", ShopSchema);
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SHOPIFY_SCOPES = 'read_themes,write_themes';
+const SHOPIFY_API_VERSION = '2023-04';
 const APP_URL = process.env.APP_URL;
 
 // RabbitLoader Config
@@ -45,12 +49,36 @@ app.use(cookieParser());
 // ---------------- Helper Functions ----------------
 async function getShopInfo(shop, accessToken) {
   try {
-    const response = await axios.get(`https://${shop}/admin/api/2023-04/shop.json`, {
+    const response = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/shop.json`, {
       headers: { 'X-Shopify-Access-Token': accessToken }
     });
     return response.data.shop;
   } catch (error) {
-    console.error('❌ Error fetching shop info:', error?.response?.data || error.message);
+    console.error('❌ Error fetching shop info:', {
+      status: error?.response?.status,
+      data: error?.response?.data,
+      message: error.message
+    });
+    return null;
+  }
+}
+
+async function fetchRLToken(siteUrl) {
+  try {
+    // Replace with your actual RabbitLoader API endpoint
+    const response = await axios.get(`https://api.rabbitloader.com/get-token`, {
+      params: { site_url: siteUrl },
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    return response.data;
+  } catch (error) {
+    console.error('❌ Error fetching RL token:', {
+      status: error?.response?.status,
+      data: error?.response?.data,
+      message: error.message
+    });
     return null;
   }
 }
@@ -77,7 +105,7 @@ async function logEvent(shop, type, message) {
       { upsert: true }
     );
   } catch (error) {
-    console.error('Error logging event:', error);
+    console.error('❌ Error logging event:', error);
   }
 }
 
@@ -128,11 +156,15 @@ app.get('/shopify/auth/callback', async (req, res) => {
       { upsert: true }
     );
 
-    logEvent(shop, "auth", "Shopify OAuth completed");
+    await logEvent(shop, "auth", "Shopify OAuth completed");
     console.log(`✅ Shopify OAuth success for ${shop}`);
-    res.redirect(`/?shop=${encodeURIComponent(shop)}`);
+    res.redirect(`${APP_URL}/?shop=${encodeURIComponent(shop)}`);
   } catch (err) {
-    console.error('OAuth error:', err?.response?.data || err.message);
+    console.error('❌ OAuth error:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err.message
+    });
     res.status(500).send('Shopify OAuth failed');
   }
 });
@@ -167,7 +199,11 @@ app.get('/connect-rabbitloader', async (req, res) => {
     console.log(`🔗 Redirecting ${shop} to RabbitLoader Console`);
     res.redirect(302, rlUrl);
   } catch (error) {
-    console.error('❌ Error in connect:', error);
+    console.error('❌ Error in connect:', {
+      status: error?.response?.status,
+      data: error?.response?.data,
+      message: error.message
+    });
     res.status(500).send('RabbitLoader connect failed');
   }
 });
@@ -179,20 +215,21 @@ app.get('/inject-script', async (req, res) => {
   if (!rec?.short_id) return res.status(400).send('RabbitLoader not connected');
 
   try {
-    const themeRes = await axios.get(`https://${shop}/admin/api/2023-04/themes.json`, {
+    const themeRes = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes.json`, {
       headers: { 'X-Shopify-Access-Token': rec.access_token },
     });
     const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
     if (!activeTheme) return res.status(500).send('No active theme found');
 
     const layoutRes = await axios.get(
-      `https://${shop}/admin/api/2023-04/themes/${activeTheme.id}/assets.json`,
+      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
       { params: { 'asset[key]': 'layout/theme.liquid' },
         headers: { 'X-Shopify-Access-Token': rec.access_token } }
     );
     let content = layoutRes.data.asset?.value || '';
 
-    const newScriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+    // Fixed script URL - removed .red extension
+    const newScriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js" defer></script>`;
     if (!content.includes(newScriptTag)) {
       if (content.includes('</head>')) {
         content = content.replace('</head>', `  ${newScriptTag}\n</head>`);
@@ -200,17 +237,21 @@ app.get('/inject-script', async (req, res) => {
         content = newScriptTag + '\n' + content;
       }
       await axios.put(
-        `https://${shop}/admin/api/2023-04/themes/${activeTheme.id}/assets.json`,
+        `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
         { asset: { key: 'layout/theme.liquid', value: content } },
         { headers: { 'X-Shopify-Access-Token': rec.access_token } }
       );
-      logEvent(shop, "inject", `Injected script for DID ${rec.short_id}`);
+      await logEvent(shop, "inject", `Injected script for DID ${rec.short_id}`);
       return res.send(`✅ Script injected with DID ${rec.short_id}`);
     }
 
     res.send("ℹ️ Script already present.");
   } catch (err) {
-    console.error('Injection failed:', err?.response?.data || err.message);
+    console.error('❌ Injection failed:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err.message
+    });
     res.status(500).send('Script injection failed');
   }
 });
@@ -222,34 +263,39 @@ app.get('/revert-script', async (req, res) => {
   if (!rec?.access_token || !rec?.short_id) return res.status(400).send('Shop not authenticated or not connected');
 
   try {
-    const themeRes = await axios.get(`https://${shop}/admin/api/2023-04/themes.json`, {
+    const themeRes = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes.json`, {
       headers: { 'X-Shopify-Access-Token': rec.access_token },
     });
     const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
     if (!activeTheme) return res.status(500).send('No active theme found');
 
     const layoutRes = await axios.get(
-      `https://${shop}/admin/api/2023-04/themes/${activeTheme.id}/assets.json`,
+      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
       { params: { 'asset[key]': 'layout/theme.liquid' },
         headers: { 'X-Shopify-Access-Token': rec.access_token } }
     );
     let content = layoutRes.data.asset?.value || '';
 
-    const scriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+    // Fixed script URL - removed .red extension
+    const scriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js" defer></script>`;
     if (content.includes(scriptTag)) {
       content = content.replace(scriptTag, '');
       await axios.put(
-        `https://${shop}/admin/api/2023-04/themes/${activeTheme.id}/assets.json`,
+        `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
         { asset: { key: 'layout/theme.liquid', value: content } },
         { headers: { 'X-Shopify-Access-Token': rec.access_token } }
       );
-      logEvent(shop, "revert", `Removed script for DID ${rec.short_id}`);
+      await logEvent(shop, "revert", `Removed script for DID ${rec.short_id}`);
       return res.send(`🗑️ Script removed for DID ${rec.short_id}`);
     }
 
     res.send("ℹ️ No RabbitLoader script found.");
   } catch (err) {
-    console.error('Revert failed:', err?.response?.data || err.message);
+    console.error('❌ Revert failed:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err.message
+    });
     res.status(500).send('Failed to revert script');
   }
 });
@@ -273,7 +319,8 @@ app.get('/disconnect-rabbitloader', async (req, res) => {
             headers: { 'X-Shopify-Access-Token': rec.access_token } }
         );
         let content = layoutRes.data.asset?.value || '';
-        const scriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+        // Fixed script URL - removed .red extension
+        const scriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js" defer></script>`;
         if (content.includes(scriptTag)) {
           content = content.replace(scriptTag, '');
           await axios.put(
@@ -285,7 +332,7 @@ app.get('/disconnect-rabbitloader', async (req, res) => {
       }
     }
 
-    logEvent(shop, "disconnect", `Disconnected RabbitLoader (removed DID ${rec.short_id})`);
+    await logEvent(shop, "disconnect", `Disconnected RabbitLoader (removed DID ${rec.short_id})`);
     await ShopModel.updateOne(
       { shop },
       {
@@ -297,9 +344,13 @@ app.get('/disconnect-rabbitloader', async (req, res) => {
       }
     );
 
-    res.redirect(`/?shop=${encodeURIComponent(shop)}&disconnected=true`);
+    res.redirect(`${APP_URL}/?shop=${encodeURIComponent(shop)}&disconnected=true`);
   } catch (err) {
-    console.error('❌ Disconnect failed:', err?.response?.data || err.message);
+    console.error('❌ Disconnect failed:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err.message
+    });
     res.status(500).send('Failed to disconnect RabbitLoader');
   }
 });
@@ -320,10 +371,10 @@ app.get('/', async (req, res) => {
   const disconnected = req.query.disconnected;
 
   if (!shop) {
-    return res.redirect('/shopify/auth');
+    return res.redirect(`${APP_URL}/shopify/auth`);
   }
 
-  const rec = await ShopModel.findOne({ shop });
+  let rec = await ShopModel.findOne({ shop });
   if (!rec?.access_token) {
     return res.redirect(`/shopify/auth?shop=${encodeURIComponent(shop)}`);
   }
@@ -339,9 +390,9 @@ app.get('/', async (req, res) => {
           { $set: { short_id: tokenData.did, api_token: tokenData.api_token || null, connected_at: new Date() } },
           { upsert: true }
         );
-        logEvent(shop, "connect", `Connected with DID ${tokenData.did}`);
+        await logEvent(shop, "connect", `Connected with DID ${tokenData.did}`);
         console.log(`✅ RabbitLoader connected for ${shop} with DID ${tokenData.did}`);
-        return res.redirect(`/?shop=${encodeURIComponent(shop)}&connected=true`);
+        return res.redirect(`${APP_URL}/?shop=${encodeURIComponent(shop)}&connected=true`);
       }
     } catch (err) {
       console.warn('⚠️ Invalid rl-token format, will fallback to API');
@@ -361,10 +412,10 @@ app.get('/', async (req, res) => {
       { $set: { short_id: rlData.did, api_token: rlData.api_token || null, connected_at: new Date() } },
       { upsert: true }
     );
-    logEvent(shop, "connect", `Connected with DID ${rlData.did}`);
+    await logEvent(shop, "connect", `Connected with DID ${rlData.did}`);
     console.log(`✅ RabbitLoader connected for ${shop} with DID ${rlData.did}`);
-    // Update rec for UI display
-    rec.short_id = rlData.did;
+    // Properly update the in-memory record
+    rec = await ShopModel.findOne({ shop });
   }
 
   const isRLConnected = !!rec?.short_id;
