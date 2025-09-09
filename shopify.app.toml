@@ -7,7 +7,7 @@ application_url = "https://shopify.rabbitloader.xyz/"
 embedded = true
 
 [webhooks]
-api_version = "2025-07"
+api_version = "2024-01"
 
 [auth]
 redirect_urls = [ "https://shopify.rabbitloader.xyz/shopify/auth/callback" ]

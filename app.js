@@ -32,7 +32,7 @@ const ShopModel = mongoose.model("Shop", ShopSchema);
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SHOPIFY_SCOPES = 'read_themes,write_themes';
-const SHOPIFY_API_VERSION = '2023-04';
+const SHOPIFY_API_VERSION = '2023-10';
 const APP_URL = process.env.APP_URL;
 
 // RabbitLoader Config
