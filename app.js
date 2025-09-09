@@ -6,6 +6,7 @@ const axios = require('axios');
 const bodyParser = require('body-parser');
 const cookieParser = require('cookie-parser');
 const mongoose = require("mongoose");
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -50,6 +51,9 @@ app.use((req, res, next) => {
   );
   next();
 });
+
+// Serve static files from current directory
+app.use(express.static(__dirname));
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -508,6 +512,7 @@ app.get('/', async (req, res) => {
           </div>
         </div>
       `}
+      <script src="/script.js?v=${Date.now()}"></script>
     </div>
   `);
 });
