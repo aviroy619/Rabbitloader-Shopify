@@ -453,7 +453,7 @@ app.get('/', async (req, res) => {
   `);
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 Running on port ${PORT}`);
   console.log(`📱 App URL: ${APP_URL}`);
   console.log(`🔗 OAuth: ${APP_URL}/shopify/auth/callback`);
