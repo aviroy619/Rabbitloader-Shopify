@@ -42,6 +42,15 @@ const APP_URL = process.env.APP_URL;
 const SHOPIFY_PLATFORM_VERSION = '2023-10';
 const RABBITLOADER_PLUGIN_VERSION = '1.0.0';
 
+// Content Security Policy middleware for Shopify embedding
+app.use((req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    "frame-ancestors https://admin.shopify.com https://*.myshopify.com"
+  );
+  next();
+});
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
@@ -352,6 +361,53 @@ app.get('/disconnect-rabbitloader', async (req, res) => {
       message: err.message
     });
     res.status(500).send('Failed to disconnect RabbitLoader');
+  }
+});
+
+// ---------------- API Status ----------------
+app.get('/api/status', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  if (!shop) {
+    return res.status(400).json({ error: 'Missing shop' });
+  }
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec) {
+      return res.json({ rabbitloader_connected: false });
+    }
+
+    res.json({
+      rabbitloader_connected: !!rec.short_id,
+      did: rec.short_id,
+      history: rec.history || []
+    });
+  } catch (err) {
+    console.error('❌ /api/status failed:', err);
+    res.status(500).json({ error: 'Failed to fetch status' });
+  }
+});
+
+// ---------------- RL Credentials ----------------
+app.get('/api/rl-credentials', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  if (!shop) return res.status(400).json({ error: 'Missing shop' });
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec) return res.status(404).json({ error: 'Shop not found' });
+
+    // Extract domain name from shop (remove .myshopify.com)
+    const domainName = shop.replace('.myshopify.com', '');
+
+    res.json({
+      did: rec.short_id,
+      api_token: rec.api_token,
+      domain: domainName // or rec.domain if you store it separately
+    });
+  } catch (err) {
+    console.error('❌ /api/rl-credentials failed:', err);
+    res.status(500).json({ error: 'Failed to fetch RL credentials' });
   }
 });
 

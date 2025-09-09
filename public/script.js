@@ -381,6 +381,21 @@ const Utils = {
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize the dashboard
     window.dashboard = new Dashboard();
+
+    // Fetch RL credentials from backend and store locally
+    const shop = new URLSearchParams(window.location.search).get("shop");
+    if (shop) {
+        fetch(`/api/rl-credentials?shop=${encodeURIComponent(shop)}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.api_token && data.did) {
+                    localStorage.setItem("rl_jwt", data.api_token);
+                    localStorage.setItem("rl_domain_id", data.did);
+                    localStorage.setItem("rl_domain_name", data.domain);
+                }
+            })
+            .catch(err => console.warn("❌ Could not fetch RL credentials:", err));
+    }
     
     // Add refresh functionality
     window.refreshDashboard = () => {
@@ -418,3 +433,80 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
+
+// --- Static pages (success/error/disconnected) helpers ---
+document.addEventListener("DOMContentLoaded", () => {
+  const retryBtn = document.querySelector(".btn.retry");
+  if (retryBtn) {
+    retryBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.location.href = "/"; // back to main app
+    });
+  }
+
+  const homeBtn = document.querySelector(".btn.home");
+  if (homeBtn) {
+    homeBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      window.location.href = "/"; // redirect to dashboard
+    });
+  }
+
+  // Auto-redirect after success
+  if (document.body.classList.contains("success-page")) {
+    setTimeout(() => {
+      window.location.href = "/"; // auto go back to app
+    }, 4000);
+  }
+});
+
+// ===================== RabbitLoader Dashboard Logic =====================
+// Replace these with actual runtime values (could be injected via server)
+const RL_API_TOKEN = localStorage.getItem("rl_jwt"); 
+const RL_DOMAIN_ID = localStorage.getItem("rl_domain_id"); 
+const RL_DOMAIN_NAME = localStorage.getItem("rl_domain_name");
+
+async function fetchRLData() {
+  if (!RL_API_TOKEN || !RL_DOMAIN_ID || !RL_DOMAIN_NAME) {
+    console.warn("❌ Missing RabbitLoader credentials in localStorage");
+    return;
+  }
+
+  const headers = {
+    "Authorization": `Bearer ${RL_API_TOKEN}`,
+    "Content-Type": "application/json",
+    "Accept": "application/json"
+  };
+
+  try {
+    // 1. Plan Info
+    const planRes = await fetch("https://api-v2.rabbitloader.com/billing/subscription", { headers });
+    const planData = await planRes.json();
+    document.getElementById("plan-name").textContent = planData?.plan_name || "Unknown Plan";
+    document.getElementById("plan-domains").textContent = planData?.domains || "-";
+    document.getElementById("plan-pageviews").textContent = planData?.pageviews || "-";
+
+    // 2. Pageview Usage
+    const usageRes = await fetch(`https://api-v2.rabbitloader.com/domain/pageview/${RL_DOMAIN_ID}?start_date=2025-07-22&end_date=2025-08-21`, { headers });
+    const usageData = await usageRes.json();
+    document.getElementById("plan-usage").textContent = usageData?.total || "0";
+
+    // 3. Performance Snapshot
+    const overviewRes = await fetch(`https://api-v1.rabbitloader.com/api/v1/report/overview?domain=${RL_DOMAIN_NAME}&start_date=2025-07-21&end_date=2025-08-20`, { headers });
+    const overviewData = await overviewRes.json();
+    document.getElementById("score").textContent = overviewData?.score || "-";
+    document.getElementById("lcp").textContent = overviewData?.lcp || "-";
+    document.getElementById("cls").textContent = overviewData?.cls || "-";
+    document.getElementById("fid").textContent = overviewData?.fid || "-";
+
+    // 4. Status Update
+    document.getElementById("rl-status").textContent = "✅ Connected";
+
+  } catch (err) {
+    console.error("❌ Error fetching RL data:", err);
+    document.getElementById("rl-status").textContent = "❌ Error fetching data";
+  }
+}
+
+// Run on page load
+document.addEventListener("DOMContentLoaded", fetchRLData);

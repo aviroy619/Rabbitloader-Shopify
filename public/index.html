@@ -3,122 +3,55 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RabbitLoader for Shopify</title>
+    <title>RabbitLoader - Shopify Dashboard</title>
     <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 </head>
 <body>
-    <div class="container">
-        <!-- Header -->
-        <header class="header">
-            <div class="brand">
-                <div class="logo">
-                    <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                        <rect width="32" height="32" rx="6" fill="#2563EB"/>
-                        <path d="M8 12L16 8L24 12V20L16 24L8 20V12Z" stroke="white" stroke-width="2" fill="none"/>
-                        <circle cx="16" cy="16" r="3" fill="white"/>
-                    </svg>
-                </div>
-                <div class="brand-text">
-                    <h1>RabbitLoader</h1>
-                    <span class="subtitle">for Shopify</span>
-                </div>
-            </div>
-            <div class="user-info">
-                <span class="store-name" id="storeName">Loading...</span>
-            </div>
-        </header>
+    <div class="dashboard-card">
+<img src="assets/RLlogo.png" alt="RabbitLoader" class="logo">
 
-        <!-- Flash Messages -->
-        <div id="flashMessages" class="flash-container"></div>
-
-        <!-- Main Dashboard -->
-        <main class="dashboard">
-            <!-- Status Cards -->
-            <div class="status-grid">
-                <div class="status-card">
-                    <div class="status-icon shopify">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M15.8 2.4c-.6-.1-1.3.1-2 .4-.2-.6-.5-1.1-.9-1.4-.9-.8-2.2-.8-3.4-.1-1.8 1-3.6 2.9-4.8 5.2-.9 1.7-1.6 3.2-1.8 4.2-.1.2-.1.4-.1.6L.5 11.8c-.3.1-.5.4-.5.7L.7 21c0 .4.3.7.7.7h14.2c.4 0 .7-.3.7-.7l.7-8.5c0-.3-.2-.6-.5-.7l-2.3-.5c.1-.4.1-.8.1-1.2 0-1.7-.4-3.1-1.1-4.2zm-7.6 7.8c-.1.3-.3.6-.5.8l-1.4-3.8c.6-.9 1.3-1.6 2-2.1.7.9 1.1 2.1 1.1 3.5 0 .5-.1 1.1-.2 1.6zm3.7-5.9c.3 0 .6.1.8.3.4.4.6 1.1.6 2v.3c-.7.2-1.5.6-2.3 1.1-.6.4-1.1.8-1.5 1.3 0-.3 0-.6 0-.9 0-1.9.6-3.4 1.4-4.1.3-.1.6-.2 1-.2z"/>
-                        </svg>
-                    </div>
-                    <div class="status-content">
-                        <h3>Shopify</h3>
-                        <div class="status-indicator">
-                            <span class="status-dot success"></span>
-                            <span>Connected</span>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="status-card">
-                    <div class="status-icon rabbitloader">
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 2L2 7V17L12 22L22 17V7L12 2Z"/>
-                            <circle cx="12" cy="12" r="3" fill="white"/>
-                        </svg>
-                    </div>
-                    <div class="status-content">
-                        <h3>RabbitLoader</h3>
-                        <div class="status-indicator" id="rlStatus">
-                            <span class="status-dot" id="rlStatusDot"></span>
-                            <span id="rlStatusText">Checking...</span>
-                        </div>
-                    </div>
-                </div>
+        
+        <div class="store-info">
+            <div class="store-name" id="storeName">Loading...</div>
+            <div class="connection-status">
+                <div class="status-indicator" id="statusIndicator"></div>
+                <span class="status-text" id="statusText">Checking connection...</span>
             </div>
-
-            <!-- DID Display (when connected) -->
-            <div id="didSection" class="did-section" style="display: none;">
-                <div class="did-card">
-                    <h3>Configuration</h3>
-                    <div class="did-info">
-                        <label>Domain ID (DID):</label>
-                        <code id="didValue"></code>
-                    </div>
-                </div>
+        </div>
+        
+        <!-- Loading State -->
+        <div class="loading" id="loadingState">
+            <div class="spinner"></div>
+            <p>Loading dashboard...</p>
+        </div>
+        
+        <!-- Disconnected State -->
+        <div class="disconnected-section" id="disconnectedSection">
+            <h1 class="main-title">Get 100/100 PageSpeed</h1>
+            <p class="subtitle">on Google PageSpeed Insight</p>
+            <a href="#" class="btn btn-primary" id="activateBtn">Activate RabbitLoader</a>
+        </div>
+        
+        <!-- Connected State -->
+        <div class="connected-section" id="connectedSection">
+            <h2 class="main-title">✅ RabbitLoader Active!</h2>
+            <div class="did-info">
+                <strong>DID:</strong> <span id="didValue"></span>
             </div>
-
-            <!-- Action Buttons -->
-            <div class="actions-section">
-                <h3>Actions</h3>
-                <div id="actions" class="actions-grid">
-                    <!-- Buttons will be populated by JavaScript -->
-                </div>
+            
+            <div class="button-group">
+                <a href="#" class="btn btn-success" id="injectBtn">🔧 Inject Script</a>
+                <a href="#" class="btn btn-warning" id="revertBtn">🗑️ Revert Script</a>
+                <a href="#" class="btn btn-danger" id="disconnectBtn" onclick="return confirm('⚠️ Are you sure you want to disconnect RabbitLoader?');">🔌 Disconnect RabbitLoader</a>
             </div>
-
-            <!-- Activity History -->
-            <div class="history-section">
-                <h3>Recent Activity</h3>
-                <div id="historyContainer" class="history-container">
-                    <div class="history-item">
-                        <div class="history-icon">
-                            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                                <circle cx="8" cy="8" r="8"/>
-                            </svg>
-                        </div>
-                        <div class="history-content">
-                            <span class="history-message">Loading activity...</span>
-                            <span class="history-time">Just now</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </main>
-
-        <!-- Footer -->
-        <footer class="footer">
-            <div class="footer-content">
-                <div class="footer-links">
-                    <a href="https://rabbitloader.com/docs" target="_blank">Documentation</a>
-                    <a href="https://rabbitloader.com/support" target="_blank">Support</a>
-                    <a href="https://rabbitloader.com" target="_blank">RabbitLoader.com</a>
-                </div>
-                <div class="footer-version">
-                    <span>v1.0.0</span>
-                </div>
-            </div>
-        </footer>
+        </div>
+        
+        <!-- Footer Links -->
+        <div class="footer-links">
+            <a href="#" class="footer-link">Crash Courses</a>
+            <a href="#" class="footer-link">Terms & Conditions</a>
+            <a href="#" class="footer-link">Get Support</a>
+        </div>
     </div>
 
     <script src="script.js"></script>
