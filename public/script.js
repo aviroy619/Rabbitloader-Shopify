@@ -28,12 +28,18 @@ class Dashboard {
         return urlParams.get(name);
     }
 
-    // Update store name in header
+    // Update store name in both states
     updateStoreName() {
-        const storeNameEl = document.getElementById('storeName');
-        if (storeNameEl && this.shop) {
-            storeNameEl.textContent = this.shop;
-        }
+        const storeNameElements = [
+            document.getElementById('storeName'),
+            document.getElementById('storeNameDisconnected')
+        ];
+        
+        storeNameElements.forEach(el => {
+            if (el && this.shop) {
+                el.textContent = this.shop;
+            }
+        });
     }
 
     // Handle flash messages from query params
@@ -53,19 +59,24 @@ class Dashboard {
     // Show flash message
     showFlashMessage(message, type = 'success') {
         const container = document.getElementById('flashMessages');
-        const messageEl = document.createElement('div');
-        messageEl.className = `flash-message ${type}`;
-        messageEl.innerHTML = `
-            <span>${message}</span>
-        `;
-        
-        container.appendChild(messageEl);
-        
-        // Auto-remove after 5 seconds
-        setTimeout(() => {
-            messageEl.style.animation = 'slideOut 0.3s ease-out forwards';
-            setTimeout(() => messageEl.remove(), 300);
-        }, 5000);
+        if (container) {
+            const messageEl = document.createElement('div');
+            messageEl.className = `flash-message ${type}`;
+            messageEl.innerHTML = `
+                <span>${message}</span>
+            `;
+            
+            container.appendChild(messageEl);
+            
+            // Auto-remove after 5 seconds
+            setTimeout(() => {
+                messageEl.style.animation = 'slideOut 0.3s ease-out forwards';
+                setTimeout(() => messageEl.remove(), 300);
+            }, 5000);
+        } else {
+            // Fallback to console if no flash container
+            console.log(`${type.toUpperCase()}: ${message}`);
+        }
     }
 
     // Load status from backend
@@ -102,10 +113,92 @@ class Dashboard {
 
     // Update UI based on current state
     updateUI() {
+        // Hide loading state
+        this.hideLoadingState();
+        
+        // Show appropriate state
+        if (this.isRLConnected) {
+            this.showConnectedState();
+            this.updateConnectedElements();
+        } else {
+            this.showDisconnectedState();
+            this.updateDisconnectedElements();
+        }
+        
+        // Keep original update methods for backwards compatibility
         this.updateRLStatus();
         this.updateDIDSection();
         this.updateActions();
         this.updateHistory();
+    }
+
+    // Hide loading state
+    hideLoadingState() {
+        const loadingState = document.getElementById('loadingState');
+        if (loadingState) {
+            loadingState.style.display = 'none';
+        }
+    }
+
+    // Show disconnected state (connect flow)
+    showDisconnectedState() {
+        const disconnectedState = document.getElementById('disconnectedState');
+        const connectedState = document.getElementById('connectedState');
+        
+        if (disconnectedState) disconnectedState.style.display = 'block';
+        if (connectedState) connectedState.style.display = 'none';
+    }
+
+    // Show connected state (dashboard)
+    showConnectedState() {
+        const disconnectedState = document.getElementById('disconnectedState');
+        const connectedState = document.getElementById('connectedState');
+        
+        if (disconnectedState) disconnectedState.style.display = 'none';
+        if (connectedState) connectedState.style.display = 'block';
+        
+        // Fetch RabbitLoader data when showing connected state
+        this.fetchRLDataForConnectedState();
+    }
+
+    // Update elements in disconnected state
+    updateDisconnectedElements() {
+        // Set up activate button
+        const activateBtn = document.getElementById('activateBtn');
+        if (activateBtn) {
+            activateBtn.href = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
+        }
+    }
+
+    // Update elements in connected state  
+    updateConnectedElements() {
+        // Update DID if available
+        const didValue = document.getElementById('didValue');
+        if (didValue && this.currentDID) {
+            didValue.textContent = this.currentDID;
+        }
+
+        // Set up action buttons
+        const injectBtn = document.getElementById('injectBtn');
+        const revertBtn = document.getElementById('revertBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+
+        if (injectBtn) {
+            injectBtn.href = `/inject-script?shop=${encodeURIComponent(this.shop)}`;
+        }
+
+        if (revertBtn) {
+            revertBtn.href = `/revert-script?shop=${encodeURIComponent(this.shop)}`;
+        }
+
+        if (disconnectBtn) {
+            disconnectBtn.href = `/disconnect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
+            disconnectBtn.onclick = (e) => {
+                if (!confirm('⚠️ Are you sure you want to disconnect RabbitLoader?')) {
+                    e.preventDefault();
+                }
+            };
+        }
     }
 
     // Update RabbitLoader status indicator
@@ -113,12 +206,14 @@ class Dashboard {
         const statusDot = document.getElementById('rlStatusDot');
         const statusText = document.getElementById('rlStatusText');
         
-        if (this.isRLConnected) {
-            statusDot.className = 'status-dot success';
-            statusText.textContent = 'Connected';
-        } else {
-            statusDot.className = 'status-dot error';
-            statusText.textContent = 'Not Connected';
+        if (statusDot && statusText) {
+            if (this.isRLConnected) {
+                statusDot.className = 'status-dot success';
+                statusText.textContent = 'Connected';
+            } else {
+                statusDot.className = 'status-dot error';
+                statusText.textContent = 'Not Connected';
+            }
         }
     }
 
@@ -127,17 +222,21 @@ class Dashboard {
         const didSection = document.getElementById('didSection');
         const didValue = document.getElementById('didValue');
         
-        if (this.isRLConnected && this.currentDID) {
-            didSection.style.display = 'block';
-            didValue.textContent = this.currentDID;
-        } else {
-            didSection.style.display = 'none';
+        if (didSection && didValue) {
+            if (this.isRLConnected && this.currentDID) {
+                didSection.style.display = 'block';
+                didValue.textContent = this.currentDID;
+            } else {
+                didSection.style.display = 'none';
+            }
         }
     }
 
     // Update action buttons
     updateActions() {
         const actionsContainer = document.getElementById('actions');
+        if (!actionsContainer) return;
+        
         actionsContainer.innerHTML = '';
         
         if (!this.isRLConnected) {
@@ -206,6 +305,7 @@ class Dashboard {
     // Update activity history
     updateHistory() {
         const historyContainer = document.getElementById('historyContainer');
+        if (!historyContainer) return;
         
         if (this.history.length === 0) {
             historyContainer.innerHTML = `
@@ -304,6 +404,61 @@ class Dashboard {
     async refresh() {
         await this.loadStatus();
         this.updateUI();
+    }
+
+    // Fetch RabbitLoader data for connected state (integrated from your existing function)
+    async fetchRLDataForConnectedState() {
+        const rlApiToken = localStorage.getItem("rl_jwt");
+        const rlDomainId = localStorage.getItem("rl_domain_id");
+        const rlDomainName = localStorage.getItem("rl_domain_name");
+
+        if (!rlApiToken || !rlDomainId || !rlDomainName) {
+            console.warn("❌ Missing RabbitLoader credentials in localStorage");
+            return;
+        }
+
+        const headers = {
+            "Authorization": `Bearer ${rlApiToken}`,
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        };
+
+        try {
+            // 1. Plan Info
+            const planRes = await fetch("https://api-v2.rabbitloader.com/billing/subscription", { headers });
+            const planData = await planRes.json();
+            this.safeUpdateElement("plan-name", planData?.plan_name || "Unknown Plan");
+            this.safeUpdateElement("plan-domains", planData?.domains || "-");
+            this.safeUpdateElement("plan-pageviews", planData?.pageviews || "-");
+
+            // 2. Pageview Usage
+            const usageRes = await fetch(`https://api-v2.rabbitloader.com/domain/pageview/${rlDomainId}?start_date=2025-07-22&end_date=2025-08-21`, { headers });
+            const usageData = await usageRes.json();
+            this.safeUpdateElement("plan-usage", usageData?.total || "0");
+
+            // 3. Performance Snapshot
+            const overviewRes = await fetch(`https://api-v1.rabbitloader.com/api/v1/report/overview?domain=${rlDomainName}&start_date=2025-07-21&end_date=2025-08-20`, { headers });
+            const overviewData = await overviewRes.json();
+            this.safeUpdateElement("score", overviewData?.score || "-");
+            this.safeUpdateElement("lcp", overviewData?.lcp || "-");
+            this.safeUpdateElement("cls", overviewData?.cls || "-");
+            this.safeUpdateElement("fid", overviewData?.fid || "-");
+
+            // 4. Status Update
+            this.safeUpdateElement("rl-status", "✅ Connected");
+
+        } catch (err) {
+            console.error("❌ Error fetching RL data:", err);
+            this.safeUpdateElement("rl-status", "❌ Error fetching data");
+        }
+    }
+
+    // Helper function to safely update element content
+    safeUpdateElement(id, content) {
+        const element = document.getElementById(id);
+        if (element) {
+            element.textContent = content;
+        }
     }
 }
 
@@ -424,9 +579,20 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 30000);
 });
 
-// Add CSS for slideOut animation
+// Add CSS for slideOut animation and page states
 const style = document.createElement('style');
 style.textContent = `
+    .loading-screen {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+    }
+    
+    .page-state {
+        min-height: 100vh;
+    }
+    
     @keyframes slideOut {
         from { opacity: 1; transform: translateY(0); }
         to { opacity: 0; transform: translateY(-10px); }
@@ -461,7 +627,7 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // ===================== RabbitLoader Dashboard Logic =====================
-// Replace these with actual runtime values (could be injected via server)
+// Keep original fetchRLData function for backwards compatibility
 const RL_API_TOKEN = localStorage.getItem("rl_jwt"); 
 const RL_DOMAIN_ID = localStorage.getItem("rl_domain_id"); 
 const RL_DOMAIN_NAME = localStorage.getItem("rl_domain_name");
@@ -482,29 +648,29 @@ async function fetchRLData() {
     // 1. Plan Info
     const planRes = await fetch("https://api-v2.rabbitloader.com/billing/subscription", { headers });
     const planData = await planRes.json();
-    document.getElementById("plan-name").textContent = planData?.plan_name || "Unknown Plan";
-    document.getElementById("plan-domains").textContent = planData?.domains || "-";
-    document.getElementById("plan-pageviews").textContent = planData?.pageviews || "-";
+    if (document.getElementById("plan-name")) document.getElementById("plan-name").textContent = planData?.plan_name || "Unknown Plan";
+    if (document.getElementById("plan-domains")) document.getElementById("plan-domains").textContent = planData?.domains || "-";
+    if (document.getElementById("plan-pageviews")) document.getElementById("plan-pageviews").textContent = planData?.pageviews || "-";
 
     // 2. Pageview Usage
     const usageRes = await fetch(`https://api-v2.rabbitloader.com/domain/pageview/${RL_DOMAIN_ID}?start_date=2025-07-22&end_date=2025-08-21`, { headers });
     const usageData = await usageRes.json();
-    document.getElementById("plan-usage").textContent = usageData?.total || "0";
+    if (document.getElementById("plan-usage")) document.getElementById("plan-usage").textContent = usageData?.total || "0";
 
     // 3. Performance Snapshot
     const overviewRes = await fetch(`https://api-v1.rabbitloader.com/api/v1/report/overview?domain=${RL_DOMAIN_NAME}&start_date=2025-07-21&end_date=2025-08-20`, { headers });
     const overviewData = await overviewRes.json();
-    document.getElementById("score").textContent = overviewData?.score || "-";
-    document.getElementById("lcp").textContent = overviewData?.lcp || "-";
-    document.getElementById("cls").textContent = overviewData?.cls || "-";
-    document.getElementById("fid").textContent = overviewData?.fid || "-";
+    if (document.getElementById("score")) document.getElementById("score").textContent = overviewData?.score || "-";
+    if (document.getElementById("lcp")) document.getElementById("lcp").textContent = overviewData?.lcp || "-";
+    if (document.getElementById("cls")) document.getElementById("cls").textContent = overviewData?.cls || "-";
+    if (document.getElementById("fid")) document.getElementById("fid").textContent = overviewData?.fid || "-";
 
     // 4. Status Update
-    document.getElementById("rl-status").textContent = "✅ Connected";
+    if (document.getElementById("rl-status")) document.getElementById("rl-status").textContent = "✅ Connected";
 
   } catch (err) {
     console.error("❌ Error fetching RL data:", err);
-    document.getElementById("rl-status").textContent = "❌ Error fetching data";
+    if (document.getElementById("rl-status")) document.getElementById("rl-status").textContent = "❌ Error fetching data";
   }
 }
 
