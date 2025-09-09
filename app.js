@@ -52,8 +52,8 @@ app.use((req, res, next) => {
   next();
 });
 
-// Serve static files from current directory
-app.use(express.static(__dirname));
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, 'public')));
 
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
