@@ -3,14 +3,13 @@
 client_id = "09d41e81fb0d15dd76bc6586d4f9ddd2"
 name = "RL2"
 handle = "rl2"
-application_url = "https://shopify.rabbitloader.xyz/"
+application_url = "https://shopify.rb8.in/"
 embedded = true
 
 [webhooks]
 api_version = "2024-01"
 
 [auth]
-redirect_urls = [ "https://shopify.rabbitloader.xyz/shopify/auth/callback" ]
-
+redirect_urls = [ "https://shopify.rb8.in/shopify/auth/callback" ]
 [pos]
 embedded = false
