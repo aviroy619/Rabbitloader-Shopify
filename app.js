@@ -11,7 +11,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // MongoDB Connection with proper logging
-mongoose.connect(process.env.MONGO_URI);
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+});
 
 mongoose.connection.on('connected', () => console.log('✅ MongoDB connected'));
 mongoose.connection.on('error', err => console.error('❌ MongoDB error:', err));
@@ -32,7 +35,7 @@ const ShopModel = mongoose.model("Shop", ShopSchema);
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SHOPIFY_SCOPES = 'read_themes,write_themes';
-const SHOPIFY_API_VERSION = '2023-10';
+const SHOPIFY_API_VERSION = '2023-04';
 const APP_URL = process.env.APP_URL;
 
 // RabbitLoader Config
@@ -453,7 +456,7 @@ app.get('/', async (req, res) => {
   `);
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, () => {
   console.log(`🚀 Running on port ${PORT}`);
   console.log(`📱 App URL: ${APP_URL}`);
   console.log(`🔗 OAuth: ${APP_URL}/shopify/auth/callback`);
