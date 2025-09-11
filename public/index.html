@@ -9,19 +9,53 @@
     <script>
         // Initialize Shopify App Bridge for embedded app
         document.addEventListener('DOMContentLoaded', function() {
-            if (window.top !== window.self) {
+            const urlParams = new URLSearchParams(window.location.search);
+            const host = urlParams.get('host');
+            const shop = urlParams.get('shop');
+            
+            console.log('Host parameter:', host);
+            console.log('Shop parameter:', shop);
+            
+            if (host && window.top !== window.self) {
                 // We're in an iframe (embedded)
-                const AppBridge = window['app-bridge'];
-                const createApp = AppBridge.createApp;
-                
-                const app = createApp({
-                    apiKey: '09d41e81fb0d15dd76bc6586d4f9ddd2',
-                    host: new URLSearchParams(window.location.search).get('host')
-                });
-                
-                console.log('Shopify App Bridge initialized');
+                try {
+                    const AppBridge = window['app-bridge'];
+                    
+                    const app = AppBridge.createApp({
+                        apiKey: '09d41e81fb0d15dd76bc6586d4f9ddd2',
+                        host: host,
+                        forceRedirect: true
+                    });
+                    
+                    console.log('✅ Shopify App Bridge initialized - running in embedded mode');
+                    
+                    // Set up actions for proper embedded behavior
+                    const TitleBar = AppBridge.actions.TitleBar;
+                    const titleBar = TitleBar.create(app, {
+                        title: 'RabbitLoader Dashboard'
+                    });
+                    
+                } catch (error) {
+                    console.error('❌ App Bridge initialization failed:', error);
+                }
+            } else if (host) {
+                // We have host but not in iframe, force redirect
+                try {
+                    const AppBridge = window['app-bridge'];
+                    
+                    const app = AppBridge.createApp({
+                        apiKey: '09d41e81fb0d15dd76bc6586d4f9ddd2',
+                        host: host,
+                        forceRedirect: true
+                    });
+                    
+                    console.log('🔄 Forcing redirect to embedded mode');
+                    
+                } catch (error) {
+                    console.error('❌ App Bridge redirect failed:', error);
+                }
             } else {
-                console.log('Not running in embedded mode');
+                console.log('⚠️ Not running in embedded mode - missing host parameter');
             }
         });
     </script>

@@ -421,43 +421,40 @@ class Dashboard {
         this.updateUI();
     }
 
-    // Fetch RabbitLoader data for connected state (integrated from your existing function)
+    // Fetch RabbitLoader data for connected state using proxied routes
     async fetchRLDataForConnectedState() {
-        const rlApiToken = localStorage.getItem("rl_jwt");
-        const rlDomainId = localStorage.getItem("rl_domain_id");
-        const rlDomainName = localStorage.getItem("rl_domain_name");
-
-        if (!rlApiToken || !rlDomainId || !rlDomainName) {
-            console.warn("❌ Missing RabbitLoader credentials in localStorage");
+        const shop = this.shop;
+        if (!shop) {
+            console.warn("❌ Missing shop parameter");
             return;
         }
 
-        const headers = {
-            "Authorization": `Bearer ${rlApiToken}`,
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        };
-
         try {
-            // 1. Plan Info
-            const planRes = await fetch("https://api-v2.rabbitloader.com/billing/subscription", { headers });
-            const planData = await planRes.json();
-            this.safeUpdateElement("plan-name", planData?.plan_name || "Unknown Plan");
-            this.safeUpdateElement("plan-domains", planData?.domains || "-");
-            this.safeUpdateElement("plan-pageviews", planData?.pageviews || "-");
+            // 1. Plan Info - using proxied route
+            const planRes = await fetch(`/api/rl-billing-subscription?shop=${encodeURIComponent(shop)}`);
+            if (planRes.ok) {
+                const planData = await planRes.json();
+                this.safeUpdateElement("plan-name", planData?.plan_name || "Unknown Plan");
+                this.safeUpdateElement("plan-domains", planData?.domains || "-");
+                this.safeUpdateElement("plan-pageviews", planData?.pageviews || "-");
+            }
 
-            // 2. Pageview Usage
-            const usageRes = await fetch(`https://api-v2.rabbitloader.com/domain/pageview/${rlDomainId}?start_date=2025-07-22&end_date=2025-08-21`, { headers });
-            const usageData = await usageRes.json();
-            this.safeUpdateElement("plan-usage", usageData?.total || "0");
+            // 2. Pageview Usage - using proxied route
+            const usageRes = await fetch(`/api/rl-pageview-usage?shop=${encodeURIComponent(shop)}&start_date=2025-07-22&end_date=2025-08-21`);
+            if (usageRes.ok) {
+                const usageData = await usageRes.json();
+                this.safeUpdateElement("plan-usage", usageData?.total || "0");
+            }
 
-            // 3. Performance Snapshot
-            const overviewRes = await fetch(`https://api-v1.rabbitloader.com/api/v1/report/overview?domain=${rlDomainName}&start_date=2025-07-21&end_date=2025-08-20`, { headers });
-            const overviewData = await overviewRes.json();
-            this.safeUpdateElement("score", overviewData?.score || "-");
-            this.safeUpdateElement("lcp", overviewData?.lcp || "-");
-            this.safeUpdateElement("cls", overviewData?.cls || "-");
-            this.safeUpdateElement("fid", overviewData?.fid || "-");
+            // 3. Performance Snapshot - using proxied route
+            const overviewRes = await fetch(`/api/rl-performance-overview?shop=${encodeURIComponent(shop)}&start_date=2025-07-21&end_date=2025-08-20`);
+            if (overviewRes.ok) {
+                const overviewData = await overviewRes.json();
+                this.safeUpdateElement("score", overviewData?.score || "-");
+                this.safeUpdateElement("lcp", overviewData?.lcp || "-");
+                this.safeUpdateElement("cls", overviewData?.cls || "-");
+                this.safeUpdateElement("fid", overviewData?.fid || "-");
+            }
 
             // 4. Status Update
             this.safeUpdateElement("rl-status", "✅ Connected");
@@ -551,21 +548,6 @@ const Utils = {
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize the dashboard
     window.dashboard = new Dashboard();
-
-    // Fetch RL credentials from backend and store locally
-    const shop = new URLSearchParams(window.location.search).get("shop");
-    if (shop) {
-        fetch(`/api/rl-credentials?shop=${encodeURIComponent(shop)}`)
-            .then(res => res.json())
-            .then(data => {
-                if (data.api_token && data.did) {
-                    localStorage.setItem("rl_jwt", data.api_token);
-                    localStorage.setItem("rl_domain_id", data.did);
-                    localStorage.setItem("rl_domain_name", data.domain);
-                }
-            })
-            .catch(err => console.warn("❌ Could not fetch RL credentials:", err));
-    }
     
     // Add refresh functionality
     window.refreshDashboard = () => {
@@ -642,51 +624,48 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // ===================== RabbitLoader Dashboard Logic =====================
-// Keep original fetchRLData function for backwards compatibility
-const RL_API_TOKEN = localStorage.getItem("rl_jwt"); 
-const RL_DOMAIN_ID = localStorage.getItem("rl_domain_id"); 
-const RL_DOMAIN_NAME = localStorage.getItem("rl_domain_name");
-
+// Updated fetchRLData function using proxied routes
 async function fetchRLData() {
-  if (!RL_API_TOKEN || !RL_DOMAIN_ID || !RL_DOMAIN_NAME) {
-    console.warn("❌ Missing RabbitLoader credentials in localStorage");
-    return;
-  }
+    const shop = new URLSearchParams(window.location.search).get('shop');
+    if (!shop) {
+        console.warn("❌ Missing shop parameter");
+        return;
+    }
 
-  const headers = {
-    "Authorization": `Bearer ${RL_API_TOKEN}`,
-    "Content-Type": "application/json",
-    "Accept": "application/json"
-  };
+    try {
+        // 1. Plan Info - using proxied route
+        const planRes = await fetch(`/api/rl-billing-subscription?shop=${encodeURIComponent(shop)}`);
+        if (planRes.ok) {
+            const planData = await planRes.json();
+            if (document.getElementById("plan-name")) document.getElementById("plan-name").textContent = planData?.plan_name || "Unknown Plan";
+            if (document.getElementById("plan-domains")) document.getElementById("plan-domains").textContent = planData?.domains || "-";
+            if (document.getElementById("plan-pageviews")) document.getElementById("plan-pageviews").textContent = planData?.pageviews || "-";
+        }
 
-  try {
-    // 1. Plan Info
-    const planRes = await fetch("https://api-v2.rabbitloader.com/billing/subscription", { headers });
-    const planData = await planRes.json();
-    if (document.getElementById("plan-name")) document.getElementById("plan-name").textContent = planData?.plan_name || "Unknown Plan";
-    if (document.getElementById("plan-domains")) document.getElementById("plan-domains").textContent = planData?.domains || "-";
-    if (document.getElementById("plan-pageviews")) document.getElementById("plan-pageviews").textContent = planData?.pageviews || "-";
+        // 2. Pageview Usage - using proxied route
+        const usageRes = await fetch(`/api/rl-pageview-usage?shop=${encodeURIComponent(shop)}&start_date=2025-07-22&end_date=2025-08-21`);
+        if (usageRes.ok) {
+            const usageData = await usageRes.json();
+            if (document.getElementById("plan-usage")) document.getElementById("plan-usage").textContent = usageData?.total || "0";
+        }
 
-    // 2. Pageview Usage
-    const usageRes = await fetch(`https://api-v2.rabbitloader.com/domain/pageview/${RL_DOMAIN_ID}?start_date=2025-07-22&end_date=2025-08-21`, { headers });
-    const usageData = await usageRes.json();
-    if (document.getElementById("plan-usage")) document.getElementById("plan-usage").textContent = usageData?.total || "0";
+        // 3. Performance Snapshot - using proxied route
+        const overviewRes = await fetch(`/api/rl-performance-overview?shop=${encodeURIComponent(shop)}&start_date=2025-07-21&end_date=2025-08-20`);
+        if (overviewRes.ok) {
+            const overviewData = await overviewRes.json();
+            if (document.getElementById("score")) document.getElementById("score").textContent = overviewData?.score || "-";
+            if (document.getElementById("lcp")) document.getElementById("lcp").textContent = overviewData?.lcp || "-";
+            if (document.getElementById("cls")) document.getElementById("cls").textContent = overviewData?.cls || "-";
+            if (document.getElementById("fid")) document.getElementById("fid").textContent = overviewData?.fid || "-";
+        }
 
-    // 3. Performance Snapshot
-    const overviewRes = await fetch(`https://api-v1.rabbitloader.com/api/v1/report/overview?domain=${RL_DOMAIN_NAME}&start_date=2025-07-21&end_date=2025-08-20`, { headers });
-    const overviewData = await overviewRes.json();
-    if (document.getElementById("score")) document.getElementById("score").textContent = overviewData?.score || "-";
-    if (document.getElementById("lcp")) document.getElementById("lcp").textContent = overviewData?.lcp || "-";
-    if (document.getElementById("cls")) document.getElementById("cls").textContent = overviewData?.cls || "-";
-    if (document.getElementById("fid")) document.getElementById("fid").textContent = overviewData?.fid || "-";
+        // 4. Status Update
+        if (document.getElementById("rl-status")) document.getElementById("rl-status").textContent = "✅ Connected";
 
-    // 4. Status Update
-    if (document.getElementById("rl-status")) document.getElementById("rl-status").textContent = "✅ Connected";
-
-  } catch (err) {
-    console.error("❌ Error fetching RL data:", err);
-    if (document.getElementById("rl-status")) document.getElementById("rl-status").textContent = "❌ Error fetching data";
-  }
+    } catch (err) {
+        console.error("❌ Error fetching RL data:", err);
+        if (document.getElementById("rl-status")) document.getElementById("rl-status").textContent = "❌ Error fetching data";
+    }
 }
 
 // Run on page load

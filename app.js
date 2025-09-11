@@ -416,6 +416,85 @@ app.get('/api/rl-credentials', async (req, res) => {
   }
 });
 
+// ---------------- RabbitLoader API Proxy Routes ----------------
+app.get('/api/rl-billing-subscription', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  if (!shop) return res.status(400).json({ error: 'Missing shop' });
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec?.api_token) return res.status(404).json({ error: 'RabbitLoader not connected' });
+
+    const response = await axios.get('https://api-v2.rabbitloader.com/billing/subscription', {
+      headers: {
+        'Authorization': `Bearer ${rec.api_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }
+    });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ /api/rl-billing-subscription failed:', err);
+    res.status(500).json({ error: 'Failed to fetch billing subscription' });
+  }
+});
+
+app.get('/api/rl-pageview-usage', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const startDate = req.query.start_date || '2025-07-22';
+  const endDate = req.query.end_date || '2025-08-21';
+  
+  if (!shop) return res.status(400).json({ error: 'Missing shop' });
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec?.api_token || !rec?.short_id) return res.status(404).json({ error: 'RabbitLoader not connected' });
+
+    const response = await axios.get(`https://api-v2.rabbitloader.com/domain/pageview/${rec.short_id}?start_date=${startDate}&end_date=${endDate}`, {
+      headers: {
+        'Authorization': `Bearer ${rec.api_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }
+    });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ /api/rl-pageview-usage failed:', err);
+    res.status(500).json({ error: 'Failed to fetch pageview usage' });
+  }
+});
+
+app.get('/api/rl-performance-overview', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const startDate = req.query.start_date || '2025-07-21';
+  const endDate = req.query.end_date || '2025-08-20';
+  
+  if (!shop) return res.status(400).json({ error: 'Missing shop' });
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec?.api_token) return res.status(404).json({ error: 'RabbitLoader not connected' });
+
+    // Extract domain name from shop
+    const domainName = shop.replace('.myshopify.com', '');
+
+    const response = await axios.get(`https://api-v1.rabbitloader.com/api/v1/report/overview?domain=${domainName}&start_date=${startDate}&end_date=${endDate}`, {
+      headers: {
+        'Authorization': `Bearer ${rec.api_token}`,
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      }
+    });
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ /api/rl-performance-overview failed:', err);
+    res.status(500).json({ error: 'Failed to fetch performance overview' });
+  }
+});
+
 // ---------------- Webhooks ----------------
 app.post('/webhooks/app/uninstalled', async (req, res) => {
   const shop = req.headers['x-shopify-shop-domain'];
