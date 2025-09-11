@@ -36,7 +36,7 @@ const ShopModel = mongoose.model("Shop", ShopSchema);
 const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
 const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
 const SHOPIFY_SCOPES = 'read_themes,write_themes';
-const SHOPIFY_API_VERSION = '2023-04';
+const SHOPIFY_API_VERSION = '2024-01';
 const APP_URL = process.env.APP_URL;
 
 // RabbitLoader Config
@@ -77,24 +77,11 @@ async function getShopInfo(shop, accessToken) {
   }
 }
 
+// ⚠️ No direct token API for RabbitLoader.
+// DID + API token are returned via rl-token redirect after user authenticates on rabbitloader.com
 async function fetchRLToken(siteUrl) {
-  try {
-    // Replace with your actual RabbitLoader API endpoint
-    const response = await axios.get(`https://api.rabbitloader.com/get-token`, {
-      params: { site_url: siteUrl },
-      headers: {
-        'Content-Type': 'application/json'
-      }
-    });
-    return response.data;
-  } catch (error) {
-    console.error('❌ Error fetching RL token:', {
-      status: error?.response?.status,
-      data: error?.response?.data,
-      message: error.message
-    });
-    return null;
-  }
+  console.warn("⚠️ fetchRLToken() is deprecated. Use rl-token redirect flow instead.");
+  return null;
 }
 
 async function logEvent(shop, type, message) {
@@ -186,6 +173,7 @@ app.get('/shopify/auth/callback', async (req, res) => {
 // ---------------- RabbitLoader Connect (redirect to RL Console) ----------------
 app.get('/connect-rabbitloader', async (req, res) => {
   const shop = (req.query.shop || '').trim();
+  const host = req.query.host; // Get host parameter for embedded apps
   const rec = await ShopModel.findOne({ shop });
 
   if (!shop || !rec?.access_token) {
@@ -200,7 +188,10 @@ app.get('/connect-rabbitloader', async (req, res) => {
       ? `https://${shopInfo.primary_domain.host}`
       : `https://${shop}`;
 
-    const redirectUrl = `${APP_URL}/?shop=${encodeURIComponent(shop)}`;
+    // Build the return URL with both shop and host parameters for embedded app
+    const redirectUrl = host 
+      ? `${APP_URL}/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`
+      : `${APP_URL}/?shop=${encodeURIComponent(shop)}`;
 
     const rlUrl =
       `https://rabbitloader.com/account/` +
@@ -210,8 +201,93 @@ app.get('/connect-rabbitloader', async (req, res) => {
       `&cms_v=${SHOPIFY_PLATFORM_VERSION}` +
       `&plugin_v=${RABBITLOADER_PLUGIN_VERSION}`;
 
-    console.log(`🔗 Redirecting ${shop} to RabbitLoader Console`);
-    res.redirect(302, rlUrl);
+    // If this is an embedded app request (has host parameter), 
+    // return HTML that uses App Bridge to redirect
+    if (host) {
+      return res.type('html').send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
+            <script src="https://unpkg.com/@shopify/app-bridge-utils@3"></script>
+        </head>
+        <body>
+            <div style="font-family:sans-serif;text-align:center;padding:2rem;">
+                <h2>🔗 Connecting to RabbitLoader...</h2>
+                <p>You will be redirected to complete the authentication.</p>
+                <div class="spinner" style="margin:20px auto;border:4px solid #f3f3f3;border-top:4px solid #3498db;border-radius:50%;width:40px;height:40px;animation:spin 2s linear infinite;"></div>
+            </div>
+            <style>
+                @keyframes spin {
+                    0% { transform: rotate(0deg); }
+                    100% { transform: rotate(360deg); }
+                }
+            </style>
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    const rlUrl = '${rlUrl}';
+                    console.log('Attempting to redirect to:', rlUrl);
+                    
+                    // Method 1: Try App Bridge first
+                    try {
+                        const AppBridge = window['app-bridge'];
+                        if (AppBridge) {
+                            const app = AppBridge.createApp({
+                                apiKey: '${SHOPIFY_API_KEY}',
+                                host: '${host}',
+                                forceRedirect: true
+                            });
+                            
+                            const Redirect = AppBridge.actions.Redirect;
+                            if (Redirect && Redirect.create) {
+                                const redirect = Redirect.create(app);
+                                redirect.dispatch(Redirect.Action.REMOTE, rlUrl);
+                                console.log('App Bridge redirect dispatched');
+                                return;
+                            }
+                        }
+                    } catch (error) {
+                        console.log('App Bridge failed:', error);
+                    }
+                    
+                    // Method 2: Try to break out of iframe directly
+                    try {
+                        if (window.top && window.top !== window.self) {
+                            console.log('Breaking out of iframe');
+                            window.top.location.href = rlUrl;
+                            return;
+                        }
+                    } catch (error) {
+                        console.log('Cannot access parent window:', error);
+                    }
+                    
+                    // Method 3: Open in new window as fallback
+                    console.log('Using window.open fallback');
+                    const newWindow = window.open(rlUrl, '_blank', 'width=1024,height=768,scrollbars=yes,resizable=yes');
+                    
+                    if (!newWindow) {
+                        // If popup blocked, show manual link
+                        document.body.innerHTML = \`
+                            <div style="font-family:sans-serif;text-align:center;padding:2rem;">
+                                <h2>🔗 Connect to RabbitLoader</h2>
+                                <p>Please click the link below to complete authentication:</p>
+                                <a href="\${rlUrl}" target="_blank" style="background:#0066cc;color:white;padding:15px 30px;text-decoration:none;border-radius:5px;display:inline-block;margin:20px;">
+                                    Open RabbitLoader Account
+                                </a>
+                                <p><small>After authentication, you'll be redirected back to your Shopify admin.</small></p>
+                            </div>
+                        \`;
+                    }
+                });
+            </script>
+        </body>
+        </html>
+      `);
+    } else {
+      // Non-embedded request, do direct redirect
+      console.log(`🔗 Redirecting ${shop} to RabbitLoader Console`);
+      res.redirect(302, rlUrl);
+    }
   } catch (error) {
     console.error('❌ Error in connect:', {
       status: error?.response?.status,
@@ -548,25 +624,8 @@ app.get('/', async (req, res) => {
     }
   }
 
-  // fallback: fetch RL token from API
-  const shopInfo = await getShopInfo(shop, rec.access_token);
-  const siteUrl = shopInfo?.primary_domain?.host
-    ? `https://${shopInfo.primary_domain.host}`
-    : `https://${shop}`;
-
-  const rlData = await fetchRLToken(siteUrl);
-  if (rlData?.did) {
-    await ShopModel.updateOne(
-      { shop },
-      { $set: { short_id: rlData.did, api_token: rlData.api_token || null, connected_at: new Date() } },
-      { upsert: true }
-    );
-    await logEvent(shop, "connect", `Connected with DID ${rlData.did}`);
-    console.log(`✅ RabbitLoader connected for ${shop} with DID ${rlData.did}`);
-    // Properly update the in-memory record
-    rec = await ShopModel.findOne({ shop });
-  }
-
+  // Get the updated record after potential token processing
+  rec = await ShopModel.findOne({ shop });
   const isRLConnected = !!rec?.short_id;
   
   // Serve the appropriate HTML file based on connection status

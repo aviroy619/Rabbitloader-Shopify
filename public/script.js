@@ -183,13 +183,17 @@ class Dashboard {
         if (activateBtn) {
             const urlParams = new URLSearchParams(window.location.search);
             const host = urlParams.get('host');
-            
-            // Include host parameter for embedded apps
+
+            let connectUrl = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
             if (host) {
-                activateBtn.href = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}&host=${encodeURIComponent(host)}`;
-            } else {
-                activateBtn.href = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
+                connectUrl += `&host=${encodeURIComponent(host)}`;
             }
+
+            // Force open in top-level window
+            activateBtn.addEventListener("click", (e) => {
+                e.preventDefault();
+                window.top.location.href = connectUrl;
+            });
         }
     }
 
@@ -265,7 +269,7 @@ class Dashboard {
         if (!this.isRLConnected) {
             // Show connect button
             actionsContainer.appendChild(this.createActionButton({
-                text: '🔗 Activate RabbitLoader',
+                text: '🔌 Activate RabbitLoader',
                 href: `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`,
                 className: 'primary',
                 description: 'Connect your store to RabbitLoader'
@@ -280,7 +284,7 @@ class Dashboard {
                     description: 'Add RabbitLoader script to your theme'
                 },
                 {
-                    text: '🗑️ Revert Script',
+                    text: '↩️ Revert Script',
                     href: `/revert-script?shop=${encodeURIComponent(this.shop)}`,
                     className: 'warning',
                     description: 'Remove RabbitLoader script from theme'
