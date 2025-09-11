@@ -506,6 +506,7 @@ app.post('/webhooks/app/uninstalled', async (req, res) => {
 // ---------------- Main App UI ----------------
 app.get('/', async (req, res) => {
   const shop = (req.query.shop || '').trim();
+  const host = req.query.host; // Preserve host parameter
   const rlToken = req.query['rl-token'];
   const connected = req.query.connected;
   const disconnected = req.query.disconnected;
@@ -516,7 +517,10 @@ app.get('/', async (req, res) => {
 
   let rec = await ShopModel.findOne({ shop });
   if (!rec?.access_token) {
-    return res.redirect(`/shopify/auth?shop=${encodeURIComponent(shop)}`);
+    const redirectUrl = host 
+      ? `/shopify/auth?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`
+      : `/shopify/auth?shop=${encodeURIComponent(shop)}`;
+    return res.redirect(redirectUrl);
   }
 
   // RL returned token after console connect
@@ -532,7 +536,12 @@ app.get('/', async (req, res) => {
         );
         await logEvent(shop, "connect", `Connected with DID ${tokenData.did}`);
         console.log(`✅ RabbitLoader connected for ${shop} with DID ${tokenData.did}`);
-        return res.redirect(`${APP_URL}/?shop=${encodeURIComponent(shop)}&connected=true`);
+        
+        // Build redirect URL preserving host parameter
+        const redirectUrl = host 
+          ? `${APP_URL}/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&connected=true`
+          : `${APP_URL}/?shop=${encodeURIComponent(shop)}&connected=true`;
+        return res.redirect(redirectUrl);
       }
     } catch (err) {
       console.warn('⚠️ Invalid rl-token format, will fallback to API');

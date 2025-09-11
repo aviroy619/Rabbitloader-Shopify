@@ -181,7 +181,15 @@ class Dashboard {
         // Set up activate button
         const activateBtn = document.getElementById('activateBtn');
         if (activateBtn) {
-            activateBtn.href = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
+            const urlParams = new URLSearchParams(window.location.search);
+            const host = urlParams.get('host');
+            
+            // Include host parameter for embedded apps
+            if (host) {
+                activateBtn.href = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}&host=${encodeURIComponent(host)}`;
+            } else {
+                activateBtn.href = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
+            }
         }
     }
 
