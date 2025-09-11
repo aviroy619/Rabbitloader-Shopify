@@ -173,7 +173,6 @@ app.get('/shopify/auth/callback', async (req, res) => {
 // ---------------- RabbitLoader Connect (redirect to RL Console) ----------------
 app.get('/connect-rabbitloader', async (req, res) => {
   const shop = (req.query.shop || '').trim();
-  const host = req.query.host; // Get host parameter for embedded apps
   const rec = await ShopModel.findOne({ shop });
 
   if (!shop || !rec?.access_token) {
@@ -188,10 +187,7 @@ app.get('/connect-rabbitloader', async (req, res) => {
       ? `https://${shopInfo.primary_domain.host}`
       : `https://${shop}`;
 
-    // Build the return URL with both shop and host parameters for embedded app
-    const redirectUrl = host 
-      ? `${APP_URL}/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`
-      : `${APP_URL}/?shop=${encodeURIComponent(shop)}`;
+    const redirectUrl = `${APP_URL}/?shop=${encodeURIComponent(shop)}`;
 
     const rlUrl =
       `https://rabbitloader.com/account/` +
@@ -201,93 +197,8 @@ app.get('/connect-rabbitloader', async (req, res) => {
       `&cms_v=${SHOPIFY_PLATFORM_VERSION}` +
       `&plugin_v=${RABBITLOADER_PLUGIN_VERSION}`;
 
-    // If this is an embedded app request (has host parameter), 
-    // return HTML that uses App Bridge to redirect
-    if (host) {
-      return res.type('html').send(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
-            <script src="https://unpkg.com/@shopify/app-bridge-utils@3"></script>
-        </head>
-        <body>
-            <div style="font-family:sans-serif;text-align:center;padding:2rem;">
-                <h2>🔗 Connecting to RabbitLoader...</h2>
-                <p>You will be redirected to complete the authentication.</p>
-                <div class="spinner" style="margin:20px auto;border:4px solid #f3f3f3;border-top:4px solid #3498db;border-radius:50%;width:40px;height:40px;animation:spin 2s linear infinite;"></div>
-            </div>
-            <style>
-                @keyframes spin {
-                    0% { transform: rotate(0deg); }
-                    100% { transform: rotate(360deg); }
-                }
-            </style>
-            <script>
-                document.addEventListener('DOMContentLoaded', function() {
-                    const rlUrl = '${rlUrl}';
-                    console.log('Attempting to redirect to:', rlUrl);
-                    
-                    // Method 1: Try App Bridge first
-                    try {
-                        const AppBridge = window['app-bridge'];
-                        if (AppBridge) {
-                            const app = AppBridge.createApp({
-                                apiKey: '${SHOPIFY_API_KEY}',
-                                host: '${host}',
-                                forceRedirect: true
-                            });
-                            
-                            const Redirect = AppBridge.actions.Redirect;
-                            if (Redirect && Redirect.create) {
-                                const redirect = Redirect.create(app);
-                                redirect.dispatch(Redirect.Action.REMOTE, rlUrl);
-                                console.log('App Bridge redirect dispatched');
-                                return;
-                            }
-                        }
-                    } catch (error) {
-                        console.log('App Bridge failed:', error);
-                    }
-                    
-                    // Method 2: Try to break out of iframe directly
-                    try {
-                        if (window.top && window.top !== window.self) {
-                            console.log('Breaking out of iframe');
-                            window.top.location.href = rlUrl;
-                            return;
-                        }
-                    } catch (error) {
-                        console.log('Cannot access parent window:', error);
-                    }
-                    
-                    // Method 3: Open in new window as fallback
-                    console.log('Using window.open fallback');
-                    const newWindow = window.open(rlUrl, '_blank', 'width=1024,height=768,scrollbars=yes,resizable=yes');
-                    
-                    if (!newWindow) {
-                        // If popup blocked, show manual link
-                        document.body.innerHTML = \`
-                            <div style="font-family:sans-serif;text-align:center;padding:2rem;">
-                                <h2>🔗 Connect to RabbitLoader</h2>
-                                <p>Please click the link below to complete authentication:</p>
-                                <a href="\${rlUrl}" target="_blank" style="background:#0066cc;color:white;padding:15px 30px;text-decoration:none;border-radius:5px;display:inline-block;margin:20px;">
-                                    Open RabbitLoader Account
-                                </a>
-                                <p><small>After authentication, you'll be redirected back to your Shopify admin.</small></p>
-                            </div>
-                        \`;
-                    }
-                });
-            </script>
-        </body>
-        </html>
-      `);
-    } else {
-      // Non-embedded request, do direct redirect
-      console.log(`🔗 Redirecting ${shop} to RabbitLoader Console`);
-      res.redirect(302, rlUrl);
-    }
+    console.log(`🔗 Redirecting ${shop} to RabbitLoader Console`);
+    res.redirect(302, rlUrl); // ✅ one clean redirect, no iframe jitter
   } catch (error) {
     console.error('❌ Error in connect:', {
       status: error?.response?.status,
