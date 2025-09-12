@@ -575,7 +575,7 @@ app.get('/', async (req, res) => {
   if (!rec?.access_token) {
     const redirectUrl = host 
       ? `/shopify/auth?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`
-      : `/shopify/auth?shop=${encodeURIComponent(shop)}`;
+      : `/shopify/auth?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(shop)}`;
     return res.redirect(redirectUrl);
   }
 
@@ -636,7 +636,7 @@ app.get('/', async (req, res) => {
         // Build redirect URL preserving host parameter
         const redirectUrl = host
           ? `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&connected=true`
-          : `/?shop=${encodeURIComponent(shop)}&connected=true`;
+          : `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(shop)}&connected=true`;
         return res.redirect(redirectUrl);
       }
     } catch (err) {
