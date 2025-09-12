@@ -1,772 +1,595 @@
-// Dashboard State Management
-class Dashboard {
-    constructor() {
-        this.shop = this.getQueryParam('shop');
-        this.isRLConnected = false;
-        this.currentDID = null;
-        this.history = [];
-        
-        this.init();
-    }
+// app.js - RabbitLoader Shopify App (Full RL Console First)
+require('dotenv').config();
 
-    // Initialize dashboard
-    async init() {
-        if (!this.shop) {
-            this.showError('Missing shop parameter');
-            return;
-        }
+const express = require('express');
+const axios = require('axios');
+const bodyParser = require('body-parser');
+const cookieParser = require('cookie-parser');
+const mongoose = require("mongoose");
+const path = require('path');
 
-        this.updateStoreName();
-        this.handleFlashMessages();
-        await this.loadStatus();
-        this.updateUI();
-    }
+const app = express();
+const PORT = process.env.PORT || 3000;
 
-    // Get query parameter
-    getQueryParam(name) {
-        const urlParams = new URLSearchParams(window.location.search);
-        return urlParams.get(name);
-    }
-
-    // Update store name in both states
-    updateStoreName() {
-        const storeNameElements = [
-            document.getElementById('storeName'),
-            document.getElementById('storeNameDisconnected')
-        ];
-        
-        storeNameElements.forEach(el => {
-            if (el && this.shop) {
-                el.textContent = this.shop;
-            }
-        });
-    }
-
-    // Handle flash messages from query params
-    handleFlashMessages() {
-        const connected = this.getQueryParam('connected');
-        const disconnected = this.getQueryParam('disconnected');
-        
-        if (connected === 'true') {
-            this.showFlashMessage('🎉 RabbitLoader successfully connected and activated!', 'success');
-        }
-        
-        if (disconnected === 'true') {
-            this.showFlashMessage('🔌 RabbitLoader has been disconnected from your store.', 'warning');
-        }
-    }
-
-    // Show flash message
-    showFlashMessage(message, type = 'success') {
-        const container = document.getElementById('flashMessages');
-        if (container) {
-            const messageEl = document.createElement('div');
-            messageEl.className = `flash-message ${type}`;
-            messageEl.innerHTML = `
-                <span>${message}</span>
-            `;
-            
-            container.appendChild(messageEl);
-            
-            // Auto-remove after 5 seconds
-            setTimeout(() => {
-                messageEl.style.animation = 'slideOut 0.3s ease-out forwards';
-                setTimeout(() => messageEl.remove(), 300);
-            }, 5000);
-        } else {
-            // Fallback to console if no flash container
-            console.log(`${type.toUpperCase()}: ${message}`);
-        }
-    }
-
-    // Load status from backend
-    async loadStatus() {
-        try {
-            const response = await fetch(`/api/status?shop=${encodeURIComponent(this.shop)}`);
-            if (response.ok) {
-                const data = await response.json();
-                this.isRLConnected = data.rabbitloader_connected;
-                this.currentDID = data.did;
-                this.history = data.history || [];
-            } else {
-                // Fallback: parse from current page state
-                this.parseStatusFromPage();
-            }
-        } catch (error) {
-            console.warn('Failed to load status, using fallback:', error);
-            this.parseStatusFromPage();
-        }
-    }
-
-    // Fallback: parse status from page context
-    parseStatusFromPage() {
-        // Check if we're on a page that indicates connection status
-        const connected = this.getQueryParam('connected');
-        const disconnected = this.getQueryParam('disconnected');
-        
-        if (connected === 'true') {
-            this.isRLConnected = true;
-        } else if (disconnected === 'true') {
-            this.isRLConnected = false;
-        }
-    }
-
-    // Update UI based on current state
-    updateUI() {
-        // Hide loading state
-        this.hideLoadingState();
-        
-        // Show appropriate state
-        if (this.isRLConnected) {
-            this.showConnectedState();
-            this.updateConnectedElements();
-        } else {
-            this.showDisconnectedState();
-            this.updateDisconnectedElements();
-        }
-        
-        // Keep original update methods for backwards compatibility
-        this.updateRLStatus();
-        this.updateDIDSection();
-        this.updateActions();
-        this.updateHistory();
-    }
-
-    // Hide loading state
-    hideLoadingState() {
-        const loadingState = document.getElementById('loadingState');
-        if (loadingState) {
-            loadingState.style.display = 'none';
-        }
-    }
-
-    // Show disconnected state (connect flow)
-    showDisconnectedState() {
-        console.log('showDisconnectedState called');
-        const disconnectedState = document.getElementById('disconnectedState');
-        const connectedState = document.getElementById('connectedState');
-        
-        console.log('disconnectedState element:', disconnectedState);
-        console.log('connectedState element:', connectedState);
-        
-        if (disconnectedState) {
-            disconnectedState.style.display = 'block';
-            console.log('Set disconnectedState to block');
-        } else {
-            console.error('disconnectedState element not found!');
-        }
-        
-        if (connectedState) {
-            connectedState.style.display = 'none';
-            console.log('Set connectedState to none');
-        } else {
-            console.log('connectedState element not found (this is ok)');
-        }
-    }
-
-    // Show connected state (dashboard)
-    showConnectedState() {
-        const disconnectedState = document.getElementById('disconnectedState');
-        const connectedState = document.getElementById('connectedState');
-        
-        if (disconnectedState) disconnectedState.style.display = 'none';
-        if (connectedState) connectedState.style.display = 'block';
-        
-        // Fetch RabbitLoader data when showing connected state
-        this.fetchRLDataForConnectedState();
-        
-        // Check App Embed block status
-        this.checkEmbedStatus();
-    }
-
-    // Check RL App Embed block status
-    async checkEmbedStatus() {
-        try {
-            const res = await fetch(`/api/embed-status?shop=${encodeURIComponent(this.shop)}`);
-            if (!res.ok) throw new Error(`HTTP ${res.status}`);
-            const data = await res.json();
-            const toggle = document.getElementById("embedToggle");
-            if (toggle) {
-                toggle.checked = !!data.enabled;
-                toggle.onchange = async () => {
-                    try {
-                        await fetch(`/api/embed-toggle?shop=${encodeURIComponent(this.shop)}&enable=${toggle.checked}`);
-                        this.showFlashMessage(`App Embed ${toggle.checked ? "enabled" : "disabled"}`, "success");
-                    } catch (err) {
-                        this.showFlashMessage("Failed to update App Embed", "error");
-                        toggle.checked = !toggle.checked; // rollback
-                    }
-                };
-            }
-        } catch (err) {
-            console.error("Failed to check embed status:", err);
-        }
-    }
-
-    // Update elements in disconnected state  
-    updateDisconnectedElements() {
-        const activateBtn = document.getElementById('activateBtn');
-        if (activateBtn) {
-            activateBtn.onclick = async () => {
-                try {
-                    const res = await fetch(`/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`);
-                    const data = await res.json();
-                    if (data.url) {
-                        window.top.location.href = data.url;
-                    }
-                } catch (err) {
-                    console.error("⚠ Error activating RabbitLoader:", err);
-                    this.showFlashMessage("⚠️ Failed to open RabbitLoader connect", "error");
-                }
-            };
-        }
-    }
-
-    // Update elements in connected state  
-    updateConnectedElements() {
-        // Update DID if available
-        const didValue = document.getElementById('didValue');
-        if (didValue && this.currentDID) {
-            didValue.textContent = this.currentDID;
-        }
-
-        // Set up action buttons
-        const injectBtn = document.getElementById('injectBtn');
-        const revertBtn = document.getElementById('revertBtn');
-        const disconnectBtn = document.getElementById('disconnectBtn');
-
-        if (injectBtn) {
-            injectBtn.href = `/inject-script?shop=${encodeURIComponent(this.shop)}`;
-        }
-
-        if (revertBtn) {
-            revertBtn.href = `/revert-script?shop=${encodeURIComponent(this.shop)}`;
-        }
-
-        if (disconnectBtn) {
-            disconnectBtn.href = `/disconnect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
-            disconnectBtn.onclick = (e) => {
-                if (!confirm('Are you sure you want to disconnect RabbitLoader?')) {
-                    e.preventDefault();
-                    return;
-                }
-                Utils.addLoadingState(disconnectBtn, "Disconnecting...");
-                // Let browser follow href, but add rollback if it stalls
-                setTimeout(() => {
-                    Utils.removeLoadingState(disconnectBtn);
-                    this.showFlashMessage("Disconnect may not have completed, please retry.", "error");
-                }, 10000);
-            };
-        }
-    }
-
-    // Update RabbitLoader status indicator
-    updateRLStatus() {
-        const statusDot = document.getElementById('rlStatusDot');
-        const statusText = document.getElementById('rlStatusText');
-        
-        if (statusDot && statusText) {
-            if (this.isRLConnected) {
-                statusDot.className = 'status-dot success';
-                statusText.textContent = 'Connected';
-            } else {
-                statusDot.className = 'status-dot error';
-                statusText.textContent = 'Not Connected';
-            }
-        }
-    }
-
-    // Show/hide DID section
-    updateDIDSection() {
-        const didSection = document.getElementById('didSection');
-        const didValue = document.getElementById('didValue');
-        
-        if (didSection && didValue) {
-            if (this.isRLConnected && this.currentDID) {
-                didSection.style.display = 'block';
-                didValue.textContent = this.currentDID;
-            } else {
-                didSection.style.display = 'none';
-            }
-        }
-    }
-
-    // Update action buttons - UPDATED TO USE NEW CONNECT LOGIC
-    updateActions() {
-        const actionsContainer = document.getElementById('actions');
-        if (!actionsContainer) return;
-        
-        actionsContainer.innerHTML = '';
-        
-        if (!this.isRLConnected) {
-            // Show connect button with new async handler
-            const connectBtn = this.createActionButton({
-                text: '🔌 Activate RabbitLoader',
-                className: 'primary',
-                description: 'Connect your store to RabbitLoader',
-                isConnectButton: true
-            });
-            actionsContainer.appendChild(connectBtn);
-        } else {
-            // Show connected actions
-            const actions = [
-                {
-                    text: '🔧 Inject Script',
-                    href: `/inject-script?shop=${encodeURIComponent(this.shop)}`,
-                    className: 'success',
-                    description: 'Add RabbitLoader script to your theme'
-                },
-                {
-                    text: '↩️ Revert Script',
-                    href: `/revert-script?shop=${encodeURIComponent(this.shop)}`,
-                    className: 'warning',
-                    description: 'Remove RabbitLoader script from theme'
-                },
-                {
-                    text: '🔌 Disconnect',
-                    href: `/disconnect-rabbitloader?shop=${encodeURIComponent(this.shop)}`,
-                    className: 'danger',
-                    description: 'Disconnect RabbitLoader from your store',
-                    requiresConfirm: true
-                }
-            ];
-            
-            actions.forEach(action => {
-                actionsContainer.appendChild(this.createActionButton(action));
-            });
-        }
-    }
-
-    // Create action button element - UPDATED TO HANDLE CONNECT BUTTON
-    createActionButton(config) {
-        const button = document.createElement('a');
-        button.className = `action-btn ${config.className}`;
-        button.innerHTML = config.text;
-        button.title = config.description;
-        
-        if (config.isConnectButton) {
-            // Special handling for connect button
-            button.href = '#';
-            button.addEventListener('click', async (e) => {
-                e.preventDefault();
-                
-                const originalText = button.innerHTML;
-                button.innerHTML = '<span class="spinner"></span> Connecting...';
-                button.classList.add('loading');
-                
-                try {
-                    const urlParams = new URLSearchParams(window.location.search);
-                    const host = urlParams.get('host');
-                    
-                    let connectUrl = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
-                    if (host) {
-                        connectUrl += `&host=${encodeURIComponent(host)}`;
-                    }
-                    
-                    const response = await fetch(connectUrl);
-                    
-                    if (response.ok) {
-                        const data = await response.json();
-                        
-                        if (data.url) {
-                            window.top.location.href = data.url;
-                        } else {
-                            throw new Error('No redirect URL provided by server');
-                        }
-                    } else {
-                        const errorData = await response.json();
-                        throw new Error(errorData.error || 'Failed to connect to RabbitLoader');
-                    }
-                } catch (error) {
-                    console.error('Connect failed:', error);
-                    this.showFlashMessage(`Connect failed: ${error.message}`, "error");
-                    button.innerHTML = originalText;
-                    button.classList.remove('loading');
-                }
-            });
-        } else {
-            // Regular button with href
-            button.href = config.href;
-            
-            if (config.requiresConfirm) {
-                button.onclick = (e) => {
-                    if (!confirm('⚠️ Are you sure you want to disconnect RabbitLoader?')) {
-                        e.preventDefault();
-                    }
-                };
-            }
-            
-            // Add loading state on click with error recovery
-            button.addEventListener('click', (e) => {
-                Utils.addLoadingState(button, 'Processing...');
-                try {
-                    setTimeout(() => {
-                        if (button.classList.contains('loading')) {
-                            Utils.removeLoadingState(button);
-                            this.showFlashMessage("Request timed out. Please try again.", "error");
-                        }
-                    }, 10000);
-                } catch (err) {
-                    Utils.removeLoadingState(button);
-                    this.showFlashMessage(`❌ Action failed: ${err.message}`, "error");
-                    e.preventDefault();
-                }
-            });
-        }
-        
-        return button;
-    }
-
-    // Update activity history
-    updateHistory() {
-        const historyContainer = document.getElementById('historyContainer');
-        if (!historyContainer) return;
-        
-        if (this.history.length === 0) {
-            historyContainer.innerHTML = `
-                <div class="history-item">
-                    <div class="history-icon">
-                        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                            <circle cx="8" cy="8" r="8"/>
-                        </svg>
-                    </div>
-                    <div class="history-content">
-                        <span class="history-message">No recent activity</span>
-                        <span class="history-time">Connect RabbitLoader to see activity logs</span>
-                    </div>
-                </div>
-            `;
-            return;
-        }
-        
-        historyContainer.innerHTML = '';
-        
-        this.history.forEach(item => {
-            const historyItem = document.createElement('div');
-            historyItem.className = 'history-item';
-            
-            const iconClass = this.getHistoryIconClass(item.type);
-            const timeAgo = this.formatTimeAgo(item.timestamp);
-            
-            historyItem.innerHTML = `
-                <div class="history-icon ${iconClass}">
-                    ${this.getHistoryIcon(item.type)}
-                </div>
-                <div class="history-content">
-                    <span class="history-message">${item.message}</span>
-                    <span class="history-time">${timeAgo}</span>
-                </div>
-            `;
-            
-            historyContainer.appendChild(historyItem);
-        });
-    }
-
-    // Get history icon class
-    getHistoryIconClass(type) {
-        const iconMap = {
-            'auth': 'success',
-            'connect': 'success',
-            'inject': 'success',
-            'revert': 'warning',
-            'disconnect': 'error',
-            'error': 'error'
-        };
-        return iconMap[type] || '';
-    }
-
-    // Get history icon SVG
-    getHistoryIcon(type) {
-        const icons = {
-            'auth': '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm3.5 6L7 10.5 4.5 8 6 6.5l1 1 3-3L11.5 6z"/></svg>',
-            'connect': '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm3.5 6L7 10.5 4.5 8 6 6.5l1 1 3-3L11.5 6z"/></svg>',
-            'inject': '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm1 12H7V9H4l4-5 4 5H9v3z"/></svg>',
-            'revert': '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm1 12H7V9H4l4-5 4 5H9v3z"/></svg>',
-            'disconnect': '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm5 7H3V7h10v2z"/></svg>',
-            'error': '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.6 0 0 3.6 0 8s3.6 8 8 8 8-3.6 8-8-3.6-8-8-8zm1 12H7V7h2v5zm0-6H7V4h2v2z"/></svg>'
-        };
-        return icons[type] || '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><circle cx="8" cy="8" r="8"/></svg>';
-    }
-
-    // Format time ago
-    formatTimeAgo(timestamp) {
-        if (!timestamp) return 'Unknown time';
-        
-        const now = new Date();
-        const time = new Date(timestamp);
-        const diffInSeconds = Math.floor((now - time) / 1000);
-        
-        if (diffInSeconds < 60) {
-            return 'Just now';
-        } else if (diffInSeconds < 3600) {
-            const minutes = Math.floor(diffInSeconds / 60);
-            return `${minutes} minute${minutes > 1 ? 's' : ''} ago`;
-        } else if (diffInSeconds < 86400) {
-            const hours = Math.floor(diffInSeconds / 3600);
-            return `${hours} hour${hours > 1 ? 's' : ''} ago`;
-        } else {
-            const days = Math.floor(diffInSeconds / 86400);
-            return `${days} day${days > 1 ? 's' : ''} ago`;
-        }
-    }
-
-    // Show error message
-    showError(message) {
-        this.showFlashMessage(`⚠️ ${message}`, 'error');
-    }
-
-    // Refresh dashboard data
-    async refresh() {
-        await this.loadStatus();
-        this.updateUI();
-    }
-
-    // Fetch RabbitLoader data for connected state using proxied routes
-    async fetchRLDataForConnectedState() {
-        const shop = this.shop;
-        if (!shop) {
-            console.warn("⚠️ Missing shop parameter");
-            return;
-        }
-
-        try {
-            // Dynamic last 30 days
-            const endDate = new Date().toISOString().split("T")[0];
-            const startDate = new Date(Date.now() - 30 * 864e5).toISOString().split("T")[0];
-
-            const [billingRes, usageRes, perfRes] = await Promise.all([
-                fetch(`/api/rl-billing-subscription?shop=${encodeURIComponent(shop)}`),
-                fetch(`/api/rl-pageview-usage?shop=${encodeURIComponent(shop)}&start_date=${startDate}&end_date=${endDate}`),
-                fetch(`/api/rl-performance-overview?shop=${encodeURIComponent(shop)}&start_date=${startDate}&end_date=${endDate}`)
-            ]);
-
-            if (billingRes.status === 401 || usageRes.status === 401 || perfRes.status === 401) {
-                console.warn("⚠️ RabbitLoader token expired for", shop);
-                this.isRLConnected = false;
-                this.currentDID = null;
-                this.showFlashMessage("RabbitLoader session expired. Please reconnect.", "error");
-                this.updateUI();
-                return;
-            }
-
-            // 1. Plan Info
-            if (billingRes.ok) {
-                const planData = await billingRes.json();
-                this.safeUpdateElement("plan-name", planData?.plan_name || "Unknown Plan");
-                this.safeUpdateElement("plan-domains", planData?.domains || "-");
-                this.safeUpdateElement("plan-pageviews", planData?.pageviews || "-");
-            }
-
-            // 2. Pageview Usage
-            if (usageRes.ok) {
-                const usageData = await usageRes.json();
-                this.safeUpdateElement("plan-usage", usageData?.total || "0");
-            }
-
-            // 3. Performance Snapshot
-            if (perfRes.ok) {
-                const overviewData = await perfRes.json();
-                this.updatePerformanceSection(overviewData);
-            }
-
-            // 4. Status Update
-            this.safeUpdateElement("rl-status", "✅ Connected");
-
-        } catch (err) {
-            console.error("⚠️ Error fetching RL data:", err);
-            this.safeUpdateElement("rl-status", "⚠️ Error fetching data");
-        }
-    }
-
-    // Helper function to safely update element content
-    safeUpdateElement(id, content) {
-        const element = document.getElementById(id);
-        if (element) {
-            element.textContent = content;
-        }
-    }
-
-    // Update performance section with guard for missing elements
-    updatePerformanceSection(data) {
-        const performanceElements = ['score', 'lcp', 'cls', 'fid'];
-        let hasPerformanceSection = false;
-        
-        performanceElements.forEach(id => {
-            const element = document.getElementById(id);
-            if (element) {
-                hasPerformanceSection = true;
-                element.textContent = data?.[id] || "-";
-            }
-        });
-        
-        if (!hasPerformanceSection) {
-            console.warn("Performance section elements not found in DOM");
-        }
-    }
-}
-
-// Status API endpoint handler (for backend integration)
-class StatusAPI {
-    static async getStatus(shop) {
-        try {
-            const response = await fetch(`/api/status?shop=${encodeURIComponent(shop)}`);
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            return await response.json();
-        } catch (error) {
-            console.error('Failed to fetch status:', error);
-            return null;
-        }
-    }
-
-    static async performAction(action, shop) {
-        try {
-            const response = await fetch(`/${action}?shop=${encodeURIComponent(shop)}`, {
-                method: 'GET'
-            });
-            
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}`);
-            }
-            
-            return {
-                success: true,
-                message: await response.text()
-            };
-        } catch (error) {
-            return {
-                success: false,
-                message: error.message
-            };
-        }
-    }
-}
-
-// Utility functions
-const Utils = {
-    // Add loading state to element
-    addLoadingState(element, text = 'Loading...') {
-        element.classList.add('loading');
-        element.dataset.originalText = element.innerHTML;
-        element.innerHTML = `<span class="spinner"></span> ${text}`;
-    },
-
-    // Remove loading state from element
-    removeLoadingState(element) {
-        element.classList.remove('loading');
-        if (element.dataset.originalText) {
-            element.innerHTML = element.dataset.originalText;
-            delete element.dataset.originalText;
-        }
-    },
-
-    // Debounce function
-    debounce(func, wait) {
-        let timeout;
-        return function executedFunction(...args) {
-            const later = () => {
-                clearTimeout(timeout);
-                func(...args);
-            };
-            clearTimeout(timeout);
-            timeout = setTimeout(later, wait);
-        };
-    }
-};
-
-// Initialize dashboard when DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-    // Initialize the dashboard
-    window.dashboard = new Dashboard();
-
-    // Handle ?connection_error param
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get("connection_error")) {
-        window.dashboard.showFlashMessage("⚠ RabbitLoader connection failed. Please try again.", "error");
-    }
-    
-    // Add refresh functionality
-    window.refreshDashboard = () => {
-        window.dashboard.refresh();
-    };
-    
-    // Handle browser back/forward
-    window.addEventListener('popstate', () => {
-        window.location.reload();
-    });
-    
-    // Add keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-        // Ctrl+R or Cmd+R for refresh
-        if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
-            e.preventDefault();
-            window.dashboard.refresh();
-        }
-    });
-    
-    // Auto-refresh every 30 seconds if connected
-    window.dashboard.refreshInterval = setInterval(() => {
-        if (window.dashboard && window.dashboard.isRLConnected) {
-            window.dashboard.refresh();
-        }
-    }, 30000);
-
-    window.addEventListener('beforeunload', () => {
-        if (window.dashboard.refreshInterval) {
-            clearInterval(window.dashboard.refreshInterval);
-        }
-    });
+// MongoDB Connection with proper logging
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
 });
 
-// Add CSS for slideOut animation and page states
-const style = document.createElement('style');
-style.textContent = `
-    .loading-screen {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        min-height: 100vh;
-    }
-    
-    .page-state {
-        min-height: 100vh;
-    }
-    
-    @keyframes slideOut {
-        from { opacity: 1; transform: translateY(0); }
-        to { opacity: 0; transform: translateY(-10px); }
-    }
-`;
-document.head.appendChild(style);
+mongoose.connection.on('connected', () => console.log('✅ MongoDB connected'));
+mongoose.connection.on('error', err => console.error('❌ MongoDB error:', err));
 
-// --- Static pages (success/error/disconnected) helpers ---
-document.addEventListener("DOMContentLoaded", () => {
-  const urlParams = new URLSearchParams(window.location.search);
-  const shop = urlParams.get("shop");
-  const host = urlParams.get("host");
-  const baseUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
+// Define schema
+const ShopSchema = new mongoose.Schema({
+  shop: { type: String, unique: true },
+  access_token: String,
+  short_id: String,    // RabbitLoader DID
+  api_token: String,   // RL API token
+  connected_at: Date,
+  history: Array
+});
 
-  const retryBtn = document.querySelector(".btn.retry");
-  if (retryBtn) {
-    retryBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      window.location.href = baseUrl;
+const ShopModel = mongoose.model("Shop", ShopSchema);
+
+// Shopify Config
+const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY;
+const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET;
+const SHOPIFY_SCOPES = 'read_themes,write_themes';
+const SHOPIFY_API_VERSION = '2024-01';
+const APP_URL = process.env.APP_URL;
+
+// RabbitLoader Config
+const SHOPIFY_PLATFORM_VERSION = '2023-10';
+const RABBITLOADER_PLUGIN_VERSION = '1.0.0';
+
+// Content Security Policy middleware for Shopify embedding
+app.use((req, res, next) => {
+  res.setHeader(
+    "Content-Security-Policy",
+    "frame-ancestors https://admin.shopify.com https://*.myshopify.com"
+  );
+  res.setHeader('X-Frame-Options', 'ALLOWALL');
+  next();
+});
+
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// ---------------- Helper Functions ----------------
+async function getShopInfo(shop, accessToken) {
+  try {
+    const response = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/shop.json`, {
+      headers: { 'X-Shopify-Access-Token': accessToken }
     });
-  }
-
-  const homeBtn = document.querySelector(".btn.home");
-  if (homeBtn) {
-    homeBtn.addEventListener("click", (e) => {
-      e.preventDefault();
-      window.location.href = baseUrl;
+    return response.data.shop;
+  } catch (error) {
+    console.error('❌ Error fetching shop info:', {
+      status: error?.response?.status,
+      data: error?.response?.data,
+      message: error.message
     });
+    return null;
+  }
+}
+
+// ⚠️ ⚠️ No direct token API for RabbitLoader.
+// DID + API token are returned via rl-token redirect after user authenticates on rabbitloader.com
+async function fetchRLToken(siteUrl) {
+  console.warn("⚠️ ⚠️ fetchRLToken() is deprecated. Use rl-token redirect flow instead.");
+  return null;
+}
+
+async function logEvent(shop, type, message) {
+  try {
+    const historyItem = {
+      type,
+      message,
+      timestamp: new Date().toISOString()
+    };
+    
+    await ShopModel.updateOne(
+      { shop },
+      { 
+        $push: { 
+          history: { 
+            $each: [historyItem], 
+            $position: 0, 
+            $slice: 5 
+          } 
+        } 
+      },
+      { upsert: true }
+    );
+  } catch (error) {
+    console.error('❌ Error logging event:', error);
+  }
+}
+
+// ---------------- Shopify OAuth ----------------
+app.get('/shopify/auth', (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  if (!shop) {
+    return res.type('html').send(`
+      <div style="font-family:sans-serif;margin:2rem;text-align:center">
+        <h2>🔗 Connect Your Shopify Store</h2>
+        <p>Please provide your shop URL:</p>
+        <form method="GET" action="/shopify/auth">
+          <input type="text" name="shop" placeholder="yourstore.myshopify.com" style="padding:10px;margin:10px;width:300px">
+          <button type="submit" style="padding:10px 20px;background:#0066cc;color:white;border:none;cursor:pointer">Connect</button>
+        </form>
+      </div>
+    `);
+  }
+  
+  if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/i.test(shop)) {
+    return res.status(400).send('Invalid shop format. Please use: yourstore.myshopify.com');
   }
 
-  // Auto-redirect after success
-  if (document.body.classList.contains("success-page")) {
-    setTimeout(() => {
-      window.location.href = baseUrl;
-    }, 4000);
+  const redirectUri = `${APP_URL}/shopify/auth/callback`;
+  const installUrl =
+    `https://${shop}/admin/oauth/authorize` +
+    `?client_id=${encodeURIComponent(SHOPIFY_API_KEY)}` +
+    `&scope=${encodeURIComponent(SHOPIFY_SCOPES)}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}`;
+
+  res.redirect(installUrl);
+});
+
+app.get('/shopify/auth/callback', async (req, res) => {
+  const { shop, code } = req.query;
+  if (!shop || !code) return res.status(400).send('Missing shop or code');
+
+  try {
+    const tokenRes = await axios.post(`https://${shop}/admin/oauth/access_token`, {
+      client_id: SHOPIFY_API_KEY,
+      client_secret: SHOPIFY_API_SECRET,
+      code,
+    });
+
+    await ShopModel.updateOne(
+      { shop },
+      { $set: { access_token: tokenRes.data.access_token } },
+      { upsert: true }
+    );
+
+    await logEvent(shop, "auth", "Shopify OAuth completed");
+    console.log(`✅ Shopify OAuth success for ${shop}`);
+    res.redirect(`${APP_URL}/?shop=${encodeURIComponent(shop)}`);
+  } catch (err) {
+    console.error('❌ OAuth error:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err.message
+    });
+    res.status(500).send('Shopify OAuth failed');
   }
+});
+
+// ---------------- RabbitLoader Connect (return JSON instead of redirect) ----------------
+app.get('/connect-rabbitloader', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const rec = await ShopModel.findOne({ shop });
+
+  if (!shop || !rec?.access_token) {
+    return res.status(400).json({ error: 'Missing shop or Shopify access token' });
+  }
+
+  try {
+    const shopInfo = await getShopInfo(shop, rec.access_token);
+    if (!shopInfo) return res.status(500).json({ error: 'Could not fetch shop info' });
+
+    const siteUrl = shopInfo.primary_domain
+      ? `https://${shopInfo.primary_domain.host}`
+      : `https://${shop}`;
+
+    const redirectUrl = `${APP_URL}/?shop=${encodeURIComponent(shop)}`;
+
+    const rlUrl =
+      `https://rabbitloader.com/account/` +
+      `?source=shopify&action=connect` +
+      `&site_url=${encodeURIComponent(siteUrl)}` +
+      `&redirect_url=${encodeURIComponent(redirectUrl)}` +
+      `&cms_v=${SHOPIFY_PLATFORM_VERSION}` +
+      `&plugin_v=${RABBITLOADER_PLUGIN_VERSION}`;
+
+    console.log(`🚀 Preparing RabbitLoader Console URL for ${shop}`);
+    
+    // Return JSON instead of redirecting to prevent iframe jitter
+    res.json({ url: rlUrl });
+  } catch (error) {
+    console.error('❌ Error in connect:', {
+      status: error?.response?.status,
+      data: error?.response?.data,
+      message: error.message
+    });
+    res.status(500).json({ error: 'RabbitLoader connect failed' });
+  }
+});
+
+// ---------------- Script Injection ----------------
+app.get('/inject-script', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const rec = await ShopModel.findOne({ shop });
+  if (!rec?.short_id) return res.status(400).send('RabbitLoader not connected');
+
+  try {
+    const themeRes = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes.json`, {
+      headers: { 'X-Shopify-Access-Token': rec.access_token },
+    });
+    const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
+    if (!activeTheme) return res.status(500).send('No active theme found');
+
+    const layoutRes = await axios.get(
+      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+      { params: { 'asset[key]': 'layout/theme.liquid' },
+        headers: { 'X-Shopify-Access-Token': rec.access_token } }
+    );
+    let content = layoutRes.data.asset?.value || '';
+
+    // Fixed script URL - added .red.js extension
+    const newScriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+    if (!content.includes(newScriptTag)) {
+      if (content.includes('</head>')) {
+        content = content.replace('</head>', `  ${newScriptTag}\n</head>`);
+      } else {
+        content = newScriptTag + '\n' + content;
+      }
+      await axios.put(
+        `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+        { asset: { key: 'layout/theme.liquid', value: content } },
+        { headers: { 'X-Shopify-Access-Token': rec.access_token } }
+      );
+      await logEvent(shop, "inject", `Injected script for DID ${rec.short_id}`);
+      return res.send(`✅ Script injected with DID ${rec.short_id}`);
+    }
+
+    res.send("⚠️⚠️ Script already present.");
+  } catch (err) {
+    console.error('❌ Injection failed:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err.message
+    });
+    res.status(500).send('Script injection failed');
+  }
+});
+
+// ---------------- Revert Script ----------------
+app.get('/revert-script', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const rec = await ShopModel.findOne({ shop });
+  if (!rec?.access_token || !rec?.short_id) return res.status(400).send('Shop not authenticated or not connected');
+
+  try {
+    const themeRes = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes.json`, {
+      headers: { 'X-Shopify-Access-Token': rec.access_token },
+    });
+    const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
+    if (!activeTheme) return res.status(500).send('No active theme found');
+
+    const layoutRes = await axios.get(
+      `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+      { params: { 'asset[key]': 'layout/theme.liquid' },
+        headers: { 'X-Shopify-Access-Token': rec.access_token } }
+    );
+    let content = layoutRes.data.asset?.value || '';
+
+    // Fixed script URL - added .red.js extension
+    const scriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+    if (content.includes(scriptTag)) {
+      content = content.replace(scriptTag, '');
+      await axios.put(
+        `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+        { asset: { key: 'layout/theme.liquid', value: content } },
+        { headers: { 'X-Shopify-Access-Token': rec.access_token } }
+      );
+      await logEvent(shop, "revert", `Removed script for DID ${rec.short_id}`);
+      return res.send(`🗑️⚠️ Script removed for DID ${rec.short_id}`);
+    }
+
+    res.send("⚠️⚠️ No RabbitLoader script found.");
+  } catch (err) {
+    console.error('❌ Revert failed:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err.message
+    });
+    res.status(500).send('Failed to revert script');
+  }
+});
+
+// ---------------- Disconnect RabbitLoader ----------------
+app.get('/disconnect-rabbitloader', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const rec = await ShopModel.findOne({ shop });
+  if (!rec?.access_token) return res.status(400).send('Shop not authenticated');
+
+  try {
+    if (rec.short_id) {
+      const themeRes = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes.json`, {
+        headers: { 'X-Shopify-Access-Token': rec.access_token },
+      });
+      const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
+      if (activeTheme) {
+        const layoutRes = await axios.get(
+          `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+          { params: { 'asset[key]': 'layout/theme.liquid' },
+            headers: { 'X-Shopify-Access-Token': rec.access_token } }
+        );
+        let content = layoutRes.data.asset?.value || '';
+        // Fixed script URL - added .red.js extension
+        const scriptTag = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+        if (content.includes(scriptTag)) {
+          content = content.replace(scriptTag, '');
+          await axios.put(
+            `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+            { asset: { key: 'layout/theme.liquid', value: content } },
+            { headers: { 'X-Shopify-Access-Token': rec.access_token } }
+          );
+        }
+      }
+    }
+
+    await logEvent(shop, "disconnect", `Disconnected RabbitLoader (removed DID ${rec.short_id})`);
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $set: {
+          short_id: null,
+          api_token: null,
+          connected_at: null
+        }
+      }
+    );
+
+    res.redirect(`${APP_URL}/?shop=${encodeURIComponent(shop)}&disconnected=true`);
+  } catch (err) {
+    console.error('❌ Disconnect failed:', {
+      status: err?.response?.status,
+      data: err?.response?.data,
+      message: err.message
+    });
+    res.status(500).send('Failed to disconnect RabbitLoader');
+  }
+});
+
+// ---------------- API Status ----------------
+app.get('/api/status', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  if (!shop) {
+    return res.status(400).json({ error: 'Missing shop' });
+  }
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec) {
+      return res.json({ rabbitloader_connected: false });
+    }
+
+    res.json({
+      rabbitloader_connected: !!rec.short_id,
+      did: rec.short_id,
+      history: rec.history || []
+    });
+  } catch (err) {
+    console.error('❌ /api/status failed:', err);
+    res.status(500).json({ error: 'Failed to fetch status' });
+  }
+});
+
+// ---------------- RL Credentials ----------------
+app.get('/api/rl-credentials', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  if (!shop) return res.status(400).json({ error: 'Missing shop' });
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec) return res.status(404).json({ error: 'Shop not found' });
+
+    // Extract domain name from shop (remove .myshopify.com)
+    const domainName = shop.replace('.myshopify.com', '');
+
+    res.json({
+      did: rec.short_id,
+      api_token: rec.api_token,
+      domain: domainName // or rec.domain if you store it separately
+    });
+  } catch (err) {
+    console.error('❌ /api/rl-credentials failed:', err);
+    res.status(500).json({ error: 'Failed to fetch RL credentials' });
+  }
+});
+
+// ---------------- RabbitLoader API Proxy Routes ----------------
+app.get('/api/rl-billing-subscription', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  if (!shop) return res.status(400).json({ error: 'Missing shop' });
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec?.api_token) return res.status(404).json({ error: 'RabbitLoader not connected' });
+
+    let response;
+    try {
+      response = await axios.get('https://api-v2.rabbitloader.com/billing/subscription', {
+        headers: {
+          'Authorization': `Bearer ${rec.api_token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        console.warn(`⚠️ API token expired for ${shop}`);
+        await logEvent(shop, "error", "RabbitLoader API token expired");
+        return res.status(401).json({ error: 'RabbitLoader token expired, please reconnect.' });
+      }
+      throw err;
+    }
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ /api/rl-billing-subscription failed:', err);
+    res.status(500).json({ error: 'Failed to fetch billing subscription' });
+  }
+});
+
+app.get('/api/rl-pageview-usage', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const startDate = req.query.start_date || '2025-07-22';
+  const endDate = req.query.end_date || '2025-08-21';
+  
+  if (!shop) return res.status(400).json({ error: 'Missing shop' });
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec?.api_token || !rec?.short_id) return res.status(404).json({ error: 'RabbitLoader not connected' });
+
+    let response;
+    try {
+      response = await axios.get(`https://api-v2.rabbitloader.com/domain/pageview/${rec.short_id}?start_date=${startDate}&end_date=${endDate}`, {
+        headers: {
+          'Authorization': `Bearer ${rec.api_token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        console.warn(`⚠️ API token expired for ${shop}`);
+        await logEvent(shop, "error", "RabbitLoader API token expired");
+        return res.status(401).json({ error: 'RabbitLoader token expired, please reconnect.' });
+      }
+      throw err;
+    }
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ /api/rl-pageview-usage failed:', err);
+    res.status(500).json({ error: 'Failed to fetch pageview usage' });
+  }
+});
+
+app.get('/api/rl-performance-overview', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const startDate = req.query.start_date || '2025-07-21';
+  const endDate = req.query.end_date || '2025-08-20';
+  
+  if (!shop) return res.status(400).json({ error: 'Missing shop' });
+
+  try {
+    const rec = await ShopModel.findOne({ shop });
+    if (!rec?.api_token) return res.status(404).json({ error: 'RabbitLoader not connected' });
+
+    // Extract domain name from shop
+    const domainName = shop.replace('.myshopify.com', '');
+
+    let response;
+    try {
+      response = await axios.get(`https://api-v1.rabbitloader.com/api/v1/report/overview?domain=${domainName}&start_date=${startDate}&end_date=${endDate}`, {
+        headers: {
+          'Authorization': `Bearer ${rec.api_token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        }
+      });
+    } catch (err) {
+      if (err?.response?.status === 401) {
+        console.warn(`⚠️ API token expired for ${shop}`);
+        await logEvent(shop, "error", "RabbitLoader API token expired");
+        return res.status(401).json({ error: 'RabbitLoader token expired, please reconnect.' });
+      }
+      throw err;
+    }
+
+    res.json(response.data);
+  } catch (err) {
+    console.error('❌ /api/rl-performance-overview failed:', err);
+    res.status(500).json({ error: 'Failed to fetch performance overview' });
+  }
+});
+
+// ---------------- Webhooks ----------------
+app.post('/webhooks/app/uninstalled', async (req, res) => {
+  const shop = req.headers['x-shopify-shop-domain'];
+  await ShopModel.deleteOne({ shop });
+  console.log(`🗑️⚠️ Shop ${shop} uninstalled, record deleted`);
+  res.sendStatus(200);
+});
+
+// ---------------- Main App UI ----------------
+app.get('/', async (req, res) => {
+  const shop = (req.query.shop || '').trim();
+  const host = req.query.host; // Preserve host parameter
+  const rlToken = req.query['rl-token'];
+  const connected = req.query.connected;
+  const disconnected = req.query.disconnected;
+
+  if (!shop) {
+    return res.redirect(`${APP_URL}/shopify/auth`);
+  }
+
+  let rec = await ShopModel.findOne({ shop });
+  if (!rec?.access_token) {
+    const redirectUrl = host 
+      ? `/shopify/auth?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`
+      : `/shopify/auth?shop=${encodeURIComponent(shop)}`;
+    return res.redirect(redirectUrl);
+  }
+
+  // RL returned token after console connect
+  if (rlToken) {
+    try {
+      const decoded = Buffer.from(rlToken, 'base64').toString('utf8');
+      const tokenData = JSON.parse(decoded);
+      if (tokenData.did) {
+        await ShopModel.updateOne(
+          { shop },
+          { $set: { short_id: tokenData.did, api_token: tokenData.api_token || null, connected_at: new Date() } },
+          { upsert: true }
+        );
+        await logEvent(shop, "connect", `Connected with DID ${tokenData.did}`);
+        console.log(`✅ RabbitLoader connected for ${shop} with DID ${tokenData.did}`);
+        
+        // Build redirect URL preserving host parameter
+        const redirectUrl = host 
+          ? `${APP_URL}/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&connected=true`
+          : `${APP_URL}/?shop=${encodeURIComponent(shop)}&connected=true`;
+        return res.redirect(redirectUrl);
+      }
+    } catch (err) {
+      console.warn('⚠️ ⚠️ Invalid rl-token format, redirecting with error');
+      await logEvent(shop, "error", "Invalid RabbitLoader token format");
+      
+      // Redirect with error parameter instead of silently failing
+      const errorRedirectUrl = host 
+        ? `${APP_URL}/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&connection_error=invalid_token`
+        : `${APP_URL}/?shop=${encodeURIComponent(shop)}&connection_error=invalid_token`;
+      return res.redirect(errorRedirectUrl);
+    }
+  }
+
+  // Get the updated record after potential token processing
+  rec = await ShopModel.findOne({ shop });
+  const isRLConnected = !!rec?.short_id;
+  
+  // Serve the appropriate HTML file based on connection status
+  if (isRLConnected) {
+    // Serve dashboard.html for connected users
+    res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
+  } else {
+    // Serve index.html for non-connected users  
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Running on port ${PORT}`);
+  console.log(`🔗 App URL: ${APP_URL}`);
+  console.log(`🎯 OAuth: ${APP_URL}/shopify/auth/callback`);
 });
