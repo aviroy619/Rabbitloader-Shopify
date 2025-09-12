@@ -174,26 +174,51 @@ class Dashboard {
         
         // Fetch RabbitLoader data when showing connected state
         this.fetchRLDataForConnectedState();
+        
+        // Check App Embed block status
+        this.checkEmbedStatus();
     }
 
-    // Update elements in disconnected state
+    // Check RL App Embed block status
+    async checkEmbedStatus() {
+        try {
+            const res = await fetch(`/api/embed-status?shop=${encodeURIComponent(this.shop)}`);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            const toggle = document.getElementById("embedToggle");
+            if (toggle) {
+                toggle.checked = !!data.enabled;
+                toggle.onchange = async () => {
+                    try {
+                        await fetch(`/api/embed-toggle?shop=${encodeURIComponent(this.shop)}&enable=${toggle.checked}`);
+                        this.showFlashMessage(`App Embed ${toggle.checked ? "enabled" : "disabled"}`, "success");
+                    } catch (err) {
+                        this.showFlashMessage("Failed to update App Embed", "error");
+                        toggle.checked = !toggle.checked; // rollback
+                    }
+                };
+            }
+        } catch (err) {
+            console.error("Failed to check embed status:", err);
+        }
+    }
+
+    // Update elements in disconnected state  
     updateDisconnectedElements() {
-        // Set up activate button
         const activateBtn = document.getElementById('activateBtn');
         if (activateBtn) {
-            const urlParams = new URLSearchParams(window.location.search);
-            const host = urlParams.get('host');
-
-            let connectUrl = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
-            if (host) {
-                connectUrl += `&host=${encodeURIComponent(host)}`;
-            }
-
-            // Force open in top-level window
-            activateBtn.addEventListener("click", (e) => {
-                e.preventDefault();
-                window.top.location.href = connectUrl;
-            });
+            activateBtn.onclick = async () => {
+                try {
+                    const res = await fetch(`/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`);
+                    const data = await res.json();
+                    if (data.url) {
+                        window.top.location.href = data.url;
+                    }
+                } catch (err) {
+                    console.error("❌ Error activating RabbitLoader:", err);
+                    this.showFlashMessage("⚠️ Failed to open RabbitLoader connect", "error");
+                }
+            };
         }
     }
 
@@ -220,8 +245,17 @@ class Dashboard {
 
         if (disconnectBtn) {
             disconnectBtn.href = `/disconnect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
-            disconnectBtn.onclick = (e) => {
-                if (!confirm('⚠️ Are you sure you want to disconnect RabbitLoader?')) {
+            disconnectBtn.onclick = async (e) => {
+                if (!confirm('Are you sure you want to disconnect RabbitLoader?')) {
+                    e.preventDefault();
+                    return;
+                }
+                Utils.addLoadingState(disconnectBtn, "Disconnecting...");
+                try {
+                    // Let browser handle redirect
+                } catch (err) {
+                    Utils.removeLoadingState(disconnectBtn);
+                    this.showFlashMessage("Disconnect failed", "error");
                     e.preventDefault();
                 }
             };
@@ -259,7 +293,7 @@ class Dashboard {
         }
     }
 
-    // Update action buttons
+    // Update action buttons - UPDATED TO USE NEW CONNECT LOGIC
     updateActions() {
         const actionsContainer = document.getElementById('actions');
         if (!actionsContainer) return;
@@ -267,13 +301,14 @@ class Dashboard {
         actionsContainer.innerHTML = '';
         
         if (!this.isRLConnected) {
-            // Show connect button
-            actionsContainer.appendChild(this.createActionButton({
+            // Show connect button with new async handler
+            const connectBtn = this.createActionButton({
                 text: '🔌 Activate RabbitLoader',
-                href: `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`,
                 className: 'primary',
-                description: 'Connect your store to RabbitLoader'
-            }));
+                description: 'Connect your store to RabbitLoader',
+                isConnectButton: true
+            });
+            actionsContainer.appendChild(connectBtn);
         } else {
             // Show connected actions
             const actions = [
@@ -304,27 +339,78 @@ class Dashboard {
         }
     }
 
-    // Create action button element
+    // Create action button element - UPDATED TO HANDLE CONNECT BUTTON
     createActionButton(config) {
         const button = document.createElement('a');
-        button.href = config.href;
         button.className = `action-btn ${config.className}`;
         button.innerHTML = config.text;
         button.title = config.description;
         
-        if (config.requiresConfirm) {
-            button.onclick = (e) => {
-                if (!confirm('⚠️ Are you sure you want to disconnect RabbitLoader?')) {
-                    e.preventDefault();
+        if (config.isConnectButton) {
+            // Special handling for connect button
+            button.href = '#';
+            button.addEventListener('click', async (e) => {
+                e.preventDefault();
+                
+                const originalText = button.innerHTML;
+                button.innerHTML = '<span class="spinner"></span> Connecting...';
+                button.classList.add('loading');
+                
+                try {
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const host = urlParams.get('host');
+                    
+                    let connectUrl = `/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
+                    if (host) {
+                        connectUrl += `&host=${encodeURIComponent(host)}`;
+                    }
+                    
+                    const response = await fetch(connectUrl);
+                    
+                    if (response.ok) {
+                        const data = await response.json();
+                        
+                        if (data.url) {
+                            window.top.location.href = data.url;
+                        } else {
+                            throw new Error('No redirect URL provided by server');
+                        }
+                    } else {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Failed to connect to RabbitLoader');
+                    }
+                } catch (error) {
+                    console.error('Connect failed:', error);
+                    this.showFlashMessage(`Connect failed: ${error.message}`, "error");
+                    button.innerHTML = originalText;
+                    button.classList.remove('loading');
                 }
-            };
+            });
+        } else {
+            // Regular button with href
+            button.href = config.href;
+            
+            if (config.requiresConfirm) {
+                button.onclick = (e) => {
+                    if (!confirm('⚠️ Are you sure you want to disconnect RabbitLoader?')) {
+                        e.preventDefault();
+                    }
+                };
+            }
+            
+            // Add loading state on click with error recovery
+            button.addEventListener('click', (e) => {
+                Utils.addLoadingState(button, 'Processing...');
+                
+                // Recovery mechanism if page doesn't redirect
+                setTimeout(() => {
+                    if (button.classList.contains('loading')) {
+                        Utils.removeLoadingState(button);
+                        this.showFlashMessage("Request timed out. Please try again.", "error");
+                    }
+                }, 10000); // 10 second timeout
+            });
         }
-        
-        // Add loading state on click
-        button.addEventListener('click', () => {
-            button.classList.add('loading');
-            button.innerHTML = `<span class="spinner"></span> Processing...`;
-        });
         
         return button;
     }
@@ -424,7 +510,7 @@ class Dashboard {
 
     // Show error message
     showError(message) {
-        this.showFlashMessage(`❌ ${message}`, 'error');
+        this.showFlashMessage(`⚠️ ${message}`, 'error');
     }
 
     // Refresh dashboard data
@@ -437,43 +523,56 @@ class Dashboard {
     async fetchRLDataForConnectedState() {
         const shop = this.shop;
         if (!shop) {
-            console.warn("❌ Missing shop parameter");
+            console.warn("⚠️ Missing shop parameter");
             return;
         }
 
         try {
-            // 1. Plan Info - using proxied route
-            const planRes = await fetch(`/api/rl-billing-subscription?shop=${encodeURIComponent(shop)}`);
-            if (planRes.ok) {
-                const planData = await planRes.json();
+            // Dynamic last 30 days
+            const endDate = new Date().toISOString().split("T")[0];
+            const startDate = new Date(Date.now() - 30 * 864e5).toISOString().split("T")[0];
+
+            const [billingRes, usageRes, perfRes] = await Promise.all([
+                fetch(`/api/rl-billing-subscription?shop=${encodeURIComponent(shop)}`),
+                fetch(`/api/rl-pageview-usage?shop=${encodeURIComponent(shop)}&start_date=${startDate}&end_date=${endDate}`),
+                fetch(`/api/rl-performance-overview?shop=${encodeURIComponent(shop)}&start_date=${startDate}&end_date=${endDate}`)
+            ]);
+
+            if (billingRes.status === 401 || usageRes.status === 401 || perfRes.status === 401) {
+                console.warn("⚠️ RabbitLoader token expired for", shop);
+                this.isRLConnected = false;
+                this.currentDID = null;
+                this.showFlashMessage("RabbitLoader session expired. Please reconnect.", "error");
+                this.updateUI();
+                return;
+            }
+
+            // 1. Plan Info
+            if (billingRes.ok) {
+                const planData = await billingRes.json();
                 this.safeUpdateElement("plan-name", planData?.plan_name || "Unknown Plan");
                 this.safeUpdateElement("plan-domains", planData?.domains || "-");
                 this.safeUpdateElement("plan-pageviews", planData?.pageviews || "-");
             }
 
-            // 2. Pageview Usage - using proxied route
-            const usageRes = await fetch(`/api/rl-pageview-usage?shop=${encodeURIComponent(shop)}&start_date=2025-07-22&end_date=2025-08-21`);
+            // 2. Pageview Usage
             if (usageRes.ok) {
                 const usageData = await usageRes.json();
                 this.safeUpdateElement("plan-usage", usageData?.total || "0");
             }
 
-            // 3. Performance Snapshot - using proxied route
-            const overviewRes = await fetch(`/api/rl-performance-overview?shop=${encodeURIComponent(shop)}&start_date=2025-07-21&end_date=2025-08-20`);
-            if (overviewRes.ok) {
-                const overviewData = await overviewRes.json();
-                this.safeUpdateElement("score", overviewData?.score || "-");
-                this.safeUpdateElement("lcp", overviewData?.lcp || "-");
-                this.safeUpdateElement("cls", overviewData?.cls || "-");
-                this.safeUpdateElement("fid", overviewData?.fid || "-");
+            // 3. Performance Snapshot
+            if (perfRes.ok) {
+                const overviewData = await perfRes.json();
+                this.updatePerformanceSection(overviewData);
             }
 
             // 4. Status Update
             this.safeUpdateElement("rl-status", "✅ Connected");
 
         } catch (err) {
-            console.error("❌ Error fetching RL data:", err);
-            this.safeUpdateElement("rl-status", "❌ Error fetching data");
+            console.error("⚠️ Error fetching RL data:", err);
+            this.safeUpdateElement("rl-status", "⚠️ Error fetching data");
         }
     }
 
@@ -482,6 +581,24 @@ class Dashboard {
         const element = document.getElementById(id);
         if (element) {
             element.textContent = content;
+        }
+    }
+
+    // Update performance section with guard for missing elements
+    updatePerformanceSection(data) {
+        const performanceElements = ['score', 'lcp', 'cls', 'fid'];
+        let hasPerformanceSection = false;
+        
+        performanceElements.forEach(id => {
+            const element = document.getElementById(id);
+            if (element) {
+                hasPerformanceSection = true;
+                element.textContent = data?.[id] || "-";
+            }
+        });
+        
+        if (!hasPerformanceSection) {
+            console.warn("Performance section elements not found in DOM");
         }
     }
 }
@@ -560,6 +677,12 @@ const Utils = {
 document.addEventListener('DOMContentLoaded', () => {
     // Initialize the dashboard
     window.dashboard = new Dashboard();
+
+    // Handle ?connection_error param
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("connection_error")) {
+        window.dashboard.showFlashMessage("❌ RabbitLoader connection failed. Please try again.", "error");
+    }
     
     // Add refresh functionality
     window.refreshDashboard = () => {
@@ -581,11 +704,17 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     
     // Auto-refresh every 30 seconds if connected
-    setInterval(() => {
+    window.dashboard.refreshInterval = setInterval(() => {
         if (window.dashboard && window.dashboard.isRLConnected) {
             window.dashboard.refresh();
         }
     }, 30000);
+
+    window.addEventListener('beforeunload', () => {
+        if (window.dashboard.refreshInterval) {
+            clearInterval(window.dashboard.refreshInterval);
+        }
+    });
 });
 
 // Add CSS for slideOut animation and page states
@@ -611,11 +740,16 @@ document.head.appendChild(style);
 
 // --- Static pages (success/error/disconnected) helpers ---
 document.addEventListener("DOMContentLoaded", () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const shop = urlParams.get("shop");
+  const host = urlParams.get("host");
+  const baseUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}`;
+
   const retryBtn = document.querySelector(".btn.retry");
   if (retryBtn) {
     retryBtn.addEventListener("click", (e) => {
       e.preventDefault();
-      window.location.href = "/"; // back to main app
+      window.location.href = baseUrl;
     });
   }
 
@@ -623,62 +757,14 @@ document.addEventListener("DOMContentLoaded", () => {
   if (homeBtn) {
     homeBtn.addEventListener("click", (e) => {
       e.preventDefault();
-      window.location.href = "/"; // redirect to dashboard
+      window.location.href = baseUrl;
     });
   }
 
   // Auto-redirect after success
   if (document.body.classList.contains("success-page")) {
     setTimeout(() => {
-      window.location.href = "/"; // auto go back to app
+      window.location.href = baseUrl;
     }, 4000);
   }
 });
-
-// ===================== RabbitLoader Dashboard Logic =====================
-// Updated fetchRLData function using proxied routes
-async function fetchRLData() {
-    const shop = new URLSearchParams(window.location.search).get('shop');
-    if (!shop) {
-        console.warn("❌ Missing shop parameter");
-        return;
-    }
-
-    try {
-        // 1. Plan Info - using proxied route
-        const planRes = await fetch(`/api/rl-billing-subscription?shop=${encodeURIComponent(shop)}`);
-        if (planRes.ok) {
-            const planData = await planRes.json();
-            if (document.getElementById("plan-name")) document.getElementById("plan-name").textContent = planData?.plan_name || "Unknown Plan";
-            if (document.getElementById("plan-domains")) document.getElementById("plan-domains").textContent = planData?.domains || "-";
-            if (document.getElementById("plan-pageviews")) document.getElementById("plan-pageviews").textContent = planData?.pageviews || "-";
-        }
-
-        // 2. Pageview Usage - using proxied route
-        const usageRes = await fetch(`/api/rl-pageview-usage?shop=${encodeURIComponent(shop)}&start_date=2025-07-22&end_date=2025-08-21`);
-        if (usageRes.ok) {
-            const usageData = await usageRes.json();
-            if (document.getElementById("plan-usage")) document.getElementById("plan-usage").textContent = usageData?.total || "0";
-        }
-
-        // 3. Performance Snapshot - using proxied route
-        const overviewRes = await fetch(`/api/rl-performance-overview?shop=${encodeURIComponent(shop)}&start_date=2025-07-21&end_date=2025-08-20`);
-        if (overviewRes.ok) {
-            const overviewData = await overviewRes.json();
-            if (document.getElementById("score")) document.getElementById("score").textContent = overviewData?.score || "-";
-            if (document.getElementById("lcp")) document.getElementById("lcp").textContent = overviewData?.lcp || "-";
-            if (document.getElementById("cls")) document.getElementById("cls").textContent = overviewData?.cls || "-";
-            if (document.getElementById("fid")) document.getElementById("fid").textContent = overviewData?.fid || "-";
-        }
-
-        // 4. Status Update
-        if (document.getElementById("rl-status")) document.getElementById("rl-status").textContent = "✅ Connected";
-
-    } catch (err) {
-        console.error("❌ Error fetching RL data:", err);
-        if (document.getElementById("rl-status")) document.getElementById("rl-status").textContent = "❌ Error fetching data";
-    }
-}
-
-// Run on page load
-document.addEventListener("DOMContentLoaded", fetchRLData);
