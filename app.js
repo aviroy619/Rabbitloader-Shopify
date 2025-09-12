@@ -17,8 +17,8 @@ mongoose.connect(process.env.MONGO_URI, {
   useUnifiedTopology: true
 });
 
-mongoose.connection.on('connected', () => console.log('✅ MongoDB connected'));
-mongoose.connection.on('error', err => console.error('❌ MongoDB error:', err));
+mongoose.connection.on('connected', () => console.log('âœ… MongoDB connected'));
+mongoose.connection.on('error', err => console.error('âŒ MongoDB error:', err));
 
 // Define schema
 const ShopSchema = new mongoose.Schema({
@@ -68,7 +68,7 @@ async function getShopInfo(shop, accessToken) {
     });
     return response.data.shop;
   } catch (error) {
-    console.error('❌ Error fetching shop info:', {
+    console.error('âŒ Error fetching shop info:', {
       status: error?.response?.status,
       data: error?.response?.data,
       message: error.message
@@ -77,10 +77,10 @@ async function getShopInfo(shop, accessToken) {
   }
 }
 
-// ⚠️ ⚠️ No direct token API for RabbitLoader.
+// âš ï¸ âš ï¸ No direct token API for RabbitLoader.
 // DID + API token are returned via rl-token redirect after user authenticates on rabbitloader.com
 async function fetchRLToken(siteUrl) {
-  console.warn("⚠️ ⚠️ fetchRLToken() is deprecated. Use rl-token redirect flow instead.");
+  console.warn("âš ï¸ âš ï¸ fetchRLToken() is deprecated. Use rl-token redirect flow instead.");
   return null;
 }
 
@@ -106,7 +106,7 @@ async function logEvent(shop, type, message) {
       { upsert: true }
     );
   } catch (error) {
-    console.error('❌ Error logging event:', error);
+    console.error('âŒ Error logging event:', error);
   }
 }
 
@@ -116,7 +116,7 @@ app.get('/shopify/auth', (req, res) => {
   if (!shop) {
     return res.type('html').send(`
       <div style="font-family:sans-serif;margin:2rem;text-align:center">
-        <h2>🔗 Connect Your Shopify Store</h2>
+        <h2>ðŸ"— Connect Your Shopify Store</h2>
         <p>Please provide your shop URL:</p>
         <form method="GET" action="/shopify/auth">
           <input type="text" name="shop" placeholder="yourstore.myshopify.com" style="padding:10px;margin:10px;width:300px">
@@ -158,10 +158,47 @@ app.get('/shopify/auth/callback', async (req, res) => {
     );
 
     await logEvent(shop, "auth", "Shopify OAuth completed");
-    console.log(`✅ Shopify OAuth success for ${shop}`);
+    console.log(`âœ… Shopify OAuth success for ${shop}`);
+
+    // ---- Auto-inject RL script after install ----
+    try {
+      const themeRes = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes.json`, {
+        headers: { 'X-Shopify-Access-Token': tokenRes.data.access_token },
+      });
+      const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
+      if (activeTheme) {
+        const layoutRes = await axios.get(
+          `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+          {
+            params: { 'asset[key]': 'layout/theme.liquid' },
+            headers: { 'X-Shopify-Access-Token': tokenRes.data.access_token }
+          }
+        );
+        let content = layoutRes.data.asset?.value || '';
+
+        // Insert RL script placeholder (DID will be updated later after RL connect)
+        const scriptTag = `<script id="rabbitloader-script" data-rl-placeholder="true" defer></script>`;
+        if (!content.includes('id="rabbitloader-script"')) {
+          if (content.includes('</head>')) {
+            content = content.replace('</head>', `  ${scriptTag}\n</head>`);
+          } else {
+            content = scriptTag + '\n' + content;
+          }
+          await axios.put(
+            `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+            { asset: { key: 'layout/theme.liquid', value: content } },
+            { headers: { 'X-Shopify-Access-Token': tokenRes.data.access_token } }
+          );
+          console.log(`âœ… RL script placeholder injected into ${shop} theme.liquid`);
+        }
+      }
+    } catch (injectErr) {
+      console.error("âš ï¸ Auto-inject failed:", injectErr?.response?.data || injectErr.message);
+    }
+
     res.redirect(`${APP_URL}/?shop=${encodeURIComponent(shop)}`);
   } catch (err) {
-    console.error('❌ OAuth error:', {
+    console.error('âŒ OAuth error:', {
       status: err?.response?.status,
       data: err?.response?.data,
       message: err.message
@@ -197,12 +234,12 @@ app.get('/connect-rabbitloader', async (req, res) => {
       `&cms_v=${SHOPIFY_PLATFORM_VERSION}` +
       `&plugin_v=${RABBITLOADER_PLUGIN_VERSION}`;
 
-    console.log(`🚀 Preparing RabbitLoader Console URL for ${shop}`);
+    console.log(`ðŸš€ Preparing RabbitLoader Console URL for ${shop}`);
     
     // Return JSON instead of redirecting to prevent iframe jitter
     res.json({ url: rlUrl });
   } catch (error) {
-    console.error('❌ Error in connect:', {
+    console.error('âŒ Error in connect:', {
       status: error?.response?.status,
       data: error?.response?.data,
       message: error.message
@@ -245,12 +282,12 @@ app.get('/inject-script', async (req, res) => {
         { headers: { 'X-Shopify-Access-Token': rec.access_token } }
       );
       await logEvent(shop, "inject", `Injected script for DID ${rec.short_id}`);
-      return res.send(`✅ Script injected with DID ${rec.short_id}`);
+      return res.send(`âœ… Script injected with DID ${rec.short_id}`);
     }
 
-    res.send("⚠️⚠️ Script already present.");
+    res.send("âš ï¸âš ï¸ Script already present.");
   } catch (err) {
-    console.error('❌ Injection failed:', {
+    console.error('âŒ Injection failed:', {
       status: err?.response?.status,
       data: err?.response?.data,
       message: err.message
@@ -289,12 +326,12 @@ app.get('/revert-script', async (req, res) => {
         { headers: { 'X-Shopify-Access-Token': rec.access_token } }
       );
       await logEvent(shop, "revert", `Removed script for DID ${rec.short_id}`);
-      return res.send(`🗑️⚠️ Script removed for DID ${rec.short_id}`);
+      return res.send(`ðŸ—'ï¸âš ï¸ Script removed for DID ${rec.short_id}`);
     }
 
-    res.send("⚠️⚠️ No RabbitLoader script found.");
+    res.send("âš ï¸âš ï¸ No RabbitLoader script found.");
   } catch (err) {
-    console.error('❌ Revert failed:', {
+    console.error('âŒ Revert failed:', {
       status: err?.response?.status,
       data: err?.response?.data,
       message: err.message
@@ -349,7 +386,7 @@ app.get('/disconnect-rabbitloader', async (req, res) => {
 
     res.redirect(`${APP_URL}/?shop=${encodeURIComponent(shop)}&disconnected=true`);
   } catch (err) {
-    console.error('❌ Disconnect failed:', {
+    console.error('âŒ Disconnect failed:', {
       status: err?.response?.status,
       data: err?.response?.data,
       message: err.message
@@ -377,7 +414,7 @@ app.get('/api/status', async (req, res) => {
       history: rec.history || []
     });
   } catch (err) {
-    console.error('❌ /api/status failed:', err);
+    console.error('âŒ /api/status failed:', err);
     res.status(500).json({ error: 'Failed to fetch status' });
   }
 });
@@ -400,7 +437,7 @@ app.get('/api/rl-credentials', async (req, res) => {
       domain: domainName // or rec.domain if you store it separately
     });
   } catch (err) {
-    console.error('❌ /api/rl-credentials failed:', err);
+    console.error('âŒ /api/rl-credentials failed:', err);
     res.status(500).json({ error: 'Failed to fetch RL credentials' });
   }
 });
@@ -425,7 +462,7 @@ app.get('/api/rl-billing-subscription', async (req, res) => {
       });
     } catch (err) {
       if (err?.response?.status === 401) {
-        console.warn(`⚠️ API token expired for ${shop}`);
+        console.warn(`âš ï¸ API token expired for ${shop}`);
         await logEvent(shop, "error", "RabbitLoader API token expired");
         return res.status(401).json({ error: 'RabbitLoader token expired, please reconnect.' });
       }
@@ -434,7 +471,7 @@ app.get('/api/rl-billing-subscription', async (req, res) => {
 
     res.json(response.data);
   } catch (err) {
-    console.error('❌ /api/rl-billing-subscription failed:', err);
+    console.error('âŒ /api/rl-billing-subscription failed:', err);
     res.status(500).json({ error: 'Failed to fetch billing subscription' });
   }
 });
@@ -461,7 +498,7 @@ app.get('/api/rl-pageview-usage', async (req, res) => {
       });
     } catch (err) {
       if (err?.response?.status === 401) {
-        console.warn(`⚠️ API token expired for ${shop}`);
+        console.warn(`âš ï¸ API token expired for ${shop}`);
         await logEvent(shop, "error", "RabbitLoader API token expired");
         return res.status(401).json({ error: 'RabbitLoader token expired, please reconnect.' });
       }
@@ -470,7 +507,7 @@ app.get('/api/rl-pageview-usage', async (req, res) => {
 
     res.json(response.data);
   } catch (err) {
-    console.error('❌ /api/rl-pageview-usage failed:', err);
+    console.error('âŒ /api/rl-pageview-usage failed:', err);
     res.status(500).json({ error: 'Failed to fetch pageview usage' });
   }
 });
@@ -500,7 +537,7 @@ app.get('/api/rl-performance-overview', async (req, res) => {
       });
     } catch (err) {
       if (err?.response?.status === 401) {
-        console.warn(`⚠️ API token expired for ${shop}`);
+        console.warn(`âš ï¸ API token expired for ${shop}`);
         await logEvent(shop, "error", "RabbitLoader API token expired");
         return res.status(401).json({ error: 'RabbitLoader token expired, please reconnect.' });
       }
@@ -509,7 +546,7 @@ app.get('/api/rl-performance-overview', async (req, res) => {
 
     res.json(response.data);
   } catch (err) {
-    console.error('❌ /api/rl-performance-overview failed:', err);
+    console.error('âŒ /api/rl-performance-overview failed:', err);
     res.status(500).json({ error: 'Failed to fetch performance overview' });
   }
 });
@@ -518,7 +555,7 @@ app.get('/api/rl-performance-overview', async (req, res) => {
 app.post('/webhooks/app/uninstalled', async (req, res) => {
   const shop = req.headers['x-shopify-shop-domain'];
   await ShopModel.deleteOne({ shop });
-  console.log(`🗑️⚠️ Shop ${shop} uninstalled, record deleted`);
+  console.log(`ðŸ—'ï¸âš ï¸ Shop ${shop} uninstalled, record deleted`);
   res.sendStatus(200);
 });
 
@@ -554,22 +591,62 @@ app.get('/', async (req, res) => {
           { upsert: true }
         );
         await logEvent(shop, "connect", `Connected with DID ${tokenData.did}`);
-        console.log(`✅ RabbitLoader connected for ${shop} with DID ${tokenData.did}`);
+        console.log(`âœ… RabbitLoader connected for ${shop} with DID ${tokenData.did}`);
+        
+        // Auto-replace placeholder with actual script
+        try {
+          const rec = await ShopModel.findOne({ shop });
+          if (rec?.short_id) {
+            const themeRes = await axios.get(`https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes.json`, {
+              headers: { 'X-Shopify-Access-Token': rec.access_token },
+            });
+            const activeTheme = themeRes.data.themes.find(t => t.role === 'main');
+            if (activeTheme) {
+              const layoutRes = await axios.get(
+                `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+                { params: { 'asset[key]': 'layout/theme.liquid' },
+                  headers: { 'X-Shopify-Access-Token': rec.access_token } }
+              );
+              let content = layoutRes.data.asset?.value || '';
+
+              const placeholder = `<script id="rabbitloader-script" data-rl-placeholder="true" defer></script>`;
+              const newScript = `<script src="https://cfw.rabbitloader.xyz/${rec.short_id}/u.js.red.js" defer></script>`;
+
+              if (content.includes(placeholder)) {
+                content = content.replace(placeholder, newScript);
+              } else if (!content.includes(newScript)) {
+                // fallback if placeholder not found
+                content = content.replace('</head>', `  ${newScript}\n</head>`);
+              }
+
+              await axios.put(
+                `https://${shop}/admin/api/${SHOPIFY_API_VERSION}/themes/${activeTheme.id}/assets.json`,
+                { asset: { key: 'layout/theme.liquid', value: content } },
+                { headers: { 'X-Shopify-Access-Token': rec.access_token } }
+              );
+              console.log(`âœ… Replaced placeholder with live script for DID ${rec.short_id}`);
+              await logEvent(shop, "inject", `Auto-injected live script for DID ${rec.short_id}`);
+            }
+          }
+        } catch (err) {
+          console.error("âš ï¸ Failed to replace placeholder script:", err?.response?.data || err.message);
+          await logEvent(shop, "error", "Failed to auto-inject script after RL connect");
+        }
         
         // Build redirect URL preserving host parameter
-        const redirectUrl = host 
-          ? `${APP_URL}/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&connected=true`
-          : `${APP_URL}/?shop=${encodeURIComponent(shop)}&connected=true`;
+        const redirectUrl = host
+          ? `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&connected=true`
+          : `/?shop=${encodeURIComponent(shop)}&connected=true`;
         return res.redirect(redirectUrl);
       }
     } catch (err) {
-      console.warn('⚠️ ⚠️ Invalid rl-token format, redirecting with error');
+      console.warn('âš ï¸ âš ï¸ Invalid rl-token format, redirecting with error');
       await logEvent(shop, "error", "Invalid RabbitLoader token format");
       
       // Redirect with error parameter instead of silently failing
-      const errorRedirectUrl = host 
-        ? `${APP_URL}/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&connection_error=invalid_token`
-        : `${APP_URL}/?shop=${encodeURIComponent(shop)}&connection_error=invalid_token`;
+      const errorRedirectUrl = host
+        ? `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host)}&connection_error=invalid_token`
+        : `/?shop=${encodeURIComponent(shop)}&connection_error=invalid_token`;
       return res.redirect(errorRedirectUrl);
     }
   }
@@ -589,7 +666,7 @@ app.get('/', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 Running on port ${PORT}`);
-  console.log(`🔗 App URL: ${APP_URL}`);
-  console.log(`🎯 OAuth: ${APP_URL}/shopify/auth/callback`);
+  console.log(`ðŸš€ Running on port ${PORT}`);
+  console.log(`ðŸ"— App URL: ${APP_URL}`);
+  console.log(`ðŸŽ¯ OAuth: ${APP_URL}/shopify/auth/callback`);
 });
