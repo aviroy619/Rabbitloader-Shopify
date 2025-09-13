@@ -1,209 +1,131 @@
-// Dashboard State Management
-class Dashboard {
-  constructor() {
-    this.shop = this.getQueryParam('shop');
-    this.isRLConnected = false;
-    this.currentDID = null;
-    this.history = [];
+document.addEventListener("DOMContentLoaded", async () => {
+  const shop = new URLSearchParams(window.location.search).get("shop");
+  const rlToken = new URLSearchParams(window.location.search).get("rl-token");
+  const activateBtn = document.getElementById("activateBtn");
+  const disconnectBtn = document.getElementById("disconnectBtn");
 
-    this.init();
+  const loadingState = document.getElementById("loadingState");
+  const connectedState = document.getElementById("connectedState");
+  const disconnectedState = document.getElementById("disconnectedState");
+  const flashContainer = document.getElementById("flashMessages");
+
+  // 🔔 Flash message helper
+  function showFlash(message, type = "info") {
+    if (!flashContainer) return;
+
+    const flash = document.createElement("div");
+    flash.className = `flash-message ${type}`;
+    flash.textContent = message;
+
+    flashContainer.appendChild(flash);
+
+    setTimeout(() => {
+      flash.classList.add("fade-out");
+      setTimeout(() => flash.remove(), 500);
+    }, 3000);
   }
 
-  async init() {
-    if (!this.shop) {
-      this.showError('Missing shop parameter');
+  // 🔄 UI state switcher
+  function showState(state) {
+    loadingState.style.display = "none";
+    connectedState.style.display = "none";
+    disconnectedState.style.display = "none";
+
+    if (state === "connected") connectedState.style.display = "block";
+    if (state === "disconnected") disconnectedState.style.display = "block";
+  }
+
+  // ✅ Check shop status from backend
+  async function checkStatus() {
+    if (!shop) {
+      showState("disconnected");
+      document.getElementById("storeNameDisconnected").textContent = "Unknown Shop";
       return;
     }
 
-    this.updateStoreName();
-    this.handleFlashMessages();
-    await this.loadStatus();
-    this.updateUI();
-  }
+    try {
+      const res = await fetch(`/shopify/status?shop=${encodeURIComponent(shop)}`);
+      const data = await res.json();
 
-  getQueryParam(name) {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get(name);
-  }
-
-  updateStoreName() {
-    const storeNameEls = [
-      document.getElementById('storeName'),
-      document.getElementById('storeNameDisconnected')
-    ];
-    storeNameEls.forEach(el => {
-      if (el && this.shop) {
-        el.textContent = this.shop;
+      if (data.ok && data.connected) {
+        showState("connected");
+        document.getElementById("storeNameConnected").textContent = shop;
+      } else {
+        showState("disconnected");
+        document.getElementById("storeNameDisconnected").textContent = shop;
       }
+    } catch (err) {
+      console.error("❌ Status check failed:", err);
+      showState("disconnected");
+      document.getElementById("storeNameDisconnected").textContent = shop || "Unknown Shop";
+      showFlash("Failed to check connection status", "error");
+    }
+  }
+
+  // 🟢 Special case: if RL redirects back with rl-token → save it
+  if (rlToken && shop) {
+    try {
+      const res = await fetch("/shopify/store-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shop, rlToken })
+      });
+      const data = await res.json();
+
+      if (data.ok) {
+        showFlash("Connected successfully", "success");
+        showState("connected");
+        document.getElementById("storeNameConnected").textContent = shop;
+      } else {
+        showFlash("Failed to save connection: " + (data.error || "Unknown error"), "error");
+      }
+    } catch (err) {
+      console.error("❌ RL token store request failed:", err);
+      showFlash("Failed to save connection", "error");
+    }
+  } else {
+    await checkStatus();
+  }
+
+  // 🚀 Activate button → RabbitLoader console
+  if (activateBtn && shop) {
+    activateBtn.addEventListener("click", () => {
+      const APP_URL = window.env.APP_URL;
+      const SHOPIFY_API_VERSION = window.env.SHOPIFY_API_VERSION;
+      const redirectUrl = `${APP_URL}/shopify/auth/callback?shop=${encodeURIComponent(shop)}`;
+      const siteUrl = `https://${shop}`;
+
+      const connectUrl = `https://rabbitloader.com/account/?source=shopify` +
+        `&action=connect` +
+        `&site_url=${encodeURIComponent(siteUrl)}` +
+        `&redirect_url=${encodeURIComponent(redirectUrl)}` +
+        `&cms_v=${SHOPIFY_API_VERSION}` +
+        `&plugin_v=1.0.0`;
+
+      showFlash("Redirecting to RabbitLoader for authentication…", "info");
+      window.location.href = connectUrl;
     });
   }
 
-  handleFlashMessages() {
-    const connected = this.getQueryParam('connected');
-    const disconnected = this.getQueryParam('disconnected');
-
-    if (connected === 'true') {
-      this.showFlashMessage('🎉 RabbitLoader successfully connected and activated!', 'success');
-    }
-    if (disconnected === 'true') {
-      this.showFlashMessage('🔌 RabbitLoader has been disconnected from your store.', 'warning');
-    }
-  }
-
-  showFlashMessage(message, type = 'success') {
-    const container = document.getElementById('flashMessages');
-    if (!container) return;
-
-    const el = document.createElement('div');
-    el.className = `flash-message ${type}`;
-    el.innerHTML = `<span>${message}</span>`;
-    container.appendChild(el);
-
-    setTimeout(() => {
-      el.style.animation = 'slideOut 0.3s ease-out forwards';
-      setTimeout(() => el.remove(), 300);
-    }, 5000);
-  }
-
-  async loadStatus() {
-    try {
-      const res = await fetch(`/api/status?shop=${encodeURIComponent(this.shop)}`);
-      if (res.ok) {
-        const data = await res.json();
-        this.isRLConnected = data.rabbitloader_connected;
-        this.currentDID = data.did;
-        this.history = data.history || [];
-      }
-    } catch (err) {
-      console.warn('⚠️ Failed to fetch status:', err);
-    }
-  }
-
-  updateUI() {
-    // Hide loading state if present
-    const loading = document.getElementById('loadingState');
-    if (loading) loading.style.display = 'none';
-
-    // Handle disconnected page (index.html)
-    const disconnected = document.getElementById('disconnectedState');
-    if (disconnected) {
-      if (!this.isRLConnected) {
-        disconnected.style.display = 'block';
-        this.setupActivateBtn();
-      }
-      return; // Stop here — no dashboard elements on index.html
-    }
-
-    // Handle connected page (dashboard.html)
-    const connected = document.getElementById('connectedState');
-    if (connected) {
-      if (this.isRLConnected) {
-        connected.style.display = 'block';
-        this.updateDashboardElements();
-      }
-    }
-  }
-
-  setupActivateBtn() {
-    const btn = document.getElementById('activateBtn');
-    if (!btn) return;
-
-    btn.onclick = async () => {
+  // 🔌 Disconnect button → backend call
+  if (disconnectBtn && shop) {
+    disconnectBtn.addEventListener("click", async () => {
       try {
-        const res = await fetch(`/connect-rabbitloader?shop=${encodeURIComponent(this.shop)}`);
+        const res = await fetch(`/shopify/disconnect?shop=${encodeURIComponent(shop)}`, {
+          method: "POST"
+        });
         const data = await res.json();
-        if (data.url) {
-          window.top.location.href = data.url;
+
+        if (data.ok) {
+          showFlash("Disconnected from RabbitLoader", "success");
+          window.location.href = `/?shop=${shop}`; // reload → Disconnected state
         } else {
-          this.showFlashMessage("⚠️ Failed to get RabbitLoader connect URL", "error");
+          showFlash("Failed to disconnect: " + (data.error || "Unknown error"), "error");
         }
       } catch (err) {
-        console.error("❌ Error activating RabbitLoader:", err);
-        this.showFlashMessage("⚠️ Failed to activate RabbitLoader", "error");
+        console.error("❌ Disconnect request failed:", err);
+        showFlash("Disconnect failed. Check console logs.", "error");
       }
-    };
+    });
   }
-
-  updateDashboardElements() {
-    // Update DID
-    const didVal = document.getElementById('didValue');
-    if (didVal && this.currentDID) didVal.textContent = this.currentDID;
-
-    // Hook up buttons
-    const injectBtn = document.getElementById('injectBtn');
-    if (injectBtn) injectBtn.href = `/inject-script?shop=${encodeURIComponent(this.shop)}`;
-
-    const revertBtn = document.getElementById('revertBtn');
-    if (revertBtn) revertBtn.href = `/revert-script?shop=${encodeURIComponent(this.shop)}`;
-
-    const disconnectBtn = document.getElementById('disconnectBtn');
-    if (disconnectBtn) {
-      disconnectBtn.href = `/disconnect-rabbitloader?shop=${encodeURIComponent(this.shop)}`;
-      disconnectBtn.onclick = (e) => {
-        if (!confirm('Are you sure you want to disconnect RabbitLoader?')) {
-          e.preventDefault();
-        }
-      };
-    }
-
-    // Fetch RabbitLoader data
-    this.fetchRLData();
-  }
-
-  async fetchRLData() {
-    try {
-      const endDate = new Date().toISOString().split("T")[0];
-      const startDate = new Date(Date.now() - 30 * 864e5).toISOString().split("T")[0];
-
-      const [billingRes, usageRes, perfRes] = await Promise.all([
-        fetch(`/api/rl-billing-subscription?shop=${encodeURIComponent(this.shop)}`),
-        fetch(`/api/rl-pageview-usage?shop=${encodeURIComponent(this.shop)}&start_date=${startDate}&end_date=${endDate}`),
-        fetch(`/api/rl-performance-overview?shop=${encodeURIComponent(this.shop)}&start_date=${startDate}&end_date=${endDate}`)
-      ]);
-
-      if (billingRes.ok) {
-        const billing = await billingRes.json();
-        this.safeUpdate("plan-name", billing?.plan_name || "Unknown Plan");
-        this.safeUpdate("plan-domains", billing?.domains || "-");
-        this.safeUpdate("plan-pageviews", billing?.pageviews || "-");
-      }
-
-      if (usageRes.ok) {
-        const usage = await usageRes.json();
-        this.safeUpdate("plan-usage", usage?.total || "0");
-      }
-
-      if (perfRes.ok) {
-        const perf = await perfRes.json();
-        this.updatePerformance(perf);
-      }
-    } catch (err) {
-      console.error("⚠️ Error fetching RL data:", err);
-      this.safeUpdate("rl-status", "⚠️ Error fetching data");
-    }
-  }
-
-  safeUpdate(id, value) {
-    const el = document.getElementById(id);
-    if (el) el.textContent = value;
-  }
-
-  updatePerformance(data) {
-    const metrics = { score: "--", lcp: "--", cls: "--", fid: "--" };
-    Object.assign(metrics, data);
-
-    this.safeUpdate("score", metrics.score);
-    this.safeUpdate("lcp", metrics.lcp);
-    this.safeUpdate("cls", metrics.cls);
-    this.safeUpdate("fid", metrics.fid);
-  }
-
-  showError(msg) {
-    this.showFlashMessage(`⚠️ ${msg}`, "error");
-  }
-}
-
-// Initialize on DOM load
-document.addEventListener("DOMContentLoaded", () => {
-  window.dashboard = new Dashboard();
 });

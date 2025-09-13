@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RabbitLoader - Connect Store</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
+  <script>
+    // Expose env vars to frontend
+    window.env = {
+      APP_URL: "<%= APP_URL %>",
+      SHOPIFY_API_VERSION: "<%= SHOPIFY_API_VERSION %>"
+    };
+  </script>
+  <script>
+    // Initialize Shopify App Bridge for embedded app
+    document.addEventListener('DOMContentLoaded', function() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const host = urlParams.get('host');
+      const shop = urlParams.get('shop');
+      
+      if (host && window.top !== window.self) {
+        try {
+          const AppBridge = window['app-bridge'];
+          const app = AppBridge.createApp({
+            apiKey: '<%= process.env.SHOPIFY_API_KEY %>',
+            host: host,
+            forceRedirect: true
+          });
+          const TitleBar = AppBridge.actions.TitleBar;
+          TitleBar.create(app, { title: 'Connect RabbitLoader' });
+        } catch (error) {
+          console.error('❌ App Bridge initialization failed:', error);
+        }
+      }
+    });
+  </script>
+</head>
+<body>
+  <!-- Loading State -->
+  <div id="loadingState" class="loading-screen">
+    <div class="dashboard-card">
+      <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+      <div class="store-name" id="storeName">Loading...</div>
+      <div class="loading-container">
+        <div class="spinner"></div>
+        <p>Checking connection...</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Disconnected State: Connect to RabbitLoader -->
+  <div id="disconnectedState" class="page-state" style="display: none;">
+    <div class="dashboard-card">
+      <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+      
+      <div class="store-info">
+        <div class="store-name" id="storeNameDisconnected">Loading...</div>
+        <div class="connection-status">
+          <div class="status-indicator error"></div>
+          <span class="status-text">Not Connected</span>
+        </div>
+      </div>
+      
+      <div class="disconnected-section">
+        <h1 class="main-title">Get 100/100 PageSpeed</h1>
+        <p class="subtitle">on Google PageSpeed Insight</p>
+        <a href="#" class="btn btn-primary" id="activateBtn">Activate RabbitLoader</a>
+      </div>
+      
+      <div class="footer-links">
+        <a href="#" class="footer-link">Crash Courses</a>
+        <a href="#" class="footer-link">Terms & Conditions</a>
+        <a href="#" class="footer-link">Get Support</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Connected State: Success -->
+  <div id="connectedState" class="page-state" style="display: none;">
+    <div class="dashboard-card">
+      <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+      
+      <div class="store-info">
+        <div class="store-name" id="storeNameConnected">Loading...</div>
+        <div class="connection-status">
+          <div class="status-indicator success"></div>
+          <span class="status-text">Connected to RabbitLoader</span>
+        </div>
+      </div>
+
+      <div class="connected-section">
+        <h1 class="main-title">Optimization Active 🚀</h1>
+        <p class="subtitle">Your store is now optimized with RabbitLoader</p>
+        <a href="#" class="btn btn-secondary" id="disconnectBtn">Disconnect</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Flash messages container -->
+  <div id="flashMessages"></div>
+
+  <script src="/script.js"></script>
+</body>
+</html>
