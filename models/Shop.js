@@ -9,5 +9,5 @@ const ShopSchema = new mongoose.Schema({
   history: Array
 });
 
-// Prevent OverwriteModelError
+// ✅ Prevent OverwriteModelError
 module.exports = mongoose.models.Shop || mongoose.model("Shop", ShopSchema);

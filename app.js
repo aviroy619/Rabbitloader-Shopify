@@ -6,7 +6,7 @@ const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
 const mongoose = require("mongoose");
 const path = require("path");
-const ShopModel = require("./models/Shop");
+const Shop = require("./models/Shop");
 
 // Initialize express
 const app = express();
