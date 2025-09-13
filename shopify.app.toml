@@ -1,16 +1,43 @@
-# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
-
 client_id = "09d41e81fb0d15dd76bc6586d4f9ddd2"
 name = "RL2"
 handle = "rl2"
 application_url = "https://shopify.rb8.in/"
 embedded = true
 
+# Scopes - Add the permissions your app needs
+scopes = "read_themes,write_themes,read_script_tags,write_script_tags"
+
+[build]
+automatically_update_urls_on_dev = true
+
+[access_scopes]
+# Define the scopes your app requires
+use_legacy_install_flow = false
+
 [webhooks]
 api_version = "2024-01"
 
+[[webhooks.subscriptions]]
+topics = ["app/uninstalled"]
+uri = "/webhooks/app/uninstalled"
+
 [auth]
-redirect_urls = [ "https://shopify.rb8.in/shopify/auth/callback" ]
+redirect_urls = [
+  "https://shopify.rb8.in/shopify/auth/callback",
+  "https://shopify.rb8.in/auth/callback"
+]
 
 [pos]
-embedded = true
+embedded = false
+
+# App proxy settings (if you need them later)
+[app_proxy]
+# url = "https://shopify.rb8.in"
+# subpath = "apps"
+# prefix = "apps"
+
+# App navigation for embedded apps
+[app_preferences]
+# Set default URL paths
+url_structure = "subpath"
+default_locale = "en"
