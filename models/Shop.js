@@ -6,13 +6,8 @@ const ShopSchema = new mongoose.Schema({
   short_id: String,    // RabbitLoader DID
   api_token: String,   // RL API token
   connected_at: Date,
-  history: [
-    {
-      event: String,   // "connect" | "disconnect"
-      timestamp: Date,
-      details: Object  // optional metadata
-    }
-  ]
+  history: Array
 });
 
-module.exports = mongoose.model("Shop", ShopSchema);
+// Prevent OverwriteModelError
+module.exports = mongoose.models.Shop || mongoose.model("Shop", ShopSchema);
