@@ -48,9 +48,18 @@ router.get("/status", async (req, res) => {
 
   try {
     const record = await ShopModel.findOne({ shop });
+
     if (record && record.api_token) {
-      return res.json({ ok: true, connected: true, shop });
+      // ✅ Only "connected" if token exists
+      return res.json({
+        ok: true,
+        connected: true,
+        shop: record.shop,
+        connected_at: record.connected_at
+      });
     }
+
+    // ❌ No record or missing token → treat as disconnected
     return res.json({ ok: true, connected: false, shop });
   } catch (err) {
     console.error("❌ status error:", err);
@@ -84,6 +93,43 @@ router.get("/disconnect", async (req, res) => {
   } catch (err) {
     console.error("❌ disconnect error:", err);
     res.status(500).json({ ok: false, error: "Failed to disconnect" });
+  }
+});
+
+// ---------------- RabbitLoader Connect Callback ----------------
+router.get("/rl/callback", async (req, res) => {
+  const { shop, rl_token } = req.query;
+  if (!shop || !rl_token) {
+    return res.status(400).send("Missing shop or rl_token");
+  }
+
+  try {
+    const decoded = JSON.parse(Buffer.from(rl_token, "base64").toString("utf8"));
+
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $set: {
+          short_id: decoded.did || decoded.short_id,
+          api_token: decoded.api_token,
+          connected_at: new Date()
+        },
+        $push: {
+          history: {
+            event: "connect",
+            timestamp: new Date(),
+            details: { via: "rl-callback" }
+          }
+        }
+      },
+      { upsert: true }
+    );
+
+    console.log(`✅ RL token saved for ${shop}`);
+    res.redirect(`/?shop=${encodeURIComponent(shop)}&connected=1`);
+  } catch (err) {
+    console.error("❌ RL callback error:", err);
+    res.status(500).send("Failed to save RL token");
   }
 });
 

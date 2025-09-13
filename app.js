@@ -6,6 +6,7 @@ const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
 const mongoose = require("mongoose");
 const path = require("path");
+const ShopModel = require("./models/Shop");
 
 // Initialize express
 const app = express();
@@ -46,12 +47,7 @@ app.get("/", (req, res) => {
   });
 });
 
-// ====== Start Server ======
-app.listen(PORT, () => {
-  console.log(`✅ RL-Shopify app running on port ${PORT}`);
-});
-// Add this near your other routes in app.js
-
+// ====== Shopify Status Route ======
 app.get("/shopify/status", async (req, res) => {
   const shop = req.query.shop;
   if (!shop) {
@@ -80,11 +76,13 @@ app.get("/shopify/status", async (req, res) => {
     res.status(500).json({ ok: false, error: "Server error" });
   }
 });
-// Shopify → RabbitLoader OAuth callback
-app.get("/shopify/auth/callback", async (req, res) => {
-  const { shop, rl-token } = req.query; // rl-token comes from RabbitLoader redirect
 
-  if (!shop || !rl-token) {
+// ====== Shopify → RabbitLoader OAuth Callback ======
+app.get("/shopify/auth/callback", async (req, res) => {
+  const shop = req.query.shop;
+  const rlToken = req.query["rl-token"]; // ✅ fix hyphen issue
+
+  if (!shop || !rlToken) {
     return res.status(400).send("Missing required parameters");
   }
 
@@ -94,7 +92,7 @@ app.get("/shopify/auth/callback", async (req, res) => {
       { shop },
       {
         shop,
-        api_token: rl-token, // save RabbitLoader token
+        api_token: rlToken,
         connected_at: new Date()
       },
       { upsert: true, new: true }
@@ -110,4 +108,9 @@ app.get("/shopify/auth/callback", async (req, res) => {
     console.error("❌ Auth callback error:", err);
     res.status(500).send("Server error");
   }
+});
+
+// ====== Start Server ======
+app.listen(PORT, () => {
+  console.log(`✅ RL-Shopify app running on port ${PORT}`);
 });
