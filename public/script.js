@@ -9,7 +9,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const disconnectedState = document.getElementById("disconnectedState");
   const flashContainer = document.getElementById("flashMessages");
 
-  // 📢 Flash message helper
+  // Flash message helper
   function showFlash(message, type = "info") {
     if (!flashContainer) return;
 
@@ -25,7 +25,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }, 3000);
   }
 
-  // 🔄 UI state switcher
+  // UI state switcher
   function showState(state) {
     loadingState.style.display = "none";
     connectedState.style.display = "none";
@@ -35,7 +35,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     if (state === "disconnected") disconnectedState.style.display = "block";
   }
 
-  // ✅ Check shop status from backend
+  // Check shop status from backend
   async function checkStatus() {
     if (!shop) {
       showState("disconnected");
@@ -55,14 +55,14 @@ document.addEventListener("DOMContentLoaded", async () => {
         document.getElementById("storeNameDisconnected").textContent = shop;
       }
     } catch (err) {
-      console.error("❌ Status check failed:", err);
+      console.error("Status check failed:", err);
       showState("disconnected");
       document.getElementById("storeNameDisconnected").textContent = shop || "Unknown Shop";
       showFlash("Failed to check connection status", "error");
     }
   }
 
-  // 🟢 Special case: if RL redirects back with rl-token → save it
+  // Special case: if RL redirects back with rl-token - save it
   if (rlToken && shop) {
     try {
       const res = await fetch("/shopify/store-token", {
@@ -80,52 +80,76 @@ document.addEventListener("DOMContentLoaded", async () => {
         showFlash("Failed to save connection: " + (data.error || "Unknown error"), "error");
       }
     } catch (err) {
-      console.error("❌ RL token store request failed:", err);
+      console.error("RL token store request failed:", err);
       showFlash("Failed to save connection", "error");
     }
   } else {
     await checkStatus();
   }
 
-  // 🚀 Activate button → RabbitLoader console
+  // Activate button - RabbitLoader console (with iframe breakout)
   if (activateBtn && shop) {
     activateBtn.addEventListener("click", () => {
       const APP_URL = window.env.APP_URL;
       const SHOPIFY_API_VERSION = window.env.SHOPIFY_API_VERSION;
-      const redirectUrl = `${APP_URL}/shopify/auth/callback?shop=${encodeURIComponent(shop)}`;
+      
+      // Get current URL parameters for embedding context
+      const urlParams = new URLSearchParams(window.location.search);
+      const host = urlParams.get('host');
+      
+      // Build callback URL with host parameter for proper embedding
+      let callbackUrl = `${APP_URL}/shopify/auth/callback?shop=${encodeURIComponent(shop)}`;
+      if (host) {
+        callbackUrl += `&host=${encodeURIComponent(host)}`;
+      }
+      
+      // SITE_HOME_PAGE - Shopify store's home page
       const siteUrl = `https://${shop}`;
-
+      
+      // Build RabbitLoader console URL with all required parameters
       const connectUrl = `https://rabbitloader.com/account/?source=shopify` +
         `&action=connect` +
         `&site_url=${encodeURIComponent(siteUrl)}` +
-        `&redirect_url=${encodeURIComponent(redirectUrl)}` +
+        `&redirect_url=${encodeURIComponent(callbackUrl)}` +
         `&cms_v=${SHOPIFY_API_VERSION}` +
         `&plugin_v=1.0.0`;
 
-      showFlash("Redirecting to RabbitLoader for authentication…", "info");
-      window.location.href = connectUrl;
+      showFlash("Redirecting to RabbitLoader for authentication...", "info");
+      
+      // Check if we're in an embedded context (iframe)
+      const isEmbedded = window.top !== window.self;
+      
+      if (isEmbedded) {
+        // Break out of iframe and redirect in parent window
+        console.log("Breaking out of iframe for RabbitLoader auth");
+        window.top.location.href = connectUrl;
+      } else {
+        // Direct redirect if not embedded
+        console.log("Direct redirect to RabbitLoader");
+        window.location.href = connectUrl;
+      }
     });
   }
 
-  // 🔌 Disconnect button → backend call (FIXED: Now uses POST with body)
+  // Disconnect button - backend call (uses POST with body)
   if (disconnectBtn && shop) {
     disconnectBtn.addEventListener("click", async () => {
       try {
         const res = await fetch(`/shopify/disconnect`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ shop })  // ← FIXED: Send shop in body, not query
+          body: JSON.stringify({ shop })
         });
         const data = await res.json();
 
         if (data.ok) {
           showFlash("Disconnected from RabbitLoader", "success");
-          window.location.href = `/?shop=${shop}`; // reload → Disconnected state
+          window.location.href = `/?shop=${shop}`; // reload to show disconnected state
         } else {
           showFlash("Failed to disconnect: " + (data.error || "Unknown error"), "error");
         }
       } catch (err) {
-        console.error("❌ Disconnect request failed:", err);
+        console.error("Disconnect request failed:", err);
         showFlash("Disconnect failed. Check console logs.", "error");
       }
     });
