@@ -336,10 +336,79 @@ router.post("/inject-script", async (req, res) => {
       });
     }
 
-    const result = await injectRabbitLoaderScript(shop, shopRecord.short_id);
-    res.json({ ok: true, ...result });
+    // Inline script injection logic
+    const did = shopRecord.short_id;
+    const scriptUrl = `https://cfw.rabbitloader.xyz/${did}/u.js.red.js`;
+    
+    if (!shopRecord.access_token) {
+      throw new Error("No access token found for shop");
+    }
+
+    console.log(`🔄 Attempting script injection for ${shop} with DID: ${did}`);
+
+    // Check if script already exists
+    const existingScriptsResponse = await fetch(`https://${shop}/admin/api/2023-10/script_tags.json`, {
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.access_token,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!existingScriptsResponse.ok) {
+      throw new Error(`Failed to fetch existing scripts: ${existingScriptsResponse.status} ${existingScriptsResponse.statusText}`);
+    }
+
+    const existingScripts = await existingScriptsResponse.json();
+    console.log(`📋 Found ${existingScripts.script_tags?.length || 0} existing scripts`);
+    
+    // Check if RabbitLoader script already exists
+    const rlScriptExists = existingScripts.script_tags?.some(script => 
+      script.src.includes('rabbitloader.xyz') || script.src.includes(did)
+    );
+
+    if (rlScriptExists) {
+      console.log(`ℹ️ RabbitLoader script already exists for ${shop}`);
+      return res.json({ ok: true, message: "Script already exists", scriptUrl });
+    }
+
+    // Create new script tag
+    const scriptTag = {
+      script_tag: {
+        event: "onload",
+        src: scriptUrl,
+        display_scope: "online_store"
+      }
+    };
+
+    console.log(`🚀 Creating script tag:`, scriptTag);
+
+    const response = await fetch(`https://${shop}/admin/api/2023-10/script_tags.json`, {
+      method: 'POST',
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.access_token,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(scriptTag)
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error(`❌ Script injection failed:`, errorData);
+      throw new Error(`Script injection failed: ${response.status} - ${JSON.stringify(errorData)}`);
+    }
+
+    const result = await response.json();
+    console.log(`✅ RabbitLoader script injected for ${shop}:`, result.script_tag.id);
+    
+    res.json({ 
+      ok: true, 
+      message: "Script injected successfully", 
+      scriptId: result.script_tag.id,
+      scriptUrl 
+    });
+
   } catch (err) {
-    console.error("Manual script injection error:", err);
+    console.error("❌ Manual script injection error:", err);
     res.status(500).json({ 
       ok: false, 
       error: err.message,
