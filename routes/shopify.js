@@ -19,7 +19,8 @@ router.get("/auth", (req, res) => {
   }
 
   const shopifyApiKey = process.env.SHOPIFY_API_KEY;
-const scopes = process.env.SHOPIFY_SCOPES || "read_themes,write_themes,read_script_tags,write_script_tags";  const redirectUri = `${process.env.APP_URL}/shopify/auth/callback`;
+  const scopes = process.env.SHOPIFY_SCOPES || "read_themes,write_themes,read_script_tags,write_script_tags";
+  const redirectUri = `${process.env.APP_URL}/shopify/auth/callback`;
   const state = crypto.randomBytes(16).toString('hex');
 
   // Store state for validation (in production, use session or database)
@@ -72,7 +73,12 @@ router.get("/auth/callback", async (req, res) => {
         { upsert: true }
       );
 
-      console.log(`✅ RabbitLoader token saved for ${shop}`);
+      console.log(`✅ RabbitLoader token saved for ${shop}`, {
+        did: decoded.did,
+        hasApiToken: !!decoded.api_token
+      });
+
+      // Note: Script injection can be triggered manually via "Try Auto-Inject" button
       
       // Redirect back to embedded app with proper parameters
       const hostParam = req.query.host ? `&host=${encodeURIComponent(req.query.host)}` : '';
@@ -319,7 +325,7 @@ router.get("/rl/callback", async (req, res) => {
   }
 });
 
-// Manual script injection route
+// Theme injection route - injects script directly into theme.liquid
 router.post("/inject-script", async (req, res) => {
   const { shop } = req.body;
   if (!shop) {
@@ -335,79 +341,110 @@ router.post("/inject-script", async (req, res) => {
       });
     }
 
-    /// Inline script injection logic
-const did = shopRecord.short_id;
-const scriptUrl = `https://cfw.rabbitloader.xyz/${did}/rl.uj.rd.js?mode=everyone`;
+    // Build script URL - using the documented format from RabbitLoader
+    const did = shopRecord.short_id;
+    const scriptUrl = `https://cfw.rabbitloader.xyz/${did}/rl.uj.rd.js?mode=everyone`;
     
     if (!shopRecord.access_token) {
       throw new Error("No access token found for shop");
     }
 
-    console.log(`🔄 Attempting script injection for ${shop} with DID: ${did}`);
+    console.log(`🔄 Attempting theme injection for ${shop} with DID: ${did}`);
 
-    // Check if script already exists
-    const existingScriptsResponse = await fetch(`https://${shop}/admin/api/2023-10/script_tags.json`, {
+    // Step 1: Get active theme
+    const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
       headers: {
         'X-Shopify-Access-Token': shopRecord.access_token,
         'Content-Type': 'application/json'
       }
     });
 
-    if (!existingScriptsResponse.ok) {
-      throw new Error(`Failed to fetch existing scripts: ${existingScriptsResponse.status} ${existingScriptsResponse.statusText}`);
+    if (!themesResponse.ok) {
+      throw new Error(`Failed to fetch themes: ${themesResponse.status} ${themesResponse.statusText}`);
     }
 
-    const existingScripts = await existingScriptsResponse.json();
-    console.log(`📋 Found ${existingScripts.script_tags?.length || 0} existing scripts`);
+    const themesData = await themesResponse.json();
+    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
     
-    // Check if RabbitLoader script already exists
-    const rlScriptExists = existingScripts.script_tags?.some(script => 
-      script.src.includes('rabbitloader.xyz') || script.src.includes(did)
-    );
-
-    if (rlScriptExists) {
-      console.log(`ℹ️ RabbitLoader script already exists for ${shop}`);
-      return res.json({ ok: true, message: "Script already exists", scriptUrl });
+    if (!activeTheme) {
+      throw new Error("No active theme found");
     }
 
-    // Create new script tag
-    const scriptTag = {
-      script_tag: {
-        event: scriptUrl,
-        src: scriptUrl,
-        display_scope: "online_store"
+    console.log(`📋 Found active theme: ${activeTheme.name} (ID: ${activeTheme.id})`);
+
+    // Step 2: Get theme.liquid file
+    const assetResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.access_token,
+        'Content-Type': 'application/json'
       }
-    };
+    });
 
-    console.log(`🚀 Creating script tag:`, scriptTag);
+    if (!assetResponse.ok) {
+      throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status} ${assetResponse.statusText}`);
+    }
 
-    const response = await fetch(`https://${shop}/admin/api/2023-10/script_tags.json`, {
-      method: 'POST',
+    const assetData = await assetResponse.json();
+    let themeContent = assetData.asset.value;
+
+    // Step 3: Check if RabbitLoader script already exists
+    if (themeContent.includes('rabbitloader.xyz') || themeContent.includes(did)) {
+      console.log(`ℹ️ RabbitLoader script already exists in theme for ${shop}`);
+      return res.json({ 
+        ok: true, 
+        message: "Script already exists in theme", 
+        scriptUrl,
+        location: "theme.liquid" 
+      });
+    }
+
+    // Step 4: Inject script at the top of <head>
+    const scriptTag = `  <script src="${scriptUrl}"></script>`;
+    const headOpenTag = '<head>';
+    
+    if (!themeContent.includes(headOpenTag)) {
+      throw new Error("Could not find <head> tag in theme.liquid");
+    }
+
+    // Insert script right after <head> opening tag
+    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
+
+    console.log(`🚀 Injecting script into theme head: ${scriptTag}`);
+
+    // Step 5: Update the theme file
+    const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
+      method: 'PUT',
       headers: {
         'X-Shopify-Access-Token': shopRecord.access_token,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify(scriptTag)
+      body: JSON.stringify({
+        asset: {
+          key: 'layout/theme.liquid',
+          value: themeContent
+        }
+      })
     });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      console.error(`❌ Script injection failed:`, errorData);
-      throw new Error(`Script injection failed: ${response.status} - ${JSON.stringify(errorData)}`);
+    if (!updateResponse.ok) {
+      const errorData = await updateResponse.json();
+      console.error(`❌ Theme update failed:`, errorData);
+      throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
     }
 
-    const result = await response.json();
-    console.log(`✅ RabbitLoader script injected for ${shop}:`, result.script_tag.id);
+    console.log(`✅ RabbitLoader script injected into theme for ${shop}`);
     
     res.json({ 
       ok: true, 
-      message: "Script injected successfully", 
-      scriptId: result.script_tag.id,
-      scriptUrl 
+      message: "Script injected successfully into theme head", 
+      scriptUrl,
+      location: "theme.liquid",
+      themeId: activeTheme.id,
+      themeName: activeTheme.name
     });
 
   } catch (err) {
-    console.error("❌ Manual script injection error:", err);
+    console.error("❌ Theme injection error:", err);
     res.status(500).json({ 
       ok: false, 
       error: err.message,
@@ -444,6 +481,53 @@ router.get("/debug-shop", async (req, res) => {
   }
 });
 
+// Debug: Check current access token scopes
+router.get("/debug-scopes", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) {
+    return res.status(400).json({ error: "Missing shop parameter" });
+  }
+
+  try {
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord || !shopRecord.access_token) {
+      return res.status(404).json({ error: "No access token found" });
+    }
+
+    // Test access to themes API
+    const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json?limit=1`, {
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.access_token,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    // Test access to script tags API
+    const scriptsResponse = await fetch(`https://${shop}/admin/api/2023-10/script_tags.json?limit=1`, {
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.access_token,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json({
+      shop,
+      themesAccess: {
+        status: themesResponse.status,
+        statusText: themesResponse.statusText,
+        canAccessThemes: themesResponse.ok
+      },
+      scriptsAccess: {
+        status: scriptsResponse.status,
+        statusText: scriptsResponse.statusText,
+        canAccessScripts: scriptsResponse.ok
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get manual installation instructions
 router.get("/manual-instructions", async (req, res) => {
   const { shop } = req.query;
@@ -473,7 +557,7 @@ router.get("/manual-instructions", async (req, res) => {
         step2: "Navigate to Online Store > Themes",
         step3: "Click 'Actions' > 'Edit code' on your active theme",
         step4: "Open the 'theme.liquid' file in the Layout folder",
-        step5: `Add this script tag in the <head> section, before any other JavaScript:`,
+        step5: `Add this script tag in the <head> section, BEFORE any other JavaScript:`,
         step6: "Save the file",
         step7: "The RabbitLoader optimization will now be active on your store"
       }
