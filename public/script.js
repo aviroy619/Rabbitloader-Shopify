@@ -50,6 +50,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (data.ok && data.connected) {
         showState("connected");
         document.getElementById("storeNameConnected").textContent = shop;
+        
+        // Load manual instructions for connected stores
+        loadManualInstructions();
       } else {
         showState("disconnected");
         document.getElementById("storeNameDisconnected").textContent = shop;
@@ -61,6 +64,78 @@ document.addEventListener("DOMContentLoaded", async () => {
       showFlash("Failed to check connection status", "error");
     }
   }
+
+  // Load manual instructions for script installation
+  async function loadManualInstructions() {
+    try {
+      const res = await fetch(`/shopify/manual-instructions?shop=${encodeURIComponent(shop)}`);
+      const data = await res.json();
+      
+      if (data.ok) {
+        // Display script information in connected state
+        displayScriptInstructions(data);
+      }
+    } catch (err) {
+      console.error("Failed to load manual instructions:", err);
+    }
+  }
+
+  // Display script installation instructions
+  function displayScriptInstructions(data) {
+    const connectedSection = document.querySelector("#connectedState .connected-section");
+    if (!connectedSection) return;
+
+    // Create instructions container if it doesn't exist
+    let instructionsContainer = document.getElementById("scriptInstructions");
+    if (!instructionsContainer) {
+      instructionsContainer = document.createElement("div");
+      instructionsContainer.id = "scriptInstructions";
+      instructionsContainer.className = "script-instructions";
+      connectedSection.appendChild(instructionsContainer);
+    }
+
+    instructionsContainer.innerHTML = `
+      <div class="script-info">
+        <h3>RabbitLoader Script Installation</h3>
+        <p><strong>DID:</strong> ${data.did}</p>
+        <p><strong>Script URL:</strong> <code>${data.scriptUrl}</code></p>
+        
+        <div class="script-tag-box">
+          <label>Copy this script tag:</label>
+          <div class="copy-container">
+            <code id="scriptTagCode">${data.scriptTag}</code>
+            <button class="copy-btn" onclick="copyScriptTag()">Copy</button>
+          </div>
+        </div>
+
+        <div class="manual-steps">
+          <h4>Manual Installation Steps:</h4>
+          <ol>
+            <li>${data.instructions.step1}</li>
+            <li>${data.instructions.step2}</li>
+            <li>${data.instructions.step3}</li>
+            <li>${data.instructions.step4}</li>
+            <li>${data.instructions.step5}<br><code>${data.scriptTag}</code></li>
+            <li>${data.instructions.step6}</li>
+            <li>${data.instructions.step7}</li>
+          </ol>
+        </div>
+      </div>
+    `;
+  }
+
+  // Copy script tag to clipboard
+  window.copyScriptTag = function() {
+    const scriptTagCode = document.getElementById("scriptTagCode");
+    if (scriptTagCode) {
+      navigator.clipboard.writeText(scriptTagCode.textContent).then(() => {
+        showFlash("Script tag copied to clipboard!", "success");
+      }).catch(err => {
+        console.error("Failed to copy:", err);
+        showFlash("Failed to copy script tag", "error");
+      });
+    }
+  };
 
   // Special case: if RL redirects back with rl-token - save it
   if (rlToken && shop) {

@@ -320,4 +320,44 @@ router.get("/rl/callback", async (req, res) => {
   }
 });
 
+// Get manual installation instructions
+router.get("/manual-instructions", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) {
+    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
+  }
+
+  try {
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord || !shopRecord.short_id) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not connected to RabbitLoader" 
+      });
+    }
+
+    const scriptUrl = `https://cfw.rabbitloader.xyz/${shopRecord.short_id}/u.js.red.js`;
+    
+    res.json({
+      ok: true,
+      shop,
+      did: shopRecord.short_id,
+      scriptUrl,
+      scriptTag: `<script src="${scriptUrl}"></script>`,
+      instructions: {
+        step1: "Go to your Shopify Admin",
+        step2: "Navigate to Online Store > Themes",
+        step3: "Click 'Actions' > 'Edit code' on your active theme",
+        step4: "Open the 'theme.liquid' file in the Layout folder",
+        step5: `Add this script tag in the <head> section, before any other JavaScript:`,
+        step6: "Save the file",
+        step7: "The RabbitLoader optimization will now be active on your store"
+      }
+    });
+  } catch (err) {
+    console.error("Manual instructions error:", err);
+    res.status(500).json({ ok: false, error: "Failed to get instructions" });
+  }
+});
+
 module.exports = router;
