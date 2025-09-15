@@ -1,12 +1,26 @@
 require("dotenv").config();
 
+// ✅ Environment validation
+const requiredEnvVars = [
+  'SHOPIFY_API_KEY', 
+  'APP_URL', 
+  'MONGO_URI'
+];
+
+requiredEnvVars.forEach(envVar => {
+  if (!process.env[envVar]) {
+    console.error(`❌ Missing required environment variable: ${envVar}`);
+    process.exit(1);
+  }
+});
+
 const express = require("express");
 const axios = require("axios");
 const bodyParser = require("body-parser");
 const cookieParser = require("cookie-parser");
 const mongoose = require("mongoose");
 const path = require("path");
-const Shop = require("./models/Shop");
+const ShopModel = require("./models/Shop");
 
 // Initialize express
 const app = express();
@@ -34,6 +48,27 @@ mongoose.connection.on("error", (err) => {
 const shopifyRoutes = require("./routes/shopify");
 app.use("/shopify", shopifyRoutes);
 
+// ====== RabbitLoader Connect Routes ======
+const shopifyConnectRoutes = require("./routes/shopifyConnect");
+app.use("/", shopifyConnectRoutes);
+
+// ====== Embedded App Authentication Middleware ======
+app.use((req, res, next) => {
+  // Skip auth for public routes
+  const publicRoutes = ['/shopify/auth', '/shopify/auth/callback', '/'];
+  if (publicRoutes.includes(req.path)) {
+    return next();
+  }
+  
+  // For embedded app routes, ensure shop parameter exists
+  const shop = req.query.shop || req.body.shop;
+  if (!shop && req.path.startsWith('/shopify/')) {
+    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
+  }
+  
+  next();
+});
+
 // ====== Views & Static Files ======
 app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
@@ -45,69 +80,6 @@ app.get("/", (req, res) => {
     APP_URL: process.env.APP_URL,
     SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01"
   });
-});
-
-// ====== Shopify Status Route ======
-app.get("/shopify/status", async (req, res) => {
-  const shop = req.query.shop;
-  if (!shop) {
-    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
-  }
-
-  try {
-    const record = await ShopModel.findOne({ shop });
-    if (!record) {
-      return res.json({
-        ok: true,
-        connected: false,
-        shop
-      });
-    }
-
-    res.json({
-      ok: true,
-      connected: true,
-      shop: record.shop,
-      connected_at: record.connected_at,
-      short_id: record.short_id
-    });
-  } catch (err) {
-    console.error("Status check failed:", err);
-    res.status(500).json({ ok: false, error: "Server error" });
-  }
-});
-
-// ====== Shopify → RabbitLoader OAuth Callback ======
-app.get("/shopify/auth/callback", async (req, res) => {
-  const shop = req.query.shop;
-  const rlToken = req.query["rl-token"]; // ✅ fix hyphen issue
-
-  if (!shop || !rlToken) {
-    return res.status(400).send("Missing required parameters");
-  }
-
-  try {
-    // Save or update shop record
-    await ShopModel.findOneAndUpdate(
-      { shop },
-      {
-        shop,
-        api_token: rlToken,
-        connected_at: new Date()
-      },
-      { upsert: true, new: true }
-    );
-
-    console.log(`✅ Shop ${shop} connected with RL token`);
-
-    // Redirect back to app dashboard with "connected" flag
-    const redirectUrl = `/index.html?shop=${encodeURIComponent(shop)}&connected=1`;
-    res.redirect(redirectUrl);
-
-  } catch (err) {
-    console.error("❌ Auth callback error:", err);
-    res.status(500).send("Server error");
-  }
 });
 
 // ====== Start Server ======

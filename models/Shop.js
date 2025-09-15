@@ -1,12 +1,12 @@
 const mongoose = require("mongoose");
 
 const ShopSchema = new mongoose.Schema({
-  shop: { type: String, unique: true },
-  access_token: String,
-  short_id: String,    // RabbitLoader DID
-  api_token: String,   // RL API token
+  shop: { type: String, unique: true, required: true },
+  access_token: String,    // ← ADDED: Shopify OAuth token
+  short_id: String,        // RabbitLoader DID
+  api_token: String,       // RL API token
   connected_at: Date,
-  history: Array
+  history: { type: Array, default: [] }  // ← ADDED: Default empty array
 });
 
 // ✅ Prevent OverwriteModelError

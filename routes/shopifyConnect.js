@@ -1,4 +1,7 @@
-app.get("/account", async (req, res) => {
+const express = require("express");
+const router = express.Router();
+
+router.get("/account", async (req, res) => {
   const { source, action, site_url, redirect_url, cms_v, plugin_v } = req.query;
 
   if (source !== "shopify" || action !== "connect") {
@@ -26,3 +29,5 @@ app.get("/account", async (req, res) => {
   const redirectWithToken = `${redirect_url}&rl-token=${encodeURIComponent(rlToken)}`;
   return res.redirect(redirectWithToken);
 });
+
+module.exports = router;

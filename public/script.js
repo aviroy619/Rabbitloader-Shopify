@@ -9,7 +9,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const disconnectedState = document.getElementById("disconnectedState");
   const flashContainer = document.getElementById("flashMessages");
 
-  // 🔔 Flash message helper
+  // 📢 Flash message helper
   function showFlash(message, type = "info") {
     if (!flashContainer) return;
 
@@ -107,12 +107,14 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
   }
 
-  // 🔌 Disconnect button → backend call
+  // 🔌 Disconnect button → backend call (FIXED: Now uses POST with body)
   if (disconnectBtn && shop) {
     disconnectBtn.addEventListener("click", async () => {
       try {
-        const res = await fetch(`/shopify/disconnect?shop=${encodeURIComponent(shop)}`, {
-          method: "POST"
+        const res = await fetch(`/shopify/disconnect`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ shop })  // ← FIXED: Send shop in body, not query
         });
         const data = await res.json();
 

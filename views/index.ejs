@@ -5,39 +5,66 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RabbitLoader - Connect Store</title>
   <link rel="stylesheet" href="/style.css">
+  
+  <!-- Shopify App Bridge -->
   <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
+  
   <script>
     // Expose env vars to frontend
     window.env = {
       APP_URL: "<%= APP_URL %>",
-      SHOPIFY_API_VERSION: "<%= SHOPIFY_API_VERSION %>"
+      SHOPIFY_API_VERSION: "<%= SHOPIFY_API_VERSION %>",
+      SHOPIFY_API_KEY: "<%= process.env.SHOPIFY_API_KEY %>"
     };
   </script>
+</head>
+<body>
   <script>
     // Initialize Shopify App Bridge for embedded app
     document.addEventListener('DOMContentLoaded', function() {
       const urlParams = new URLSearchParams(window.location.search);
       const host = urlParams.get('host');
       const shop = urlParams.get('shop');
+      const embedded = urlParams.get('embedded');
       
-      if (host && window.top !== window.self) {
+      console.log('App initialization:', { host, shop, embedded });
+      
+      // Check if we're in an embedded context
+      const isEmbedded = window.top !== window.self || embedded === '1';
+      
+      if (isEmbedded && shop) {
         try {
+          // Initialize App Bridge
           const AppBridge = window['app-bridge'];
-          const app = AppBridge.createApp({
-            apiKey: '<%= process.env.SHOPIFY_API_KEY %>',
-            host: host,
-            forceRedirect: true
-          });
-          const TitleBar = AppBridge.actions.TitleBar;
-          TitleBar.create(app, { title: 'Connect RabbitLoader' });
+          if (AppBridge) {
+            const app = AppBridge.createApp({
+              apiKey: window.env.SHOPIFY_API_KEY,
+              host: host || btoa(shop + '/admin'),
+              forceRedirect: true
+            });
+            
+            // Create title bar
+            const TitleBar = AppBridge.actions.TitleBar;
+            const titleBar = TitleBar.create(app, { 
+              title: 'RabbitLoader Integration' 
+            });
+            
+            console.log('✅ App Bridge initialized successfully');
+          }
         } catch (error) {
           console.error('❌ App Bridge initialization failed:', error);
+        }
+      } else if (!shop) {
+        // If no shop parameter, redirect to install
+        console.log('No shop parameter, redirecting to Shopify auth');
+        const shopPrompt = prompt('Enter your shop domain (e.g., mystore.myshopify.com):');
+        if (shopPrompt) {
+          window.location.href = `/shopify/auth?shop=${encodeURIComponent(shopPrompt)}`;
         }
       }
     });
   </script>
-</head>
-<body>
+
   <!-- Loading State -->
   <div id="loadingState" class="loading-screen">
     <div class="dashboard-card">
