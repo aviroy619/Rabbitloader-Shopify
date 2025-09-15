@@ -75,8 +75,11 @@ router.get("/auth/callback", async (req, res) => {
 
       console.log(`✅ RabbitLoader token saved for ${shop}`);
       
-      // Redirect back to embedded app
-      const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(req.query.host || '')}&embedded=1&connected=1`;
+      // Redirect back to embedded app with proper parameters
+      const hostParam = req.query.host ? `&host=${encodeURIComponent(req.query.host)}` : '';
+      const redirectUrl = `/?shop=${encodeURIComponent(shop)}${hostParam}&embedded=1&connected=1`;
+      
+      console.log("🔄 Redirecting to embedded app:", redirectUrl);
       return res.redirect(redirectUrl);
       
     } catch (err) {
