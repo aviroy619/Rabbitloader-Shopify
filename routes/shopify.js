@@ -19,8 +19,7 @@ router.get("/auth", (req, res) => {
   }
 
   const shopifyApiKey = process.env.SHOPIFY_API_KEY;
-  const scopes = process.env.SHOPIFY_SCOPES || "read_themes,write_themes,read_script_tags,write_script_tags";
-  const redirectUri = `${process.env.APP_URL}/shopify/auth/callback`;
+const scopes = process.env.SHOPIFY_SCOPES || "read_themes,write_themes,read_script_tags,write_script_tags";  const redirectUri = `${process.env.APP_URL}/shopify/auth/callback`;
   const state = crypto.randomBytes(16).toString('hex');
 
   // Store state for validation (in production, use session or database)
