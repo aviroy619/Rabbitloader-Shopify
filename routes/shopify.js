@@ -3,6 +3,99 @@ const router = express.Router();
 const ShopModel = require("../models/Shop");
 const crypto = require("crypto");
 
+// Helper function to inject script into theme
+async function injectScriptIntoTheme(shop, did, accessToken) {
+  const scriptUrl = `https://cfw.rabbitloader.xyz/${did}/rl.uj.rd.js?mode=everyone`;
+  
+  console.log(`Attempting theme injection for ${shop} with DID: ${did}`);
+
+  // Step 1: Get active theme
+  const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
+    headers: {
+      'X-Shopify-Access-Token': accessToken,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!themesResponse.ok) {
+    throw new Error(`Failed to fetch themes: ${themesResponse.status} ${themesResponse.statusText}`);
+  }
+
+  const themesData = await themesResponse.json();
+  const activeTheme = themesData.themes.find(theme => theme.role === 'main');
+  
+  if (!activeTheme) {
+    throw new Error("No active theme found");
+  }
+
+  console.log(`Found active theme: ${activeTheme.name} (ID: ${activeTheme.id})`);
+
+  // Step 2: Get theme.liquid file
+  const assetResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+    headers: {
+      'X-Shopify-Access-Token': accessToken,
+      'Content-Type': 'application/json'
+    }
+  });
+
+  if (!assetResponse.ok) {
+    throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status} ${assetResponse.statusText}`);
+  }
+
+  const assetData = await assetResponse.json();
+  let themeContent = assetData.asset.value;
+
+  // Step 3: Check if RabbitLoader script already exists
+  if (themeContent.includes('rabbitloader.xyz') || themeContent.includes(did)) {
+    console.log(`RabbitLoader script already exists in theme for ${shop}`);
+    return { success: true, message: "Script already exists in theme", scriptUrl };
+  }
+
+  // Step 4: Inject script at the top of <head>
+  const scriptTag = `  <script src="${scriptUrl}"></script>`;
+  const headOpenTag = '<head>';
+  
+  if (!themeContent.includes(headOpenTag)) {
+    throw new Error("Could not find <head> tag in theme.liquid");
+  }
+
+  // Insert script right after <head> opening tag
+  themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
+
+  console.log(`Injecting script into theme head: ${scriptTag}`);
+
+  // Step 5: Update the theme file
+  const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
+    method: 'PUT',
+    headers: {
+      'X-Shopify-Access-Token': accessToken,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      asset: {
+        key: 'layout/theme.liquid',
+        value: themeContent
+      }
+    })
+  });
+
+  if (!updateResponse.ok) {
+    const errorData = await updateResponse.json();
+    console.error(`Theme update failed:`, errorData);
+    throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
+  }
+
+  console.log(`RabbitLoader script injected into theme for ${shop}`);
+  
+  return { 
+    success: true, 
+    message: "Script injected successfully into theme head", 
+    scriptUrl,
+    themeId: activeTheme.id,
+    themeName: activeTheme.name
+  };
+}
+
 // ====== SHOPIFY OAUTH FLOW ======
 
 // Start Shopify OAuth
@@ -41,7 +134,7 @@ router.get("/auth/callback", async (req, res) => {
   const { code, hmac, shop, state, timestamp } = req.query;
   const { "rl-token": rlToken } = req.query;
 
-  console.log("📥 Callback received:", {
+  console.log("Callback received:", {
     hasCode: !!code,
     hasRlToken: !!rlToken,
     shop,
@@ -50,7 +143,7 @@ router.get("/auth/callback", async (req, res) => {
 
   // Handle RabbitLoader callback (when coming back from RL)
   if (rlToken && shop) {
-    console.log(`🔄 Processing RabbitLoader callback for ${shop}`);
+    console.log(`Processing RabbitLoader callback for ${shop}`);
     try {
       const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
       
@@ -73,22 +166,22 @@ router.get("/auth/callback", async (req, res) => {
         { upsert: true }
       );
 
-      console.log(`✅ RabbitLoader token saved for ${shop}`, {
+      console.log(`RabbitLoader token saved for ${shop}`, {
         did: decoded.did,
         hasApiToken: !!decoded.api_token
       });
 
-      // Note: Script injection can be triggered manually via "Try Auto-Inject" button
+      // Note: Script injection happens automatically on first status check
       
       // Redirect back to embedded app with proper parameters
       const hostParam = req.query.host ? `&host=${encodeURIComponent(req.query.host)}` : '';
       const redirectUrl = `/?shop=${encodeURIComponent(shop)}${hostParam}&embedded=1&connected=1`;
       
-      console.log("🔄 Redirecting to embedded app:", redirectUrl);
+      console.log("Redirecting to embedded app:", redirectUrl);
       return res.redirect(redirectUrl);
       
     } catch (err) {
-      console.error("❌ RL callback error:", err);
+      console.error("RL callback error:", err);
       return res.status(400).send("Failed to process RabbitLoader token");
     }
   }
@@ -110,7 +203,7 @@ router.get("/auth/callback", async (req, res) => {
       .map(key => `${key}=${queryObj[key]}`)
       .join('&');
 
-    console.log("🔍 HMAC verification:", {
+    console.log("HMAC verification:", {
       queryString: queryString.substring(0, 100) + "...",
       receivedHmac: hmac
     });
@@ -120,24 +213,24 @@ router.get("/auth/callback", async (req, res) => {
       .update(queryString)
       .digest('hex');
 
-    console.log("🔍 HMAC comparison:", {
+    console.log("HMAC comparison:", {
       calculated: calculatedHmac.substring(0, 10) + "...",
       received: hmac.substring(0, 10) + "...",
       match: calculatedHmac === hmac
     });
 
     if (calculatedHmac !== hmac) {
-      console.error("❌ HMAC verification failed");
+      console.error("HMAC verification failed");
       console.error("Expected:", calculatedHmac);
       console.error("Received:", hmac);
       console.error("Query string used:", queryString);
       return res.status(401).send("Invalid HMAC - Security verification failed");
     }
 
-    console.log("✅ HMAC verification passed");
+    console.log("HMAC verification passed");
 
     // Exchange code for access token
-    console.log(`🔄 Exchanging code for access token for ${shop}`);
+    console.log(`Exchanging code for access token for ${shop}`);
     const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -149,10 +242,10 @@ router.get("/auth/callback", async (req, res) => {
     });
 
     const tokenData = await tokenResponse.json();
-    console.log("🔄 Token response received:", { hasAccessToken: !!tokenData.access_token });
+    console.log("Token response received:", { hasAccessToken: !!tokenData.access_token });
 
     if (!tokenData.access_token) {
-      console.error("❌ No access token in response:", tokenData);
+      console.error("No access token in response:", tokenData);
       throw new Error("Failed to get access token from Shopify");
     }
 
@@ -174,7 +267,7 @@ router.get("/auth/callback", async (req, res) => {
       { upsert: true, new: true }
     );
 
-    console.log(`✅ Shopify OAuth completed for ${shop}`, {
+    console.log(`Shopify OAuth completed for ${shop}`, {
       recordId: shopRecord._id,
       hasAccessToken: !!shopRecord.access_token
     });
@@ -183,11 +276,11 @@ router.get("/auth/callback", async (req, res) => {
     const hostParam = req.query.host ? `&host=${encodeURIComponent(req.query.host)}` : '';
     const redirectUrl = `/?shop=${encodeURIComponent(shop)}${hostParam}&embedded=1&shopify_auth=1`;
     
-    console.log("🔄 Redirecting to:", redirectUrl);
+    console.log("Redirecting to:", redirectUrl);
     res.redirect(redirectUrl);
 
   } catch (err) {
-    console.error("❌ OAuth callback error:", err);
+    console.error("OAuth callback error:", err);
     res.status(500).send(`Authentication failed: ${err.message}`);
   }
 });
@@ -225,15 +318,15 @@ router.post("/store-token", async (req, res) => {
       { upsert: true }
     );
 
-    console.log(`✅ Stored RL token for ${shop}`);
+    console.log(`Stored RL token for ${shop}`);
     res.json({ ok: true, message: "RL token stored" });
   } catch (err) {
-    console.error("❌ store-token error:", err);
+    console.error("store-token error:", err);
     res.status(500).json({ ok: false, error: "Failed to store RL token" });
   }
 });
 
-// Status check
+// Status check with semi-automatic injection
 router.get("/status", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).json({ ok: false, error: "Missing shop" });
@@ -242,33 +335,60 @@ router.get("/status", async (req, res) => {
     const record = await ShopModel.findOne({ shop });
 
     if (record && record.api_token) {
-      // ✅ Only "connected" if token exists
+      // Check if script needs injection (hasn't been attempted yet)
+      const needsInjection = !record.script_injected && !record.script_injection_attempted;
+      
+      if (needsInjection && record.access_token && record.short_id) {
+        console.log(`Auto-injection needed for ${shop}`);
+        
+        // Mark as attempted to prevent loops
+        await ShopModel.updateOne({ shop }, { $set: { script_injection_attempted: true } });
+        
+        // Try auto-injection in background
+        setImmediate(async () => {
+          try {
+            await injectScriptIntoTheme(shop, record.short_id, record.access_token);
+            await ShopModel.updateOne({ shop }, { $set: { script_injected: true } });
+            console.log(`Auto-injected script for ${shop}`);
+          } catch (err) {
+            console.log(`Auto-injection failed for ${shop}: ${err.message}`);
+          }
+        });
+      }
+
       return res.json({
         ok: true,
         connected: true,
         shop: record.shop,
-        connected_at: record.connected_at
+        connected_at: record.connected_at,
+        script_injected: record.script_injected || false,
+        auto_injection_attempted: record.script_injection_attempted || false
       });
     }
 
-    // ❌ No record or missing token → treat as disconnected
+    // No record or missing token → treat as disconnected
     return res.json({ ok: true, connected: false, shop });
   } catch (err) {
-    console.error("❌ status error:", err);
+    console.error("status error:", err);
     res.status(500).json({ ok: false, error: "Failed to fetch status" });
   }
 });
 
 // Disconnect - CHANGED FROM GET TO POST
 router.post("/disconnect", async (req, res) => {
-  const { shop } = req.body;  // ← CHANGED: from req.query to req.body
+  const { shop } = req.body;
   if (!shop) return res.status(400).json({ ok: false, error: "Missing shop" });
 
   try {
     await ShopModel.updateOne(
       { shop },
       {
-        $unset: { api_token: "", short_id: "" },
+        $unset: { 
+          api_token: "", 
+          short_id: "",
+          script_injected: "",
+          script_injection_attempted: ""
+        },
         $set: { connected_at: null },
         $push: {
           history: {
@@ -280,10 +400,10 @@ router.post("/disconnect", async (req, res) => {
       }
     );
 
-    console.log(`🔌 Disconnected shop: ${shop}`);
+    console.log(`Disconnected shop: ${shop}`);
     res.json({ ok: true, message: "Disconnected" });
   } catch (err) {
-    console.error("❌ disconnect error:", err);
+    console.error("disconnect error:", err);
     res.status(500).json({ ok: false, error: "Failed to disconnect" });
   }
 });
@@ -317,15 +437,15 @@ router.get("/rl/callback", async (req, res) => {
       { upsert: true }
     );
 
-    console.log(`✅ RL token saved for ${shop}`);
+    console.log(`RL token saved for ${shop}`);
     res.redirect(`/?shop=${encodeURIComponent(shop)}&connected=1`);
   } catch (err) {
-    console.error("❌ RL callback error:", err);
+    console.error("RL callback error:", err);
     res.status(500).send("Failed to save RL token");
   }
 });
 
-// Theme injection route - injects script directly into theme.liquid
+// Manual theme injection route - for backup/retry
 router.post("/inject-script", async (req, res) => {
   const { shop } = req.body;
   if (!shop) {
@@ -341,110 +461,27 @@ router.post("/inject-script", async (req, res) => {
       });
     }
 
-    // Build script URL - using the documented format from RabbitLoader
-    const did = shopRecord.short_id;
-    const scriptUrl = `https://cfw.rabbitloader.xyz/${did}/rl.uj.rd.js?mode=everyone`;
-    
     if (!shopRecord.access_token) {
       throw new Error("No access token found for shop");
     }
 
-    console.log(`🔄 Attempting theme injection for ${shop} with DID: ${did}`);
-
-    // Step 1: Get active theme
-    const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
+    const result = await injectScriptIntoTheme(shop, shopRecord.short_id, shopRecord.access_token);
+    
+    // Update database to mark as injected
+    await ShopModel.updateOne(
+      { shop }, 
+      { 
+        $set: { 
+          script_injected: true,
+          script_injection_attempted: true 
+        } 
       }
-    });
-
-    if (!themesResponse.ok) {
-      throw new Error(`Failed to fetch themes: ${themesResponse.status} ${themesResponse.statusText}`);
-    }
-
-    const themesData = await themesResponse.json();
-    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
+    );
     
-    if (!activeTheme) {
-      throw new Error("No active theme found");
-    }
-
-    console.log(`📋 Found active theme: ${activeTheme.name} (ID: ${activeTheme.id})`);
-
-    // Step 2: Get theme.liquid file
-    const assetResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!assetResponse.ok) {
-      throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status} ${assetResponse.statusText}`);
-    }
-
-    const assetData = await assetResponse.json();
-    let themeContent = assetData.asset.value;
-
-    // Step 3: Check if RabbitLoader script already exists
-    if (themeContent.includes('rabbitloader.xyz') || themeContent.includes(did)) {
-      console.log(`ℹ️ RabbitLoader script already exists in theme for ${shop}`);
-      return res.json({ 
-        ok: true, 
-        message: "Script already exists in theme", 
-        scriptUrl,
-        location: "theme.liquid" 
-      });
-    }
-
-    // Step 4: Inject script at the top of <head>
-    const scriptTag = `  <script src="${scriptUrl}"></script>`;
-    const headOpenTag = '<head>';
-    
-    if (!themeContent.includes(headOpenTag)) {
-      throw new Error("Could not find <head> tag in theme.liquid");
-    }
-
-    // Insert script right after <head> opening tag
-    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
-
-    console.log(`🚀 Injecting script into theme head: ${scriptTag}`);
-
-    // Step 5: Update the theme file
-    const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
-      method: 'PUT',
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        asset: {
-          key: 'layout/theme.liquid',
-          value: themeContent
-        }
-      })
-    });
-
-    if (!updateResponse.ok) {
-      const errorData = await updateResponse.json();
-      console.error(`❌ Theme update failed:`, errorData);
-      throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
-    }
-
-    console.log(`✅ RabbitLoader script injected into theme for ${shop}`);
-    
-    res.json({ 
-      ok: true, 
-      message: "Script injected successfully into theme head", 
-      scriptUrl,
-      location: "theme.liquid",
-      themeId: activeTheme.id,
-      themeName: activeTheme.name
-    });
+    res.json({ ok: true, ...result });
 
   } catch (err) {
-    console.error("❌ Theme injection error:", err);
+    console.error("Manual script injection error:", err);
     res.status(500).json({ 
       ok: false, 
       error: err.message,
@@ -473,6 +510,8 @@ router.get("/debug-shop", async (req, res) => {
       has_api_token: !!shopRecord.api_token,
       short_id: shopRecord.short_id,
       connected_at: shopRecord.connected_at,
+      script_injected: shopRecord.script_injected || false,
+      script_injection_attempted: shopRecord.script_injection_attempted || false,
       history: shopRecord.history
     });
   } catch (err) {
@@ -502,25 +541,12 @@ router.get("/debug-scopes", async (req, res) => {
       }
     });
 
-    // Test access to script tags API
-    const scriptsResponse = await fetch(`https://${shop}/admin/api/2023-10/script_tags.json?limit=1`, {
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      }
-    });
-
     res.json({
       shop,
       themesAccess: {
         status: themesResponse.status,
         statusText: themesResponse.statusText,
         canAccessThemes: themesResponse.ok
-      },
-      scriptsAccess: {
-        status: scriptsResponse.status,
-        statusText: scriptsResponse.statusText,
-        canAccessScripts: scriptsResponse.ok
       }
     });
   } catch (err) {
