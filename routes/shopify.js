@@ -374,7 +374,7 @@ router.post("/inject-script", async (req, res) => {
     // Create new script tag
     const scriptTag = {
       script_tag: {
-        event: "onload",
+        event: scriptUrl,
         src: scriptUrl,
         display_scope: "online_store"
       }
