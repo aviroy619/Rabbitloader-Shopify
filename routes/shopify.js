@@ -320,6 +320,34 @@ router.get("/rl/callback", async (req, res) => {
   }
 });
 
+// Debug route to check stored data
+router.get("/debug-shop", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) {
+    return res.status(400).json({ error: "Missing shop parameter" });
+  }
+
+  try {
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord) {
+      return res.json({ found: false, shop });
+    }
+
+    res.json({
+      found: true,
+      shop: shopRecord.shop,
+      has_access_token: !!shopRecord.access_token,
+      has_api_token: !!shopRecord.api_token,
+      short_id: shopRecord.short_id,
+      connected_at: shopRecord.connected_at,
+      history: shopRecord.history
+    });
+  } catch (err) {
+    console.error("Debug shop error:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 // Get manual installation instructions
 router.get("/manual-instructions", async (req, res) => {
   const { shop } = req.query;
