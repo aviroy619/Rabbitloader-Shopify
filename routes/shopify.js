@@ -336,9 +336,9 @@ router.post("/inject-script", async (req, res) => {
       });
     }
 
-    // Inline script injection logic
-    const did = shopRecord.short_id;
-    const scriptUrl = `https://cfw.rabbitloader.xyz/${did}/u.js.red.js`;
+    /// Inline script injection logic
+const did = shopRecord.short_id;
+const scriptUrl = `https://cfw.rabbitloader.xyz/${did}/rl.uj.rd.js?mode=everyone`;
     
     if (!shopRecord.access_token) {
       throw new Error("No access token found for shop");
@@ -461,7 +461,7 @@ router.get("/manual-instructions", async (req, res) => {
       });
     }
 
-    const scriptUrl = `https://cfw.rabbitloader.xyz/${shopRecord.short_id}/u.js.red.js`;
+    const scriptUrl = `https://cfw.rabbitloader.xyz/${shopRecord.short_id}/rl.uj.rd.js?mode=everyone`;
     
     res.json({
       ok: true,
