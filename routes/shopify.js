@@ -39,29 +39,97 @@ router.get("/auth", (req, res) => {
 // Shopify OAuth Callback
 router.get("/auth/callback", async (req, res) => {
   const { code, hmac, shop, state, timestamp } = req.query;
+  const { "rl-token": rlToken } = req.query;
 
+  console.log("📥 Callback received:", {
+    hasCode: !!code,
+    hasRlToken: !!rlToken,
+    shop,
+    hmac: hmac ? hmac.substring(0, 10) + "..." : "none"
+  });
+
+  // Handle RabbitLoader callback (when coming back from RL)
+  if (rlToken && shop) {
+    console.log(`🔄 Processing RabbitLoader callback for ${shop}`);
+    try {
+      const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
+      
+      await ShopModel.findOneAndUpdate(
+        { shop },
+        {
+          $set: {
+            short_id: decoded.did,
+            api_token: decoded.api_token,
+            connected_at: new Date()
+          },
+          $push: {
+            history: {
+              event: "connect",
+              timestamp: new Date(),
+              details: { via: "rl-callback" }
+            }
+          }
+        },
+        { upsert: true }
+      );
+
+      console.log(`✅ RabbitLoader token saved for ${shop}`);
+      
+      // Redirect back to embedded app
+      const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(req.query.host || '')}&embedded=1&connected=1`;
+      return res.redirect(redirectUrl);
+      
+    } catch (err) {
+      console.error("❌ RL callback error:", err);
+      return res.status(400).send("Failed to process RabbitLoader token");
+    }
+  }
+
+  // Handle Shopify OAuth callback (when coming back from Shopify)
   if (!code || !shop) {
     return res.status(400).send("Missing authorization code or shop");
   }
 
   try {
-    // Verify HMAC (important for security)
-    const queryString = Object.keys(req.query)
-      .filter(key => key !== 'hmac' && key !== 'signature')
+    // FIXED: Proper HMAC verification
+    // Build query string excluding hmac and signature, sorted alphabetically
+    const queryObj = { ...req.query };
+    delete queryObj.hmac;
+    delete queryObj.signature;
+
+    const queryString = Object.keys(queryObj)
       .sort()
-      .map(key => `${key}=${req.query[key]}`)
+      .map(key => `${key}=${queryObj[key]}`)
       .join('&');
+
+    console.log("🔍 HMAC verification:", {
+      queryString: queryString.substring(0, 100) + "...",
+      receivedHmac: hmac
+    });
 
     const calculatedHmac = crypto
       .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
       .update(queryString)
       .digest('hex');
 
+    console.log("🔍 HMAC comparison:", {
+      calculated: calculatedHmac.substring(0, 10) + "...",
+      received: hmac.substring(0, 10) + "...",
+      match: calculatedHmac === hmac
+    });
+
     if (calculatedHmac !== hmac) {
-      return res.status(401).send("Invalid HMAC");
+      console.error("❌ HMAC verification failed");
+      console.error("Expected:", calculatedHmac);
+      console.error("Received:", hmac);
+      console.error("Query string used:", queryString);
+      return res.status(401).send("Invalid HMAC - Security verification failed");
     }
 
+    console.log("✅ HMAC verification passed");
+
     // Exchange code for access token
+    console.log(`🔄 Exchanging code for access token for ${shop}`);
     const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -73,13 +141,15 @@ router.get("/auth/callback", async (req, res) => {
     });
 
     const tokenData = await tokenResponse.json();
+    console.log("🔄 Token response received:", { hasAccessToken: !!tokenData.access_token });
 
     if (!tokenData.access_token) {
-      throw new Error("Failed to get access token");
+      console.error("❌ No access token in response:", tokenData);
+      throw new Error("Failed to get access token from Shopify");
     }
 
     // Save shop with access token
-    await ShopModel.findOneAndUpdate(
+    const shopRecord = await ShopModel.findOneAndUpdate(
       { shop },
       {
         shop,
@@ -96,14 +166,21 @@ router.get("/auth/callback", async (req, res) => {
       { upsert: true, new: true }
     );
 
-    console.log(`✅ Shopify OAuth completed for ${shop}`);
+    console.log(`✅ Shopify OAuth completed for ${shop}`, {
+      recordId: shopRecord._id,
+      hasAccessToken: !!shopRecord.access_token
+    });
 
-    // Redirect to app with shop parameter
-    res.redirect(`/?shop=${encodeURIComponent(shop)}&embedded=1`);
+    // Redirect to app with shop parameter and host for embedding
+    const hostParam = req.query.host ? `&host=${encodeURIComponent(req.query.host)}` : '';
+    const redirectUrl = `/?shop=${encodeURIComponent(shop)}${hostParam}&embedded=1&shopify_auth=1`;
+    
+    console.log("🔄 Redirecting to:", redirectUrl);
+    res.redirect(redirectUrl);
 
   } catch (err) {
     console.error("❌ OAuth callback error:", err);
-    res.status(500).send("Authentication failed");
+    res.status(500).send(`Authentication failed: ${err.message}`);
   }
 });
 

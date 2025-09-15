@@ -32,14 +32,17 @@
       // Check if we're in an embedded context
       const isEmbedded = window.top !== window.self || embedded === '1';
       
-      if (isEmbedded && shop) {
+      if (isEmbedded && shop && window.env.SHOPIFY_API_KEY) {
         try {
           // Initialize App Bridge
           const AppBridge = window['app-bridge'];
           if (AppBridge) {
+            // Use host parameter or generate from shop
+            const appHost = host || btoa(`${shop}/admin`);
+            
             const app = AppBridge.createApp({
               apiKey: window.env.SHOPIFY_API_KEY,
-              host: host || btoa(shop + '/admin'),
+              host: appHost,
               forceRedirect: true
             });
             
@@ -49,18 +52,24 @@
               title: 'RabbitLoader Integration' 
             });
             
-            console.log('✅ App Bridge initialized successfully');
+            console.log('App Bridge initialized successfully with host:', appHost);
+          } else {
+            console.error('App Bridge library not loaded');
           }
         } catch (error) {
-          console.error('❌ App Bridge initialization failed:', error);
+          console.error('App Bridge initialization failed:', error);
         }
       } else if (!shop) {
-        // If no shop parameter, redirect to install
-        console.log('No shop parameter, redirecting to Shopify auth');
-        const shopPrompt = prompt('Enter your shop domain (e.g., mystore.myshopify.com):');
-        if (shopPrompt) {
-          window.location.href = `/shopify/auth?shop=${encodeURIComponent(shopPrompt)}`;
+        // If no shop parameter and not embedded, show auth prompt
+        console.log('No shop parameter found, need Shopify authentication');
+        if (!isEmbedded) {
+          const shopDomain = prompt('Enter your shop domain (e.g., mystore.myshopify.com):');
+          if (shopDomain) {
+            window.location.href = `/shopify/auth?shop=${encodeURIComponent(shopDomain)}`;
+          }
         }
+      } else {
+        console.log('App loaded in standalone mode for shop:', shop);
       }
     });
   </script>
