@@ -320,6 +320,34 @@ router.get("/rl/callback", async (req, res) => {
   }
 });
 
+// Manual script injection route
+router.post("/inject-script", async (req, res) => {
+  const { shop } = req.body;
+  if (!shop) {
+    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
+  }
+
+  try {
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord || !shopRecord.short_id) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not connected to RabbitLoader" 
+      });
+    }
+
+    const result = await injectRabbitLoaderScript(shop, shopRecord.short_id);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error("Manual script injection error:", err);
+    res.status(500).json({ 
+      ok: false, 
+      error: err.message,
+      details: "Check server logs for more information" 
+    });
+  }
+});
+
 // Debug route to check stored data
 router.get("/debug-shop", async (req, res) => {
   const { shop } = req.query;

@@ -100,8 +100,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         <p><strong>DID:</strong> ${data.did}</p>
         <p><strong>Script URL:</strong> <code>${data.scriptUrl}</code></p>
         
+        <div class="script-actions">
+          <button class="btn btn-primary" onclick="tryAutoInject()">Try Auto-Inject</button>
+        </div>
+        
         <div class="script-tag-box">
-          <label>Copy this script tag:</label>
+          <label>Or copy this script tag for manual installation:</label>
           <div class="copy-container">
             <code id="scriptTagCode">${data.scriptTag}</code>
             <button class="copy-btn" onclick="copyScriptTag()">Copy</button>
@@ -123,6 +127,31 @@ document.addEventListener("DOMContentLoaded", async () => {
       </div>
     `;
   }
+
+  // Try automatic script injection
+  window.tryAutoInject = async function() {
+    if (!shop) return;
+    
+    showFlash("Attempting automatic script injection...", "info");
+    
+    try {
+      const res = await fetch("/shopify/inject-script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shop })
+      });
+      const data = await res.json();
+      
+      if (data.ok) {
+        showFlash("Script injection successful! Check your store's source code.", "success");
+      } else {
+        showFlash("Auto-injection failed: " + data.error, "error");
+      }
+    } catch (err) {
+      console.error("Auto-inject failed:", err);
+      showFlash("Auto-injection failed. Use manual installation.", "error");
+    }
+  };
 
   // Copy script tag to clipboard
   window.copyScriptTag = function() {
