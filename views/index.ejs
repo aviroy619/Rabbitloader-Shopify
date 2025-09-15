@@ -5,10 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>RabbitLoader - Connect Store</title>
   <link rel="stylesheet" href="/style.css">
-  
-  <!-- Shopify App Bridge -->
   <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
-  
   <script>
     // Expose env vars to frontend
     window.env = {
@@ -17,8 +14,285 @@
       SHOPIFY_API_KEY: "<%= process.env.SHOPIFY_API_KEY %>"
     };
   </script>
-</head>
-<body>
+  <style>
+    /* Enhanced Dashboard Styles */
+    .enhanced-dashboard {
+      margin-top: 20px;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+    }
+    
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px;
+      margin-bottom: 20px;
+    }
+    
+    .psi-scores-section, .plan-section, .analytics-section, .actions-section {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .psi-comparison {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    
+    .score-box {
+      display: flex;
+      gap: 15px;
+      margin-top: 10px;
+    }
+    
+    .score {
+      text-align: center;
+      padding: 10px;
+      border-radius: 6px;
+      background: #f0f0f0;
+      min-width: 80px;
+    }
+    
+    .score-value {
+      display: block;
+      font-size: 24px;
+      font-weight: bold;
+      margin-bottom: 4px;
+    }
+    
+    .score-value.poor { color: #dc3545; }
+    .score-value.average { color: #ffc107; }
+    .score-value.good { color: #28a745; }
+    
+    .score-label {
+      font-size: 12px;
+      color: #666;
+    }
+    
+    .improvement-arrow {
+      font-size: 24px;
+      color: #28a745;
+      font-weight: bold;
+    }
+    
+    .plan-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 15px;
+    }
+    
+    .plan-details h4 {
+      margin: 0 0 8px 0;
+      color: #007bff;
+    }
+    
+    .plan-details p {
+      margin: 4px 0;
+      color: #666;
+    }
+    
+    .analytics-stats {
+      margin: 15px 0;
+    }
+    
+    .stat {
+      text-align: center;
+      padding: 15px;
+      background: #e3f2fd;
+      border-radius: 6px;
+      margin-bottom: 15px;
+    }
+    
+    .stat-value {
+      display: block;
+      font-size: 28px;
+      font-weight: bold;
+      color: #1976d2;
+    }
+    
+    .stat-label {
+      font-size: 14px;
+      color: #666;
+    }
+    
+    .action-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    
+    .btn {
+      padding: 12px 20px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: none;
+      display: inline-block;
+      text-align: center;
+      transition: all 0.2s;
+    }
+    
+    .btn-primary {
+      background: #007bff;
+      color: white;
+    }
+    
+    .btn-primary:hover {
+      background: #0056b3;
+    }
+    
+    .btn-secondary {
+      background: #6c757d;
+      color: white;
+    }
+    
+    .btn-secondary:hover {
+      background: #545b62;
+    }
+    
+    .btn-outline {
+      background: transparent;
+      color: #007bff;
+      border: 1px solid #007bff;
+    }
+    
+    .btn-outline:hover {
+      background: #007bff;
+      color: white;
+    }
+    
+    .script-instructions {
+      margin-top: 20px;
+      padding: 20px;
+      background: #fff3cd;
+      border-radius: 8px;
+      border-left: 4px solid #ffc107;
+    }
+    
+    .script-actions {
+      margin: 15px 0;
+    }
+    
+    .script-tag-box {
+      margin: 15px 0;
+      padding: 15px;
+      background: #f8f9fa;
+      border-radius: 6px;
+    }
+    
+    .copy-container {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      margin-top: 8px;
+    }
+    
+    .copy-container code {
+      flex: 1;
+      padding: 8px;
+      background: white;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 12px;
+    }
+    
+    .copy-btn {
+      padding: 8px 12px;
+      background: #28a745;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    
+    .copy-btn:hover {
+      background: #218838;
+    }
+    
+    .manual-steps {
+      margin-top: 15px;
+    }
+    
+    .manual-steps summary {
+      cursor: pointer;
+      font-weight: bold;
+      padding: 8px 0;
+    }
+    
+    .manual-steps ol {
+      margin-top: 10px;
+      padding-left: 20px;
+    }
+    
+    .manual-steps li {
+      margin-bottom: 8px;
+      line-height: 1.4;
+    }
+    
+    .flash-message {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 12px 20px;
+      border-radius: 6px;
+      color: white;
+      font-weight: 500;
+      z-index: 1000;
+      opacity: 1;
+      transition: opacity 0.5s;
+    }
+    
+    .flash-message.success {
+      background: #28a745;
+    }
+    
+    .flash-message.error {
+      background: #dc3545;
+    }
+    
+    .flash-message.info {
+      background: #17a2b8;
+    }
+    
+    .flash-message.fade-out {
+      opacity: 0;
+    }
+
+    /* Responsive design */
+    @media (max-width: 768px) {
+      .dashboard-grid {
+        grid-template-columns: 1fr;
+      }
+      
+      .psi-comparison {
+        flex-direction: column;
+      }
+      
+      .improvement-arrow {
+        transform: rotate(90deg);
+      }
+      
+      .plan-info {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      
+      .copy-container {
+        flex-direction: column;
+      }
+    }
+  </style>
   <script>
     // Initialize Shopify App Bridge for embedded app
     document.addEventListener('DOMContentLoaded', function() {
@@ -63,17 +337,16 @@
         // If no shop parameter and not embedded, show auth prompt
         console.log('No shop parameter found, need Shopify authentication');
         if (!isEmbedded) {
-          const shopDomain = prompt('Enter your shop domain (e.g., mystore.myshopify.com):');
-          if (shopDomain) {
-            window.location.href = `/shopify/auth?shop=${encodeURIComponent(shopDomain)}`;
-          }
+          // Don't auto-prompt in standalone mode
+          console.log('Standalone mode - waiting for manual shop entry');
         }
       } else {
         console.log('App loaded in standalone mode for shop:', shop);
       }
     });
   </script>
-
+</head>
+<body>
   <!-- Loading State -->
   <div id="loadingState" class="loading-screen">
     <div class="dashboard-card">
@@ -113,7 +386,7 @@
     </div>
   </div>
 
-  <!-- Connected State: Success -->
+  <!-- Connected State: Enhanced Dashboard -->
   <div id="connectedState" class="page-state" style="display: none;">
     <div class="dashboard-card">
       <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
@@ -129,7 +402,9 @@
       <div class="connected-section">
         <h1 class="main-title">Optimization Active 🚀</h1>
         <p class="subtitle">Your store is now optimized with RabbitLoader</p>
-        <a href="#" class="btn btn-secondary" id="disconnectBtn">Disconnect</a>
+        <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
+        
+        <!-- Enhanced dashboard content will be inserted here by JavaScript -->
       </div>
     </div>
   </div>

@@ -51,8 +51,9 @@ document.addEventListener("DOMContentLoaded", async () => {
         showState("connected");
         document.getElementById("storeNameConnected").textContent = shop;
         
-        // Load manual instructions for connected stores
-        loadManualInstructions();
+        // Load enhanced dashboard features
+        await loadDashboardData();
+        await loadManualInstructions();
       } else {
         showState("disconnected");
         document.getElementById("storeNameDisconnected").textContent = shop;
@@ -65,6 +66,109 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
+  // Load enhanced dashboard data
+  async function loadDashboardData() {
+    try {
+      const res = await fetch(`/shopify/dashboard-data?shop=${encodeURIComponent(shop)}`);
+      const data = await res.json();
+      
+      if (data.ok) {
+        displayEnhancedDashboard(data.data);
+      }
+    } catch (err) {
+      console.error("Failed to load dashboard data:", err);
+    }
+  }
+
+  // Display enhanced dashboard with PSI scores and features
+  function displayEnhancedDashboard(data) {
+    const connectedSection = document.querySelector("#connectedState .connected-section");
+    if (!connectedSection) return;
+
+    // Create enhanced dashboard container
+    let dashboardContainer = document.getElementById("enhancedDashboard");
+    if (!dashboardContainer) {
+      dashboardContainer = document.createElement("div");
+      dashboardContainer.id = "enhancedDashboard";
+      dashboardContainer.className = "enhanced-dashboard";
+      connectedSection.appendChild(dashboardContainer);
+    }
+
+    dashboardContainer.innerHTML = `
+      <div class="dashboard-grid">
+        <!-- PSI Scores Before/After -->
+        <div class="psi-scores-section">
+          <h3>PageSpeed Insights Score</h3>
+          <div class="psi-comparison">
+            <div class="psi-before">
+              <h4>Before RabbitLoader</h4>
+              <div class="score-box">
+                <div class="score mobile">
+                  <span class="score-value ${data.psi_scores.before.mobile < 50 ? 'poor' : data.psi_scores.before.mobile < 90 ? 'average' : 'good'}">${data.psi_scores.before.mobile}</span>
+                  <span class="score-label">Mobile</span>
+                </div>
+                <div class="score desktop">
+                  <span class="score-value ${data.psi_scores.before.desktop < 50 ? 'poor' : data.psi_scores.before.desktop < 90 ? 'average' : 'good'}">${data.psi_scores.before.desktop}</span>
+                  <span class="score-label">Desktop</span>
+                </div>
+              </div>
+            </div>
+            
+            <div class="improvement-arrow">→</div>
+            
+            <div class="psi-after">
+              <h4>After RabbitLoader</h4>
+              <div class="score-box">
+                <div class="score mobile">
+                  <span class="score-value ${data.psi_scores.after.mobile < 50 ? 'poor' : data.psi_scores.after.mobile < 90 ? 'average' : 'good'}">${data.psi_scores.after.mobile}</span>
+                  <span class="score-label">Mobile</span>
+                </div>
+                <div class="score desktop">
+                  <span class="score-value ${data.psi_scores.after.desktop < 50 ? 'poor' : data.psi_scores.after.desktop < 90 ? 'average' : 'good'}">${data.psi_scores.after.desktop}</span>
+                  <span class="score-label">Desktop</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Plan Information -->
+        <div class="plan-section">
+          <h3>Current Plan</h3>
+          <div class="plan-info">
+            <div class="plan-details">
+              <h4>${data.plan.name}</h4>
+              <p>PageViews: ${data.plan.pageviews}</p>
+              <p>Price: ${data.plan.price}</p>
+            </div>
+            <button class="btn btn-secondary" onclick="openPlanUpdate()">Update Plan</button>
+          </div>
+        </div>
+
+        <!-- Analytics -->
+        <div class="analytics-section">
+          <h3>This Month</h3>
+          <div class="analytics-stats">
+            <div class="stat">
+              <span class="stat-value">${data.pageviews_this_month}</span>
+              <span class="stat-label">PageViews</span>
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="openReports('${data.reports_url}')">View Detailed Reports</button>
+        </div>
+
+        <!-- Quick Actions -->
+        <div class="actions-section">
+          <h3>Quick Actions</h3>
+          <div class="action-buttons">
+            <button class="btn btn-outline" onclick="openCustomize('${data.customize_url}')">Customize Settings</button>
+            <button class="btn btn-outline" onclick="runPageSpeedTest()">Run PageSpeed Test</button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   // Load manual instructions for script installation
   async function loadManualInstructions() {
     try {
@@ -72,7 +176,6 @@ document.addEventListener("DOMContentLoaded", async () => {
       const data = await res.json();
       
       if (data.ok) {
-        // Display script information in connected state
         displayScriptInstructions(data);
       }
     } catch (err) {
@@ -85,7 +188,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     const connectedSection = document.querySelector("#connectedState .connected-section");
     if (!connectedSection) return;
 
-    // Create instructions container if it doesn't exist
     let instructionsContainer = document.getElementById("scriptInstructions");
     if (!instructionsContainer) {
       instructionsContainer = document.createElement("div");
@@ -101,7 +203,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         <p><strong>Script URL:</strong> <code>${data.scriptUrl}</code></p>
         
         <div class="script-actions">
-          <button class="btn btn-primary" onclick="tryAutoInject()">Try Auto-Inject</button>
+          <button class="btn btn-primary" onclick="tryManualInject()">Install Script to Theme</button>
         </div>
         
         <div class="script-tag-box">
@@ -112,8 +214,8 @@ document.addEventListener("DOMContentLoaded", async () => {
           </div>
         </div>
 
-        <div class="manual-steps">
-          <h4>Manual Installation Steps:</h4>
+        <details class="manual-steps">
+          <summary>Manual Installation Steps</summary>
           <ol>
             <li>${data.instructions.step1}</li>
             <li>${data.instructions.step2}</li>
@@ -123,48 +225,10 @@ document.addEventListener("DOMContentLoaded", async () => {
             <li>${data.instructions.step6}</li>
             <li>${data.instructions.step7}</li>
           </ol>
-        </div>
+        </details>
       </div>
     `;
   }
-
-  // Try automatic script injection
-  window.tryAutoInject = async function() {
-    if (!shop) return;
-    
-    showFlash("Attempting automatic script injection...", "info");
-    
-    try {
-      const res = await fetch("/shopify/inject-script", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ shop })
-      });
-      const data = await res.json();
-      
-      if (data.ok) {
-        showFlash("Script injection successful! Check your store's source code.", "success");
-      } else {
-        showFlash("Auto-injection failed: " + data.error, "error");
-      }
-    } catch (err) {
-      console.error("Auto-inject failed:", err);
-      showFlash("Auto-injection failed. Use manual installation.", "error");
-    }
-  };
-
-  // Copy script tag to clipboard
-  window.copyScriptTag = function() {
-    const scriptTagCode = document.getElementById("scriptTagCode");
-    if (scriptTagCode) {
-      navigator.clipboard.writeText(scriptTagCode.textContent).then(() => {
-        showFlash("Script tag copied to clipboard!", "success");
-      }).catch(err => {
-        console.error("Failed to copy:", err);
-        showFlash("Failed to copy script tag", "error");
-      });
-    }
-  };
 
   // Special case: if RL redirects back with rl-token - save it
   if (rlToken && shop) {
@@ -180,6 +244,8 @@ document.addEventListener("DOMContentLoaded", async () => {
         showFlash("Connected successfully", "success");
         showState("connected");
         document.getElementById("storeNameConnected").textContent = shop;
+        await loadDashboardData();
+        await loadManualInstructions();
       } else {
         showFlash("Failed to save connection: " + (data.error || "Unknown error"), "error");
       }
@@ -197,20 +263,16 @@ document.addEventListener("DOMContentLoaded", async () => {
       const APP_URL = window.env.APP_URL;
       const SHOPIFY_API_VERSION = window.env.SHOPIFY_API_VERSION;
       
-      // Get current URL parameters for embedding context
       const urlParams = new URLSearchParams(window.location.search);
       const host = urlParams.get('host');
       
-      // Build callback URL with host parameter for proper embedding
       let callbackUrl = `${APP_URL}/shopify/auth/callback?shop=${encodeURIComponent(shop)}`;
       if (host) {
         callbackUrl += `&host=${encodeURIComponent(host)}`;
       }
       
-      // SITE_HOME_PAGE - Shopify store's home page
       const siteUrl = `https://${shop}`;
       
-      // Build RabbitLoader console URL with all required parameters
       const connectUrl = `https://rabbitloader.com/account/?source=shopify` +
         `&action=connect` +
         `&site_url=${encodeURIComponent(siteUrl)}` +
@@ -220,15 +282,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       showFlash("Redirecting to RabbitLoader for authentication...", "info");
       
-      // Check if we're in an embedded context (iframe)
       const isEmbedded = window.top !== window.self;
       
       if (isEmbedded) {
-        // Break out of iframe and redirect in parent window
         console.log("Breaking out of iframe for RabbitLoader auth");
         window.top.location.href = connectUrl;
       } else {
-        // Direct redirect if not embedded
         console.log("Direct redirect to RabbitLoader");
         window.location.href = connectUrl;
       }
@@ -248,7 +307,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         if (data.ok) {
           showFlash("Disconnected from RabbitLoader", "success");
-          window.location.href = `/?shop=${shop}`; // reload to show disconnected state
+          window.location.href = `/?shop=${shop}`;
         } else {
           showFlash("Failed to disconnect: " + (data.error || "Unknown error"), "error");
         }
@@ -258,4 +317,61 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     });
   }
+
+  // Global functions for dashboard actions
+  window.tryManualInject = async function() {
+    if (!shop) return;
+    
+    showFlash("Installing script to theme...", "info");
+    
+    try {
+      const res = await fetch("/shopify/inject-script", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shop })
+      });
+      const data = await res.json();
+      
+      if (data.ok) {
+        showFlash("Script installed successfully! Check your store's source code.", "success");
+      } else {
+        showFlash("Installation failed: " + data.error, "error");
+      }
+    } catch (err) {
+      console.error("Script injection failed:", err);
+      showFlash("Installation failed. Use manual method below.", "error");
+    }
+  };
+
+  window.copyScriptTag = function() {
+    const scriptTagCode = document.getElementById("scriptTagCode");
+    if (scriptTagCode) {
+      navigator.clipboard.writeText(scriptTagCode.textContent).then(() => {
+        showFlash("Script tag copied to clipboard!", "success");
+      }).catch(err => {
+        console.error("Failed to copy:", err);
+        showFlash("Failed to copy script tag", "error");
+      });
+    }
+  };
+
+  window.openReports = function(reportsUrl) {
+    window.open(reportsUrl, '_blank');
+  };
+
+  window.openCustomize = function(customizeUrl) {
+    window.open(customizeUrl, '_blank');
+  };
+
+  window.openPlanUpdate = function() {
+    showFlash("Redirecting to plan management...", "info");
+    window.open('https://rabbitloader.com/pricing', '_blank');
+  };
+
+  window.runPageSpeedTest = function() {
+    const storeUrl = `https://${shop}`;
+    const pagespeedUrl = `https://pagespeed.web.dev/analysis?url=${encodeURIComponent(storeUrl)}`;
+    showFlash("Opening PageSpeed Insights...", "info");
+    window.open(pagespeedUrl, '_blank');
+  };
 });
