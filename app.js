@@ -322,6 +322,15 @@ app.use((req, res) => {
     });
   }
 });
+// Fallback route for SPA (Shopify Embedded app)
+app.get('*', (req, res) => {
+  res.render('index', {
+    SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
+    APP_URL: process.env.APP_URL,
+    SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION
+  });
+});
+
 
 // ====== Start Server ======
 app.listen(PORT, () => {
