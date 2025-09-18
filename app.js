@@ -91,6 +91,49 @@ app.use("/defer-config", deferConfigRoutes);
 // RabbitLoader Connect Routes
 app.use("/", shopifyConnectRoutes);
 
+// ====== Root Route (BEFORE auth middleware) ======
+app.get("/", (req, res) => {
+  const { shop, host, embedded, connected } = req.query;
+  
+  console.log(`Root route accessed:`, {
+    shop: shop || 'none',
+    host: host || 'none',
+    embedded: embedded || 'none',
+    connected: connected || 'none',
+    userAgent: req.headers['user-agent'] || 'none',
+    referer: req.headers.referer || 'none'
+  });
+
+  // Check if this is an embedded request from Shopify admin
+  if (embedded === '1' && shop) {
+    console.log(`Serving embedded app for shop: ${shop}`);
+    
+    // Render the embedded app interface
+    res.render("index", {
+      APP_URL: process.env.APP_URL,
+      SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
+      SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
+      shop: shop,
+      host: host || '',
+      embedded: true,
+      connected: connected === '1'
+    });
+  } else {
+    // Regular standalone access or testing
+    console.log(`Serving standalone app for shop: ${shop || 'unknown'}`);
+    
+    res.render("index", {
+      APP_URL: process.env.APP_URL,
+      SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
+      SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
+      shop: shop || null,
+      host: host || null,
+      embedded: false,
+      connected: false
+    });
+  }
+});
+
 // ====== Embedded App Authentication Middleware ======
 app.use((req, res, next) => {
   // Skip auth for public routes and static files
@@ -111,13 +154,17 @@ app.use((req, res, next) => {
   // Skip auth for defer-config routes (they have their own validation)
   const isDeferConfigRoute = req.path.startsWith('/defer-config');
   
-  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute) {
+  // Allow root route with any parameters (it handles its own logic)
+  const isRootRoute = req.path === '/';
+  
+  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isRootRoute) {
     return next();
   }
   
-  // For embedded app routes, ensure shop parameter exists
+  // For shopify routes, ensure shop parameter exists
   const shop = (req.query && req.query.shop) || (req.body && req.body.shop);
   if (!shop && req.path.startsWith('/shopify/')) {
+    console.log(`Blocking shopify route ${req.path} - missing shop parameter`);
     return res.status(400).json({ ok: false, error: "Missing shop parameter" });
   }
   
@@ -127,17 +174,62 @@ app.use((req, res, next) => {
 // ====== Shopify Routes (AFTER auth middleware) ======
 app.use("/shopify", shopifyRoutes);
 
-// ====== Root Route ======
-app.get("/", (req, res) => {
-  res.render("index", {
-    APP_URL: process.env.APP_URL,
-    SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01"
+// ====== Webhook Handler ======
+app.post("/webhooks/app/uninstalled", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    console.log(`App uninstalled for shop: ${shop}`);
+    
+    if (shop) {
+      await ShopModel.updateOne(
+        { shop },
+        { 
+          $unset: { 
+            access_token: "", 
+            api_token: "", 
+            short_id: "",
+            script_injected: "",
+            script_injection_attempted: ""
+          },
+          $set: { connected_at: null },
+          $push: {
+            history: {
+              event: "uninstalled",
+              timestamp: new Date(),
+              details: { via: "webhook" }
+            }
+          }
+        }
+      );
+    }
+    
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+
+// ====== Health Check ======
+app.get('/health', (req, res) => {
+  res.json({ 
+    ok: true, 
+    timestamp: new Date().toISOString(),
+    app: 'rl-shopify',
+    version: '1.0.0'
   });
 });
 
 // ====== Error Handling ======
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
+  console.error('Request details:', {
+    method: req.method,
+    path: req.path,
+    query: req.query,
+    headers: req.headers
+  });
+  
   res.status(500).json({ 
     ok: false, 
     error: 'Internal server error',
@@ -147,10 +239,18 @@ app.use((err, req, res, next) => {
 
 // ====== 404 Handler ======
 app.use((req, res) => {
+  console.log(`404 - Route not found:`, {
+    method: req.method,
+    path: req.path,
+    query: req.query,
+    headers: req.headers
+  });
+  
   res.status(404).json({ 
     ok: false, 
     error: 'Route not found',
-    path: req.path 
+    path: req.path,
+    method: req.method
   });
 });
 
@@ -159,4 +259,5 @@ app.listen(PORT, () => {
   console.log(`RL-Shopify app running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`App URL: ${process.env.APP_URL}`);
+  console.log(`Shopify API Key: ${process.env.SHOPIFY_API_KEY ? 'Set' : 'Missing'}`);
 });
