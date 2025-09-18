@@ -80,7 +80,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // Display enhanced dashboard with PSI scores and features
+  // Display enhanced dashboard with PSI scores and features (UPDATED)
   function displayEnhancedDashboard(data) {
     const connectedSection = document.querySelector("#connectedState .connected-section");
     if (!connectedSection) return;
@@ -157,10 +157,11 @@ document.addEventListener("DOMContentLoaded", async () => {
           <button class="btn btn-primary" onclick="openReports('${data.reports_url}')">View Detailed Reports</button>
         </div>
 
-        <!-- Quick Actions -->
+        <!-- Enhanced Quick Actions with Script Configuration -->
         <div class="actions-section">
           <h3>Quick Actions</h3>
           <div class="action-buttons">
+            <button class="btn btn-primary" onclick="openScriptConfiguration()">Configure Script Defer</button>
             <button class="btn btn-outline" onclick="openCustomize('${data.customize_url}')">Customize Settings</button>
             <button class="btn btn-outline" onclick="runPageSpeedTest()">Run PageSpeed Test</button>
           </div>
@@ -183,7 +184,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   }
 
-  // Display script installation instructions
+  // Display script installation instructions (UPDATED)
   function displayScriptInstructions(data) {
     const connectedSection = document.querySelector("#connectedState .connected-section");
     if (!connectedSection) return;
@@ -196,14 +197,28 @@ document.addEventListener("DOMContentLoaded", async () => {
       connectedSection.appendChild(instructionsContainer);
     }
 
+    // Check if we have both defer loader and main script URLs
+    const hasDeferLoader = data.deferLoaderUrl && data.mainScriptUrl;
+    const scriptDescription = hasDeferLoader ? 
+      "RabbitLoader with Script Defer Configuration" : 
+      "RabbitLoader Script Installation";
+
     instructionsContainer.innerHTML = `
       <div class="script-info">
-        <h3>RabbitLoader Script Installation</h3>
+        <h3>${scriptDescription}</h3>
         <p><strong>DID:</strong> ${data.did}</p>
-        <p><strong>Script URL:</strong> <code>${data.scriptUrl}</code></p>
+        ${hasDeferLoader ? `
+          <p><strong>Defer Loader:</strong> <code>${data.deferLoaderUrl}</code></p>
+          <p><strong>Main Script:</strong> <code>${data.mainScriptUrl}</code></p>
+        ` : `
+          <p><strong>Script URL:</strong> <code>${data.scriptUrl || data.mainScriptUrl}</code></p>
+        `}
         
         <div class="script-actions">
           <button class="btn btn-primary" onclick="tryManualInject()">Install Script to Theme</button>
+          ${hasDeferLoader ? `
+            <button class="btn btn-outline" onclick="openScriptConfiguration()" style="margin-left: 10px;">Configure Defer Rules</button>
+          ` : ''}
         </div>
         
         <div class="script-tag-box">
@@ -224,6 +239,7 @@ document.addEventListener("DOMContentLoaded", async () => {
             <li>${data.instructions.step5}<br><code>${data.scriptTag}</code></li>
             <li>${data.instructions.step6}</li>
             <li>${data.instructions.step7}</li>
+            ${data.instructions.step8 ? `<li>${data.instructions.step8}</li>` : ''}
           </ol>
         </details>
       </div>
@@ -333,7 +349,17 @@ document.addEventListener("DOMContentLoaded", async () => {
       const data = await res.json();
       
       if (data.ok) {
-        showFlash("Script installed successfully! Check your store's source code.", "success");
+        showFlash("Scripts installed successfully! Check your store's source code.", "success");
+        
+        // Refresh the manual instructions to show updated configuration
+        await loadManualInstructions();
+        
+        // Show additional success message if defer loader was installed
+        if (data.deferLoaderUrl) {
+          setTimeout(() => {
+            showFlash("Script defer configuration is now active. Configure rules to optimize loading.", "info");
+          }, 2000);
+        }
       } else {
         showFlash("Installation failed: " + data.error, "error");
       }
@@ -352,6 +378,97 @@ document.addEventListener("DOMContentLoaded", async () => {
         console.error("Failed to copy:", err);
         showFlash("Failed to copy script tag", "error");
       });
+    }
+  };
+
+  // NEW: Script configuration function
+  window.openScriptConfiguration = function() {
+    if (!shop) {
+      showFlash("Shop parameter missing", "error");
+      return;
+    }
+    
+    showFlash("Opening script defer configuration...", "info");
+    const configUrl = `/shopify/configure-defer?shop=${encodeURIComponent(shop)}`;
+    
+    // Open in new tab for better experience
+    window.open(configUrl, '_blank');
+  };
+
+  // NEW: Check defer configuration status
+  window.checkDeferStatus = async function() {
+    if (!shop) return;
+    
+    try {
+      const res = await fetch(`/defer-config?shop=${encodeURIComponent(shop)}`);
+      const data = await res.json();
+      
+      if (data.ok !== false) {
+        const rulesCount = data.rules ? data.rules.length : 0;
+        const enabled = data.enabled !== false;
+        
+        showFlash(`Defer system: ${enabled ? 'Enabled' : 'Disabled'}, ${rulesCount} rules configured`, "info");
+        
+        return { enabled, rulesCount, releaseTime: data.release_after_ms || 2000 };
+      }
+    } catch (err) {
+      console.error("Failed to check defer status:", err);
+    }
+    
+    return null;
+  };
+
+  // NEW: Quick defer rule creation helpers
+  window.addCommonDeferRules = async function() {
+    if (!shop) return;
+    
+    const commonRules = [
+      {
+        id: "google-analytics",
+        src_regex: "googletagmanager\\.com/(gtag|gtm)",
+        action: "defer",
+        priority: 1,
+        enabled: true
+      },
+      {
+        id: "facebook-pixel",
+        src_regex: "connect\\.facebook\\.net/",
+        action: "defer",
+        priority: 2,
+        enabled: true
+      },
+      {
+        id: "shopify-analytics",
+        src_regex: "cdn\\.shopify\\.com/.*analytics",
+        action: "defer",
+        priority: 3,
+        enabled: true
+      }
+    ];
+
+    try {
+      showFlash("Adding common defer rules...", "info");
+      
+      const res = await fetch('/defer-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shop: shop,
+          release_after_ms: 2000,
+          enabled: true,
+          rules: commonRules
+        })
+      });
+      
+      const result = await res.json();
+      if (result.ok) {
+        showFlash("Common defer rules added successfully!", "success");
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (err) {
+      console.error("Failed to add common rules:", err);
+      showFlash("Failed to add common rules: " + err.message, "error");
     }
   };
 
@@ -374,4 +491,25 @@ document.addEventListener("DOMContentLoaded", async () => {
     showFlash("Opening PageSpeed Insights...", "info");
     window.open(pagespeedUrl, '_blank');
   };
+
+  // NEW: Advanced dashboard feature - show defer status on load
+  async function loadDeferStatus() {
+    if (!shop) return;
+    
+    const status = await checkDeferStatus();
+    if (status) {
+      console.log("Defer configuration status:", status);
+      
+      // You could add a small status indicator to the dashboard here
+      const deferStatusEl = document.getElementById('deferStatus');
+      if (deferStatusEl) {
+        deferStatusEl.textContent = `Defer: ${status.enabled ? 'ON' : 'OFF'} (${status.rulesCount} rules)`;
+      }
+    }
+  }
+
+  // Load defer status when dashboard loads
+  if (shop) {
+    setTimeout(loadDeferStatus, 1000);
+  }
 });

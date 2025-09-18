@@ -80,7 +80,14 @@ app.use(express.static(path.join(__dirname, "public")));
 // ====== Shopify Routes ======
 const shopifyRoutes = require("./routes/shopify");
 app.use("/shopify", shopifyRoutes);
+const deferConfigRoutes = require("./routes/deferConfig");
+app.use("/defer-config", deferConfigRoutes);
 
+const shopifyRoutes = require("./routes/shopify");
+app.use("/shopify", shopifyRoutes);
+
+const shopifyConnectRoutes = require("./routes/shopifyConnect");
+app.use("/", shopifyConnectRoutes);
 // ====== RabbitLoader Connect Routes ======
 const shopifyConnectRoutes = require("./routes/shopifyConnect");
 app.use("/", shopifyConnectRoutes);

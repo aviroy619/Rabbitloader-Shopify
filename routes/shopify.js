@@ -2,11 +2,11 @@ const express = require("express");
 const router = express.Router();
 const ShopModel = require("../models/Shop");
 const crypto = require("crypto");
+const path = require("path");
+const fs = require("fs");
 
-// Helper function to inject script into theme
+// Helper function to inject script into theme (UPDATED for defer system)
 async function injectScriptIntoTheme(shop, did, accessToken) {
-  const scriptUrl = `https://cfw.rabbitloader.xyz/${did}/rl.uj.rd.js?mode=everyone`;
-  
   console.log(`Attempting theme injection for ${shop} with DID: ${did}`);
 
   // Step 1: Get active theme
@@ -45,24 +45,32 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
   const assetData = await assetResponse.json();
   let themeContent = assetData.asset.value;
 
-  // Step 3: Check if RabbitLoader script already exists
-  if (themeContent.includes('rabbitloader.xyz') || themeContent.includes(did)) {
+  // Step 3: Check if any RabbitLoader script already exists
+  if (themeContent.includes('rabbitloader.xyz') || themeContent.includes(did) || 
+      themeContent.includes(`defer-config/loader.js?shop=${shop}`)) {
     console.log(`RabbitLoader script already exists in theme for ${shop}`);
-    return { success: true, message: "Script already exists in theme", scriptUrl };
+    return { success: true, message: "Script already exists in theme", scriptType: "existing" };
   }
 
-  // Step 4: Inject script at the top of <head>
-  const scriptTag = `  <script src="${scriptUrl}"></script>`;
+  // Step 4: Inject BOTH scripts - defer loader first, then main RL script
+  const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
+  const mainScriptUrl = `https://cfw.rabbitloader.xyz/${did}/rl.uj.rd.js?mode=everyone`;
+  
+  const scriptTags = `  <!-- RabbitLoader Defer Configuration -->
+  <script src="${deferLoaderUrl}"></script>
+  <!-- RabbitLoader Main Script -->
+  <script src="${mainScriptUrl}"></script>`;
+  
   const headOpenTag = '<head>';
   
   if (!themeContent.includes(headOpenTag)) {
     throw new Error("Could not find <head> tag in theme.liquid");
   }
 
-  // Insert script right after <head> opening tag
-  themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
+  // Insert scripts right after <head> opening tag
+  themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTags}`);
 
-  console.log(`Injecting script into theme head: ${scriptTag}`);
+  console.log(`Injecting scripts into theme head for ${shop}`);
 
   // Step 5: Update the theme file
   const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
@@ -85,12 +93,13 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
     throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
   }
 
-  console.log(`RabbitLoader script injected into theme for ${shop}`);
+  console.log(`RabbitLoader scripts injected into theme for ${shop}`);
   
   return { 
     success: true, 
-    message: "Script injected successfully into theme head", 
-    scriptUrl,
+    message: "Defer loader and main script injected successfully", 
+    deferLoaderUrl,
+    mainScriptUrl,
     themeId: activeTheme.id,
     themeName: activeTheme.name
   };
@@ -361,7 +370,7 @@ router.post("/disconnect", async (req, res) => {
   }
 });
 
-// Manual theme injection route
+// Manual theme injection route (UPDATED)
 router.post("/inject-script", async (req, res) => {
   const { shop } = req.body;
   if (!shop) {
@@ -452,6 +461,250 @@ router.get("/dashboard-data", async (req, res) => {
   }
 });
 
+// ====== DEFER CONFIGURATION INTERFACE ======
+
+// Configuration interface route (NEW)
+router.get("/configure-defer", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) {
+    return res.status(400).send("Missing shop parameter");
+  }
+
+  try {
+    // Verify shop exists and is connected
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord || !shopRecord.api_token) {
+      return res.status(404).send(`
+        <div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+          <h2>Shop Not Connected</h2>
+          <p>Please connect your shop to RabbitLoader first.</p>
+          <a href="/?shop=${encodeURIComponent(shop)}" style="color: #007bff;">Go back to main app</a>
+        </div>
+      `);
+    }
+
+    // Read the configuration interface HTML file
+    const configHtmlPath = path.join(__dirname, '../views/defer-config.html');
+    
+    // Check if the file exists, if not create a basic interface
+    let configHtml;
+    if (fs.existsSync(configHtmlPath)) {
+      configHtml = fs.readFileSync(configHtmlPath, 'utf8');
+    } else {
+      // Create basic interface inline
+      configHtml = `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Script Defer Configuration - ${shop}</title>
+          <style>
+            body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+            .header { text-align: center; margin-bottom: 40px; }
+            .config-section { background: white; border-radius: 8px; margin-bottom: 20px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+            .btn { padding: 10px 20px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; }
+            .btn-primary { background: #007bff; color: white; }
+            .btn-success { background: #28a745; color: white; }
+            .form-group { margin-bottom: 15px; }
+            .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+            .form-group input, .form-group select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+            #statusBanner { padding: 15px; margin-bottom: 20px; border-radius: 4px; display: none; }
+            .status-banner.success { background: #d4edda; color: #155724; }
+            .status-banner.error { background: #f8d7da; color: #721c24; }
+            .rule-item { border: 1px solid #ddd; margin-bottom: 15px; border-radius: 4px; }
+            .rule-header { background: #f8f9fa; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+            .rule-content { padding: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Script Defer Configuration</h1>
+            <p>Shop: <strong>${shop}</strong></p>
+          </div>
+
+          <div id="statusBanner"></div>
+
+          <div class="config-section">
+            <h2>Global Settings</h2>
+            <div class="form-group">
+              <label for="releaseTime">Script Release Time (ms):</label>
+              <input type="number" id="releaseTime" min="0" max="30000" step="100" value="2000">
+            </div>
+            <div class="form-group">
+              <label>
+                <input type="checkbox" id="enableDefer" checked> Enable Defer System
+              </label>
+            </div>
+          </div>
+
+          <div class="config-section">
+            <h2>Defer Rules</h2>
+            <div id="rulesContainer">
+              <p style="text-align: center; color: #666;">No rules configured. Click "Add Rule" to get started.</p>
+            </div>
+            <button class="btn btn-primary" onclick="addNewRule()">Add Rule</button>
+            <button class="btn btn-success" onclick="saveConfiguration()">Save Configuration</button>
+            <button class="btn" onclick="loadConfiguration()">Reload</button>
+          </div>
+
+          <script>
+            let currentConfig = { release_after_ms: 2000, rules: [], enabled: true };
+            const shop = "${shop}";
+            let ruleCounter = 1;
+
+            async function loadConfiguration() {
+              try {
+                showStatus('info', 'Loading configuration...');
+                const response = await fetch('/defer-config?shop=' + encodeURIComponent(shop));
+                const data = await response.json();
+                
+                if (data.ok !== false) {
+                  currentConfig = data;
+                  updateUI();
+                  showStatus('success', 'Configuration loaded');
+                }
+              } catch (error) {
+                showStatus('error', 'Failed to load: ' + error.message);
+              }
+            }
+
+            async function saveConfiguration() {
+              try {
+                collectFormData();
+                showStatus('info', 'Saving...');
+                
+                const response = await fetch('/defer-config', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ shop: shop, ...currentConfig })
+                });
+                
+                const result = await response.json();
+                if (result.ok) {
+                  showStatus('success', 'Saved successfully!');
+                } else {
+                  throw new Error(result.error);
+                }
+              } catch (error) {
+                showStatus('error', 'Save failed: ' + error.message);
+              }
+            }
+
+            function collectFormData() {
+              currentConfig.release_after_ms = parseInt(document.getElementById('releaseTime').value) || 2000;
+              currentConfig.enabled = document.getElementById('enableDefer').checked;
+              
+              currentConfig.rules = [];
+              document.querySelectorAll('.rule-item').forEach(ruleEl => {
+                const rule = {
+                  id: ruleEl.querySelector('.rule-id').value,
+                  src_regex: ruleEl.querySelector('.rule-regex').value,
+                  action: ruleEl.querySelector('.rule-action').value,
+                  priority: parseInt(ruleEl.querySelector('.rule-priority').value) || 0,
+                  enabled: ruleEl.querySelector('.rule-enabled').checked
+                };
+                if (rule.src_regex) currentConfig.rules.push(rule);
+              });
+            }
+
+            function updateUI() {
+              document.getElementById('releaseTime').value = currentConfig.release_after_ms || 2000;
+              document.getElementById('enableDefer').checked = currentConfig.enabled !== false;
+              renderRules();
+            }
+
+            function renderRules() {
+              const container = document.getElementById('rulesContainer');
+              container.innerHTML = '';
+              
+              if (currentConfig.rules.length === 0) {
+                container.innerHTML = '<p style="text-align: center; color: #666;">No rules configured.</p>';
+                return;
+              }
+              
+              currentConfig.rules.forEach(rule => {
+                const ruleEl = document.createElement('div');
+                ruleEl.className = 'rule-item';
+                ruleEl.innerHTML = \`
+                  <div class="rule-header">
+                    <h3>\${rule.id || 'New Rule'}</h3>
+                    <button class="btn" onclick="deleteRule(this)" style="background: #dc3545; color: white;">Delete</button>
+                  </div>
+                  <div class="rule-content">
+                    <div class="form-group">
+                      <label>Rule ID:</label>
+                      <input type="text" class="rule-id" value="\${rule.id || ''}" placeholder="e.g., google-analytics">
+                    </div>
+                    <div class="form-group">
+                      <label>Script URL Pattern (Regex):</label>
+                      <input type="text" class="rule-regex" value="\${rule.src_regex || ''}" placeholder="e.g., googletagmanager\\\\.com">
+                    </div>
+                    <div class="form-group">
+                      <label>Action:</label>
+                      <select class="rule-action">
+                        <option value="defer" \${rule.action === 'defer' ? 'selected' : ''}>Defer</option>
+                        <option value="delay" \${rule.action === 'delay' ? 'selected' : ''}>Delay</option>
+                        <option value="block" \${rule.action === 'block' ? 'selected' : ''}>Block</option>
+                      </select>
+                    </div>
+                    <div class="form-group">
+                      <label>Priority:</label>
+                      <input type="number" class="rule-priority" value="\${rule.priority || 0}" min="0">
+                    </div>
+                    <div class="form-group">
+                      <label><input type="checkbox" class="rule-enabled" \${rule.enabled !== false ? 'checked' : ''}> Enabled</label>
+                    </div>
+                  </div>
+                \`;
+                container.appendChild(ruleEl);
+              });
+            }
+
+            function addNewRule() {
+              currentConfig.rules.push({
+                id: 'rule-' + ruleCounter++,
+                src_regex: '',
+                action: 'defer',
+                priority: 0,
+                enabled: true
+              });
+              renderRules();
+            }
+
+            function deleteRule(btn) {
+              if (confirm('Delete this rule?')) {
+                btn.closest('.rule-item').remove();
+              }
+            }
+
+            function showStatus(type, message) {
+              const banner = document.getElementById('statusBanner');
+              banner.className = 'status-banner ' + type;
+              banner.textContent = message;
+              banner.style.display = 'block';
+              
+              if (type === 'success') {
+                setTimeout(() => banner.style.display = 'none', 3000);
+              }
+            }
+
+            // Load initial configuration
+            document.addEventListener('DOMContentLoaded', loadConfiguration);
+          </script>
+        </body>
+        </html>
+      `;
+    }
+
+    res.send(configHtml);
+
+  } catch (err) {
+    console.error("Configure defer error:", err);
+    res.status(500).send("Failed to load configuration interface");
+  }
+});
+
 // Debug routes
 router.get("/debug-shop", async (req, res) => {
   const { shop } = req.query;
@@ -474,7 +727,8 @@ router.get("/debug-shop", async (req, res) => {
       connected_at: shopRecord.connected_at,
       script_injected: shopRecord.script_injected || false,
       script_injection_attempted: shopRecord.script_injection_attempted || false,
-      history: shopRecord.history
+      history: shopRecord.history,
+      defer_config: shopRecord.deferConfig || null
     });
   } catch (err) {
     console.error("Debug shop error:", err);
@@ -482,7 +736,7 @@ router.get("/debug-shop", async (req, res) => {
   }
 });
 
-// Get manual installation instructions
+// Get manual installation instructions (UPDATED)
 router.get("/manual-instructions", async (req, res) => {
   const { shop } = req.query;
   if (!shop) {
@@ -498,22 +752,30 @@ router.get("/manual-instructions", async (req, res) => {
       });
     }
 
-    const scriptUrl = `https://cfw.rabbitloader.xyz/${shopRecord.short_id}/rl.uj.rd.js?mode=everyone`;
+    const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
+    const mainScriptUrl = `https://cfw.rabbitloader.xyz/${shopRecord.short_id}/rl.uj.rd.js?mode=everyone`;
+    
+    const combinedScriptTag = `  <!-- RabbitLoader Defer Configuration -->
+  <script src="${deferLoaderUrl}"></script>
+  <!-- RabbitLoader Main Script -->
+  <script src="${mainScriptUrl}"></script>`;
     
     res.json({
       ok: true,
       shop,
       did: shopRecord.short_id,
-      scriptUrl,
-      scriptTag: `<script src="${scriptUrl}"></script>`,
+      deferLoaderUrl,
+      mainScriptUrl,
+      scriptTag: combinedScriptTag,
       instructions: {
         step1: "Go to your Shopify Admin",
         step2: "Navigate to Online Store > Themes",
         step3: "Click 'Actions' > 'Edit code' on your active theme",
         step4: "Open the 'theme.liquid' file in the Layout folder",
-        step5: `Add this script tag in the <head> section, BEFORE any other JavaScript:`,
+        step5: `Add these script tags in the <head> section, BEFORE any other JavaScript:`,
         step6: "Save the file",
-        step7: "The RabbitLoader optimization will now be active on your store"
+        step7: "The RabbitLoader optimization with script deferring will now be active",
+        step8: `Configure script deferring rules at: ${process.env.APP_URL}/shopify/configure-defer?shop=${encodeURIComponent(shop)}`
       }
     });
   } catch (err) {
