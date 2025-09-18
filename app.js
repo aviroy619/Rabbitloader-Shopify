@@ -77,25 +77,30 @@ app.set("view engine", "ejs");
 app.set("views", path.join(__dirname, "views"));
 app.use(express.static(path.join(__dirname, "public")));
 
-// ====== Shopify Routes ======
+// ====== Route Imports ======
 const shopifyRoutes = require("./routes/shopify");
-app.use("/shopify", shopifyRoutes);
 const deferConfigRoutes = require("./routes/deferConfig");
+const shopifyConnectRoutes = require("./routes/shopifyConnect");
+
+// ====== Public Routes (BEFORE auth middleware) ======
+// These need to be mounted before the auth middleware to avoid shop parameter requirements
+
+// Defer configuration routes - these need shop parameter validation but not OAuth
 app.use("/defer-config", deferConfigRoutes);
 
-const shopifyRoutes = require("./routes/shopify");
-app.use("/shopify", shopifyRoutes);
-
-const shopifyConnectRoutes = require("./routes/shopifyConnect");
-app.use("/", shopifyConnectRoutes);
-// ====== RabbitLoader Connect Routes ======
-const shopifyConnectRoutes = require("./routes/shopifyConnect");
+// RabbitLoader Connect Routes
 app.use("/", shopifyConnectRoutes);
 
 // ====== Embedded App Authentication Middleware ======
 app.use((req, res, next) => {
   // Skip auth for public routes and static files
-  const publicRoutes = ['/shopify/auth', '/shopify/auth/callback', '/'];
+  const publicRoutes = [
+    '/shopify/auth', 
+    '/shopify/auth/callback', 
+    '/',
+    '/account' // Add the RabbitLoader connect route
+  ];
+  
   const isStaticFile = req.path.startsWith('/assets/') || 
                       req.path.endsWith('.css') || 
                       req.path.endsWith('.js') || 
@@ -103,7 +108,10 @@ app.use((req, res, next) => {
                       req.path.endsWith('.jpg') ||
                       req.path.endsWith('.ico');
   
-  if (publicRoutes.includes(req.path) || isStaticFile) {
+  // Skip auth for defer-config routes (they have their own validation)
+  const isDeferConfigRoute = req.path.startsWith('/defer-config');
+  
+  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute) {
     return next();
   }
   
@@ -116,6 +124,9 @@ app.use((req, res, next) => {
   next();
 });
 
+// ====== Shopify Routes (AFTER auth middleware) ======
+app.use("/shopify", shopifyRoutes);
+
 // ====== Root Route ======
 app.get("/", (req, res) => {
   res.render("index", {
@@ -124,7 +135,28 @@ app.get("/", (req, res) => {
   });
 });
 
+// ====== Error Handling ======
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  res.status(500).json({ 
+    ok: false, 
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
+});
+
+// ====== 404 Handler ======
+app.use((req, res) => {
+  res.status(404).json({ 
+    ok: false, 
+    error: 'Route not found',
+    path: req.path 
+  });
+});
+
 // ====== Start Server ======
 app.listen(PORT, () => {
   console.log(`RL-Shopify app running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`App URL: ${process.env.APP_URL}`);
 });
