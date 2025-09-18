@@ -150,7 +150,7 @@ router.get("/auth/callback", async (req, res) => {
     hmac: hmac ? hmac.substring(0, 10) + "..." : "none"
   });
 
-  // Handle RabbitLoader callback (when coming back from RL)
+  // Handle RabbitLoader callback (when coming back from RL) - FIXED VERSION
   if (rlToken && shop) {
     console.log(`Processing RabbitLoader callback for ${shop}`);
     try {
@@ -180,11 +180,15 @@ router.get("/auth/callback", async (req, res) => {
         hasApiToken: !!decoded.api_token
       });
 
-      // Redirect back to embedded app with proper parameters
-      const hostParam = req.query.host ? `&host=${encodeURIComponent(req.query.host)}` : '';
-      const redirectUrl = `/?shop=${encodeURIComponent(shop)}${hostParam}&embedded=1&connected=1`;
+      // FIXED: Generate proper host parameter for Shopify embedded app
+      const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
+      const hostParam = req.query.host || shopBase64;
+      
+      // Redirect back to embedded app with proper host parameter
+      const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1`;
       
       console.log("Redirecting to embedded app:", redirectUrl);
+      console.log("Generated host parameter:", hostParam);
       return res.redirect(redirectUrl);
       
     } catch (err) {
@@ -193,7 +197,7 @@ router.get("/auth/callback", async (req, res) => {
     }
   }
 
-  // Handle Shopify OAuth callback (when coming back from Shopify)
+  // Handle Shopify OAuth callback (when coming back from Shopify) - ALSO FIXED
   if (!code || !shop) {
     return res.status(400).send("Missing authorization code or shop");
   }
@@ -258,10 +262,15 @@ router.get("/auth/callback", async (req, res) => {
 
     console.log(`Shopify OAuth completed for ${shop}`);
 
-    // Redirect to app with shop parameter and host for embedding
-    const hostParam = req.query.host ? `&host=${encodeURIComponent(req.query.host)}` : '';
-    const redirectUrl = `/?shop=${encodeURIComponent(shop)}${hostParam}&embedded=1&shopify_auth=1`;
+    // FIXED: Generate proper host parameter for Shopify OAuth redirect too
+    const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
+    const hostParam = req.query.host || shopBase64;
     
+    // Redirect to app with proper host parameter
+    const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&shopify_auth=1`;
+    
+    console.log("Shopify OAuth redirect:", redirectUrl);
+    console.log("Generated host parameter:", hostParam);
     res.redirect(redirectUrl);
 
   } catch (err) {
@@ -483,219 +492,211 @@ router.get("/configure-defer", async (req, res) => {
       `);
     }
 
-    // Read the configuration interface HTML file
-    const configHtmlPath = path.join(__dirname, '../views/defer-config.html');
-    
-    // Check if the file exists, if not create a basic interface
-    let configHtml;
-    if (fs.existsSync(configHtmlPath)) {
-      configHtml = fs.readFileSync(configHtmlPath, 'utf8');
-    } else {
-      // Create basic interface inline
-      configHtml = `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-          <meta charset="UTF-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1.0">
-          <title>Script Defer Configuration - ${shop}</title>
-          <style>
-            body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
-            .header { text-align: center; margin-bottom: 40px; }
-            .config-section { background: white; border-radius: 8px; margin-bottom: 20px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-            .btn { padding: 10px 20px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; }
-            .btn-primary { background: #007bff; color: white; }
-            .btn-success { background: #28a745; color: white; }
-            .form-group { margin-bottom: 15px; }
-            .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-            .form-group input, .form-group select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
-            #statusBanner { padding: 15px; margin-bottom: 20px; border-radius: 4px; display: none; }
-            .status-banner.success { background: #d4edda; color: #155724; }
-            .status-banner.error { background: #f8d7da; color: #721c24; }
-            .rule-item { border: 1px solid #ddd; margin-bottom: 15px; border-radius: 4px; }
-            .rule-header { background: #f8f9fa; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
-            .rule-content { padding: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h1>Script Defer Configuration</h1>
-            <p>Shop: <strong>${shop}</strong></p>
+    // Create basic interface inline
+    const configHtml = `
+      <!DOCTYPE html>
+      <html lang="en">
+      <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Script Defer Configuration - ${shop}</title>
+        <style>
+          body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+          .header { text-align: center; margin-bottom: 40px; }
+          .config-section { background: white; border-radius: 8px; margin-bottom: 20px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+          .btn { padding: 10px 20px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; }
+          .btn-primary { background: #007bff; color: white; }
+          .btn-success { background: #28a745; color: white; }
+          .form-group { margin-bottom: 15px; }
+          .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
+          .form-group input, .form-group select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+          #statusBanner { padding: 15px; margin-bottom: 20px; border-radius: 4px; display: none; }
+          .status-banner.success { background: #d4edda; color: #155724; }
+          .status-banner.error { background: #f8d7da; color: #721c24; }
+          .rule-item { border: 1px solid #ddd; margin-bottom: 15px; border-radius: 4px; }
+          .rule-header { background: #f8f9fa; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+          .rule-content { padding: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>Script Defer Configuration</h1>
+          <p>Shop: <strong>${shop}</strong></p>
+        </div>
+
+        <div id="statusBanner"></div>
+
+        <div class="config-section">
+          <h2>Global Settings</h2>
+          <div class="form-group">
+            <label for="releaseTime">Script Release Time (ms):</label>
+            <input type="number" id="releaseTime" min="0" max="30000" step="100" value="2000">
           </div>
-
-          <div id="statusBanner"></div>
-
-          <div class="config-section">
-            <h2>Global Settings</h2>
-            <div class="form-group">
-              <label for="releaseTime">Script Release Time (ms):</label>
-              <input type="number" id="releaseTime" min="0" max="30000" step="100" value="2000">
-            </div>
-            <div class="form-group">
-              <label>
-                <input type="checkbox" id="enableDefer" checked> Enable Defer System
-              </label>
-            </div>
+          <div class="form-group">
+            <label>
+              <input type="checkbox" id="enableDefer" checked> Enable Defer System
+            </label>
           </div>
+        </div>
 
-          <div class="config-section">
-            <h2>Defer Rules</h2>
-            <div id="rulesContainer">
-              <p style="text-align: center; color: #666;">No rules configured. Click "Add Rule" to get started.</p>
-            </div>
-            <button class="btn btn-primary" onclick="addNewRule()">Add Rule</button>
-            <button class="btn btn-success" onclick="saveConfiguration()">Save Configuration</button>
-            <button class="btn" onclick="loadConfiguration()">Reload</button>
+        <div class="config-section">
+          <h2>Defer Rules</h2>
+          <div id="rulesContainer">
+            <p style="text-align: center; color: #666;">No rules configured. Click "Add Rule" to get started.</p>
           </div>
+          <button class="btn btn-primary" onclick="addNewRule()">Add Rule</button>
+          <button class="btn btn-success" onclick="saveConfiguration()">Save Configuration</button>
+          <button class="btn" onclick="loadConfiguration()">Reload</button>
+        </div>
 
-          <script>
-            let currentConfig = { release_after_ms: 2000, rules: [], enabled: true };
-            const shop = "${shop}";
-            let ruleCounter = 1;
+        <script>
+          let currentConfig = { release_after_ms: 2000, rules: [], enabled: true };
+          const shop = "${shop}";
+          let ruleCounter = 1;
 
-            async function loadConfiguration() {
-              try {
-                showStatus('info', 'Loading configuration...');
-                const response = await fetch('/defer-config?shop=' + encodeURIComponent(shop));
-                const data = await response.json();
-                
-                if (data.ok !== false) {
-                  currentConfig = data;
-                  updateUI();
-                  showStatus('success', 'Configuration loaded');
-                }
-              } catch (error) {
-                showStatus('error', 'Failed to load: ' + error.message);
-              }
-            }
-
-            async function saveConfiguration() {
-              try {
-                collectFormData();
-                showStatus('info', 'Saving...');
-                
-                const response = await fetch('/defer-config', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ shop: shop, ...currentConfig })
-                });
-                
-                const result = await response.json();
-                if (result.ok) {
-                  showStatus('success', 'Saved successfully!');
-                } else {
-                  throw new Error(result.error);
-                }
-              } catch (error) {
-                showStatus('error', 'Save failed: ' + error.message);
-              }
-            }
-
-            function collectFormData() {
-              currentConfig.release_after_ms = parseInt(document.getElementById('releaseTime').value) || 2000;
-              currentConfig.enabled = document.getElementById('enableDefer').checked;
+          async function loadConfiguration() {
+            try {
+              showStatus('info', 'Loading configuration...');
+              const response = await fetch('/defer-config?shop=' + encodeURIComponent(shop));
+              const data = await response.json();
               
-              currentConfig.rules = [];
-              document.querySelectorAll('.rule-item').forEach(ruleEl => {
-                const rule = {
-                  id: ruleEl.querySelector('.rule-id').value,
-                  src_regex: ruleEl.querySelector('.rule-regex').value,
-                  action: ruleEl.querySelector('.rule-action').value,
-                  priority: parseInt(ruleEl.querySelector('.rule-priority').value) || 0,
-                  enabled: ruleEl.querySelector('.rule-enabled').checked
-                };
-                if (rule.src_regex) currentConfig.rules.push(rule);
+              if (data.ok !== false) {
+                currentConfig = data;
+                updateUI();
+                showStatus('success', 'Configuration loaded');
+              }
+            } catch (error) {
+              showStatus('error', 'Failed to load: ' + error.message);
+            }
+          }
+
+          async function saveConfiguration() {
+            try {
+              collectFormData();
+              showStatus('info', 'Saving...');
+              
+              const response = await fetch('/defer-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ shop: shop, ...currentConfig })
               });
-            }
-
-            function updateUI() {
-              document.getElementById('releaseTime').value = currentConfig.release_after_ms || 2000;
-              document.getElementById('enableDefer').checked = currentConfig.enabled !== false;
-              renderRules();
-            }
-
-            function renderRules() {
-              const container = document.getElementById('rulesContainer');
-              container.innerHTML = '';
               
-              if (currentConfig.rules.length === 0) {
-                container.innerHTML = '<p style="text-align: center; color: #666;">No rules configured.</p>';
-                return;
+              const result = await response.json();
+              if (result.ok) {
+                showStatus('success', 'Saved successfully!');
+              } else {
+                throw new Error(result.error);
               }
-              
-              currentConfig.rules.forEach(rule => {
-                const ruleEl = document.createElement('div');
-                ruleEl.className = 'rule-item';
-                ruleEl.innerHTML = \`
-                  <div class="rule-header">
-                    <h3>\${rule.id || 'New Rule'}</h3>
-                    <button class="btn" onclick="deleteRule(this)" style="background: #dc3545; color: white;">Delete</button>
-                  </div>
-                  <div class="rule-content">
-                    <div class="form-group">
-                      <label>Rule ID:</label>
-                      <input type="text" class="rule-id" value="\${rule.id || ''}" placeholder="e.g., google-analytics">
-                    </div>
-                    <div class="form-group">
-                      <label>Script URL Pattern (Regex):</label>
-                      <input type="text" class="rule-regex" value="\${rule.src_regex || ''}" placeholder="e.g., googletagmanager\\\\.com">
-                    </div>
-                    <div class="form-group">
-                      <label>Action:</label>
-                      <select class="rule-action">
-                        <option value="defer" \${rule.action === 'defer' ? 'selected' : ''}>Defer</option>
-                        <option value="delay" \${rule.action === 'delay' ? 'selected' : ''}>Delay</option>
-                        <option value="block" \${rule.action === 'block' ? 'selected' : ''}>Block</option>
-                      </select>
-                    </div>
-                    <div class="form-group">
-                      <label>Priority:</label>
-                      <input type="number" class="rule-priority" value="\${rule.priority || 0}" min="0">
-                    </div>
-                    <div class="form-group">
-                      <label><input type="checkbox" class="rule-enabled" \${rule.enabled !== false ? 'checked' : ''}> Enabled</label>
-                    </div>
-                  </div>
-                \`;
-                container.appendChild(ruleEl);
-              });
+            } catch (error) {
+              showStatus('error', 'Save failed: ' + error.message);
             }
+          }
 
-            function addNewRule() {
-              currentConfig.rules.push({
-                id: 'rule-' + ruleCounter++,
-                src_regex: '',
-                action: 'defer',
-                priority: 0,
-                enabled: true
-              });
-              renderRules();
+          function collectFormData() {
+            currentConfig.release_after_ms = parseInt(document.getElementById('releaseTime').value) || 2000;
+            currentConfig.enabled = document.getElementById('enableDefer').checked;
+            
+            currentConfig.rules = [];
+            document.querySelectorAll('.rule-item').forEach(ruleEl => {
+              const rule = {
+                id: ruleEl.querySelector('.rule-id').value,
+                src_regex: ruleEl.querySelector('.rule-regex').value,
+                action: ruleEl.querySelector('.rule-action').value,
+                priority: parseInt(ruleEl.querySelector('.rule-priority').value) || 0,
+                enabled: ruleEl.querySelector('.rule-enabled').checked
+              };
+              if (rule.src_regex) currentConfig.rules.push(rule);
+            });
+          }
+
+          function updateUI() {
+            document.getElementById('releaseTime').value = currentConfig.release_after_ms || 2000;
+            document.getElementById('enableDefer').checked = currentConfig.enabled !== false;
+            renderRules();
+          }
+
+          function renderRules() {
+            const container = document.getElementById('rulesContainer');
+            container.innerHTML = '';
+            
+            if (currentConfig.rules.length === 0) {
+              container.innerHTML = '<p style="text-align: center; color: #666;">No rules configured.</p>';
+              return;
             }
+            
+            currentConfig.rules.forEach(rule => {
+              const ruleEl = document.createElement('div');
+              ruleEl.className = 'rule-item';
+              ruleEl.innerHTML = 
+                '<div class="rule-header">' +
+                  '<h3>' + (rule.id || 'New Rule') + '</h3>' +
+                  '<button class="btn" onclick="deleteRule(this)" style="background: #dc3545; color: white;">Delete</button>' +
+                '</div>' +
+                '<div class="rule-content">' +
+                  '<div class="form-group">' +
+                    '<label>Rule ID:</label>' +
+                    '<input type="text" class="rule-id" value="' + (rule.id || '') + '" placeholder="e.g., google-analytics">' +
+                  '</div>' +
+                  '<div class="form-group">' +
+                    '<label>Script URL Pattern (Regex):</label>' +
+                    '<input type="text" class="rule-regex" value="' + (rule.src_regex || '') + '" placeholder="e.g., googletagmanager\\\\.com">' +
+                  '</div>' +
+                  '<div class="form-group">' +
+                    '<label>Action:</label>' +
+                    '<select class="rule-action">' +
+                      '<option value="defer"' + (rule.action === 'defer' ? ' selected' : '') + '>Defer</option>' +
+                      '<option value="delay"' + (rule.action === 'delay' ? ' selected' : '') + '>Delay</option>' +
+                      '<option value="block"' + (rule.action === 'block' ? ' selected' : '') + '>Block</option>' +
+                    '</select>' +
+                  '</div>' +
+                  '<div class="form-group">' +
+                    '<label>Priority:</label>' +
+                    '<input type="number" class="rule-priority" value="' + (rule.priority || 0) + '" min="0">' +
+                  '</div>' +
+                  '<div class="form-group">' +
+                    '<label><input type="checkbox" class="rule-enabled"' + (rule.enabled !== false ? ' checked' : '') + '> Enabled</label>' +
+                  '</div>' +
+                '</div>';
+              container.appendChild(ruleEl);
+            });
+          }
 
-            function deleteRule(btn) {
-              if (confirm('Delete this rule?')) {
-                btn.closest('.rule-item').remove();
-              }
+          function addNewRule() {
+            currentConfig.rules.push({
+              id: 'rule-' + ruleCounter++,
+              src_regex: '',
+              action: 'defer',
+              priority: 0,
+              enabled: true
+            });
+            renderRules();
+          }
+
+          function deleteRule(btn) {
+            if (confirm('Delete this rule?')) {
+              btn.closest('.rule-item').remove();
             }
+          }
 
-            function showStatus(type, message) {
-              const banner = document.getElementById('statusBanner');
-              banner.className = 'status-banner ' + type;
-              banner.textContent = message;
-              banner.style.display = 'block';
-              
-              if (type === 'success') {
-                setTimeout(() => banner.style.display = 'none', 3000);
-              }
+          function showStatus(type, message) {
+            const banner = document.getElementById('statusBanner');
+            banner.className = 'status-banner ' + type;
+            banner.textContent = message;
+            banner.style.display = 'block';
+            
+            if (type === 'success') {
+              setTimeout(function() { 
+                banner.style.display = 'none'; 
+              }, 3000);
             }
+          }
 
-            // Load initial configuration
-            document.addEventListener('DOMContentLoaded', loadConfiguration);
-          </script>
-        </body>
-        </html>
-      `;
-    }
+          // Load initial configuration
+          document.addEventListener('DOMContentLoaded', loadConfiguration);
+        </script>
+      </body>
+      </html>
+    `;
 
     res.send(configHtml);
 
@@ -772,7 +773,7 @@ router.get("/manual-instructions", async (req, res) => {
         step2: "Navigate to Online Store > Themes",
         step3: "Click 'Actions' > 'Edit code' on your active theme",
         step4: "Open the 'theme.liquid' file in the Layout folder",
-        step5: `Add these script tags in the <head> section, BEFORE any other JavaScript:`,
+        step5: "Add these script tags in the <head> section, BEFORE any other JavaScript:",
         step6: "Save the file",
         step7: "The RabbitLoader optimization with script deferring will now be active",
         step8: `Configure script deferring rules at: ${process.env.APP_URL}/shopify/configure-defer?shop=${encodeURIComponent(shop)}`
