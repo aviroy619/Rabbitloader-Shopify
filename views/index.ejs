@@ -11,7 +11,15 @@
     window.env = {
       APP_URL: "<%= APP_URL %>",
       SHOPIFY_API_VERSION: "<%= SHOPIFY_API_VERSION %>",
-      SHOPIFY_API_KEY: "<%= process.env.SHOPIFY_API_KEY %>"
+      SHOPIFY_API_KEY: "<%= SHOPIFY_API_KEY %>"
+    };
+    
+    // Expose app state from server
+    window.appState = {
+      shop: "<%= shop || '' %>",
+      host: "<%= host || '' %>",
+      embedded: <%= embedded %>,
+      connected: <%= connected %>
     };
   </script>
   <style>
@@ -292,37 +300,64 @@
         flex-direction: column;
       }
     }
+
+    /* Debug info for development */
+    .debug-info {
+      position: fixed;
+      bottom: 10px;
+      left: 10px;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-family: monospace;
+      z-index: 1000;
+      max-width: 300px;
+    }
   </style>
   <script>
     // Initialize Shopify App Bridge for embedded app
     document.addEventListener('DOMContentLoaded', function() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const host = urlParams.get('host');
-      const shop = urlParams.get('shop');
-      const embedded = urlParams.get('embedded');
+      // Use server-provided state first, then fall back to URL params
+      var urlParams = new URLSearchParams(window.location.search);
+      var shop = window.appState.shop || urlParams.get('shop');
+      var host = window.appState.host || urlParams.get('host');
+      var embedded = window.appState.embedded || (urlParams.get('embedded') === '1');
       
-      console.log('App initialization:', { host, shop, embedded });
+      console.log('App initialization:', { 
+        shop: shop, 
+        host: host, 
+        embedded: embedded,
+        serverState: window.appState,
+        urlParams: Object.fromEntries ? Object.fromEntries(urlParams) : {}
+      });
       
       // Check if we're in an embedded context
-      const isEmbedded = window.top !== window.self || embedded === '1';
+      var isEmbedded = window.top !== window.self || embedded;
       
       if (isEmbedded && shop && window.env.SHOPIFY_API_KEY) {
         try {
           // Initialize App Bridge
-          const AppBridge = window['app-bridge'];
+          var AppBridge = window['app-bridge'];
           if (AppBridge) {
             // Use host parameter or generate from shop
-            const appHost = host || btoa(`${shop}/admin`);
+            var appHost = host || btoa(shop + '/admin');
             
-            const app = AppBridge.createApp({
+            console.log('Initializing App Bridge with:', {
+              apiKey: window.env.SHOPIFY_API_KEY,
+              host: appHost
+            });
+            
+            var app = AppBridge.createApp({
               apiKey: window.env.SHOPIFY_API_KEY,
               host: appHost,
               forceRedirect: true
             });
             
             // Create title bar
-            const TitleBar = AppBridge.actions.TitleBar;
-            const titleBar = TitleBar.create(app, { 
+            var TitleBar = AppBridge.actions.TitleBar;
+            var titleBar = TitleBar.create(app, { 
               title: 'RabbitLoader Integration' 
             });
             
@@ -334,14 +369,26 @@
           console.error('App Bridge initialization failed:', error);
         }
       } else if (!shop) {
-        // If no shop parameter and not embedded, show auth prompt
         console.log('No shop parameter found, need Shopify authentication');
         if (!isEmbedded) {
-          // Don't auto-prompt in standalone mode
           console.log('Standalone mode - waiting for manual shop entry');
         }
       } else {
         console.log('App loaded in standalone mode for shop:', shop);
+      }
+
+      // Show debug info in development
+      if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+        var debugInfo = document.createElement('div');
+        debugInfo.className = 'debug-info';
+        debugInfo.innerHTML = 
+          '<strong>Debug Info:</strong><br>' +
+          'Shop: ' + (shop || 'none') + '<br>' +
+          'Host: ' + (host || 'none') + '<br>' +
+          'Embedded: ' + embedded + '<br>' +
+          'Connected: ' + window.appState.connected + '<br>' +
+          'Environment: development';
+        document.body.appendChild(debugInfo);
       }
     });
   </script>
@@ -408,15 +455,6 @@
       </div>
     </div>
   </div>
-  <!-- Enhanced Quick Actions with Script Configuration -->
-<div class="actions-section">
-  <h3>Quick Actions</h3>
-  <div class="action-buttons">
-    <button class="btn btn-primary" onclick="openScriptConfiguration()">Configure Script Defer</button>
-    <button class="btn btn-outline" onclick="openCustomize('${data.customize_url}')">Customize Settings</button>
-    <button class="btn btn-outline" onclick="runPageSpeedTest()">Run PageSpeed Test</button>
-  </div>
-</div>
 
   <!-- Flash messages container -->
   <div id="flashMessages"></div>
