@@ -46,18 +46,37 @@ app.use(session({
   cookie: { secure: false } // Set to true in production with HTTPS
 }));
 
-// ====== Security: CSP for Shopify Embedding ======
+// ====== Security: Enhanced CSP for Shopify Embedding ======
 app.use((req, res, next) => {
-  // More permissive CSP for development
-  res.setHeader(
-    "Content-Security-Policy",
-    "frame-ancestors https://admin.shopify.com https://*.myshopify.com; " +
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com; " +
-    "style-src 'self' 'unsafe-inline';"
-  );
+  const { embedded } = req.query;
   
-  // Allow embedding in Shopify
-  res.setHeader("X-Frame-Options", "ALLOWALL");
+  if (embedded === '1') {
+    // Embedded app - more restrictive CSP
+    res.setHeader(
+      "Content-Security-Policy",
+      "frame-ancestors https://admin.shopify.com https://*.myshopify.com; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com https://shopify.rb8.in; " +
+      "style-src 'self' 'unsafe-inline' https://unpkg.com; " +
+      "connect-src 'self' https://shopify.rb8.in https://*.myshopify.com https://rabbitloader.com; " +
+      "img-src 'self' data: https:; " +
+      "font-src 'self' https: data:;"
+    );
+    
+    // Allow embedding in Shopify admin
+    res.removeHeader("X-Frame-Options");
+    
+    console.log(`Setting embedded app CSP headers for ${req.path}`);
+  } else {
+    // Standalone app - standard CSP
+    res.setHeader(
+      "Content-Security-Policy",
+      "frame-ancestors 'self'; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com; " +
+      "style-src 'self' 'unsafe-inline';"
+    );
+    
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  }
   
   next();
 });
@@ -97,10 +116,10 @@ app.get("/", (req, res) => {
   
   console.log(`Root route accessed:`, {
     shop: shop || 'none',
-    host: host || 'none',
+    host: host ? `${host.substring(0, 20)}...` : 'none',
     embedded: embedded || 'none',
     connected: connected || 'none',
-    userAgent: req.headers['user-agent'] || 'none',
+    userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none',
     referer: req.headers.referer || 'none'
   });
 
@@ -108,29 +127,39 @@ app.get("/", (req, res) => {
   if (embedded === '1' && shop) {
     console.log(`Serving embedded app for shop: ${shop}`);
     
-    // Render the embedded app interface
-    res.render("index", {
-      APP_URL: process.env.APP_URL,
-      SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
-      SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
-      shop: shop,
-      host: host || '',
-      embedded: true,
-      connected: connected === '1'
-    });
+    try {
+      // Render the embedded app interface
+      res.render("index", {
+        APP_URL: process.env.APP_URL,
+        SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
+        SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
+        shop: shop,
+        host: host || '',
+        embedded: true,
+        connected: connected === '1'
+      });
+    } catch (renderError) {
+      console.error('Template render error:', renderError);
+      res.status(500).send('Template rendering failed');
+    }
   } else {
     // Regular standalone access or testing
     console.log(`Serving standalone app for shop: ${shop || 'unknown'}`);
     
-    res.render("index", {
-      APP_URL: process.env.APP_URL,
-      SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
-      SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
-      shop: shop || null,
-      host: host || null,
-      embedded: false,
-      connected: false
-    });
+    try {
+      res.render("index", {
+        APP_URL: process.env.APP_URL,
+        SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
+        SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
+        shop: shop || null,
+        host: host || null,
+        embedded: false,
+        connected: false
+      });
+    } catch (renderError) {
+      console.error('Template render error:', renderError);
+      res.status(500).send('Template rendering failed');
+    }
   }
 });
 
@@ -141,7 +170,8 @@ app.use((req, res, next) => {
     '/shopify/auth', 
     '/shopify/auth/callback', 
     '/',
-    '/account' // Add the RabbitLoader connect route
+    '/account', // RabbitLoader connect route
+    '/health'   // Health check
   ];
   
   const isStaticFile = req.path.startsWith('/assets/') || 
@@ -157,7 +187,10 @@ app.use((req, res, next) => {
   // Allow root route with any parameters (it handles its own logic)
   const isRootRoute = req.path === '/';
   
-  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isRootRoute) {
+  // Skip auth for webhooks
+  const isWebhook = req.path.startsWith('/webhooks/');
+  
+  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isRootRoute || isWebhook) {
     return next();
   }
   
@@ -216,7 +249,19 @@ app.get('/health', (req, res) => {
     ok: true, 
     timestamp: new Date().toISOString(),
     app: 'rl-shopify',
-    version: '1.0.0'
+    version: '1.0.0',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// ====== Debug Route ======
+app.get('/debug/headers', (req, res) => {
+  res.json({
+    headers: req.headers,
+    query: req.query,
+    path: req.path,
+    method: req.method,
+    embedded: req.query.embedded === '1'
   });
 });
 
@@ -227,7 +272,7 @@ app.use((err, req, res, next) => {
     method: req.method,
     path: req.path,
     query: req.query,
-    headers: req.headers
+    embedded: req.query.embedded === '1'
   });
   
   res.status(500).json({ 
@@ -243,15 +288,39 @@ app.use((req, res) => {
     method: req.method,
     path: req.path,
     query: req.query,
-    headers: req.headers
+    embedded: req.query.embedded === '1',
+    userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none'
   });
   
-  res.status(404).json({ 
-    ok: false, 
-    error: 'Route not found',
-    path: req.path,
-    method: req.method
-  });
+  // For embedded requests, return HTML instead of JSON
+  if (req.query.embedded === '1') {
+    res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Page Not Found</title>
+        <style>
+          body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+          h1 { color: #dc3545; }
+        </style>
+      </head>
+      <body>
+        <h1>404 - Page Not Found</h1>
+        <p>The requested page could not be found.</p>
+        <p>Path: ${req.path}</p>
+        <p>Method: ${req.method}</p>
+        <p><a href="/?shop=${req.query.shop || ''}&embedded=1">Go to App Home</a></p>
+      </body>
+      </html>
+    `);
+  } else {
+    res.status(404).json({ 
+      ok: false, 
+      error: 'Route not found',
+      path: req.path,
+      method: req.method
+    });
+  }
 });
 
 // ====== Start Server ======
