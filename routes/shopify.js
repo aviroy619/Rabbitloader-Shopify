@@ -5,9 +5,9 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 
-// Helper function to inject script into theme (UPDATED for defer system)
+// Helper function to inject ONLY defer script into theme
 async function injectScriptIntoTheme(shop, did, accessToken) {
-  console.log(`Attempting theme injection for ${shop} with DID: ${did}`);
+  console.log(`Attempting theme injection for ${shop}`);
 
   // Step 1: Get active theme
   const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
@@ -45,21 +45,19 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
   const assetData = await assetResponse.json();
   let themeContent = assetData.asset.value;
 
-  // Step 3: Check if any RabbitLoader script already exists
-  if (themeContent.includes('rabbitloader.xyz') || themeContent.includes(did) || 
-      themeContent.includes(`defer-config/loader.js?shop=${shop}`)) {
-    console.log(`RabbitLoader script already exists in theme for ${shop}`);
-    return { success: true, message: "Script already exists in theme", scriptType: "existing" };
+  // Step 3: Check if defer script already exists
+  const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
+  
+  if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
+      themeContent.includes(deferLoaderUrl) ||
+      themeContent.includes('RabbitLoader Defer Configuration')) {
+    console.log(`RabbitLoader defer script already exists in theme for ${shop}`);
+    return { success: true, message: "Defer script already exists in theme", scriptType: "existing" };
   }
 
-  // Step 4: Inject BOTH scripts - defer loader first, then main RL script
-  const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
-  const mainScriptUrl = `https://cfw.rabbitloader.xyz/${did}/rl.uj.rd.js?mode=everyone`;
-  
-  const scriptTags = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>
-  <!-- RabbitLoader Main Script -->
-  <script src="${mainScriptUrl}"></script>`;
+  // Step 4: Inject ONLY defer loader script
+  const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
+  <script src="${deferLoaderUrl}"></script>`;
   
   const headOpenTag = '<head>';
   
@@ -67,10 +65,10 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
     throw new Error("Could not find <head> tag in theme.liquid");
   }
 
-  // Insert scripts right after <head> opening tag
-  themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTags}`);
+  // Insert script right after <head> opening tag
+  themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
 
-  console.log(`Injecting scripts into theme head for ${shop}`);
+  console.log(`Injecting defer script into theme head for ${shop}`);
 
   // Step 5: Update the theme file
   const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
@@ -93,13 +91,12 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
     throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
   }
 
-  console.log(`RabbitLoader scripts injected into theme for ${shop}`);
+  console.log(`RabbitLoader defer script injected into theme for ${shop}`);
   
   return { 
     success: true, 
-    message: "Defer loader and main script injected successfully", 
+    message: "Defer script injected successfully", 
     deferLoaderUrl,
-    mainScriptUrl,
     themeId: activeTheme.id,
     themeName: activeTheme.name
   };
@@ -150,7 +147,7 @@ router.get("/auth/callback", async (req, res) => {
     hmac: hmac ? hmac.substring(0, 10) + "..." : "none"
   });
 
-  // Handle RabbitLoader callback (when coming back from RL) - FIXED VERSION
+  // Handle RabbitLoader callback (when coming back from RL)
   if (rlToken && shop) {
     console.log(`Processing RabbitLoader callback for ${shop}`);
     try {
@@ -160,7 +157,7 @@ router.get("/auth/callback", async (req, res) => {
         { shop },
         {
           $set: {
-            short_id: decoded.did,
+            short_id: decoded.did || decoded.short_id,
             api_token: decoded.api_token,
             connected_at: new Date()
           },
@@ -176,11 +173,11 @@ router.get("/auth/callback", async (req, res) => {
       );
 
       console.log(`RabbitLoader token saved for ${shop}`, {
-        did: decoded.did,
+        did: decoded.did || decoded.short_id,
         hasApiToken: !!decoded.api_token
       });
 
-      // FIXED: Generate proper host parameter for Shopify embedded app
+      // Generate proper host parameter for Shopify embedded app
       const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
       const hostParam = req.query.host || shopBase64;
       
@@ -197,7 +194,7 @@ router.get("/auth/callback", async (req, res) => {
     }
   }
 
-  // Handle Shopify OAuth callback (when coming back from Shopify) - ALSO FIXED
+  // Handle Shopify OAuth callback (when coming back from Shopify)
   if (!code || !shop) {
     return res.status(400).send("Missing authorization code or shop");
   }
@@ -262,7 +259,7 @@ router.get("/auth/callback", async (req, res) => {
 
     console.log(`Shopify OAuth completed for ${shop}`);
 
-    // FIXED: Generate proper host parameter for Shopify OAuth redirect too
+    // Generate proper host parameter for Shopify OAuth redirect
     const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
     const hostParam = req.query.host || shopBase64;
     
@@ -296,7 +293,7 @@ router.post("/store-token", async (req, res) => {
       { shop },
       {
         $set: {
-          short_id: decoded.short_id,
+          short_id: decoded.did || decoded.short_id,
           api_token: decoded.api_token,
           connected_at: new Date(decoded.connected_at || Date.now())
         },
@@ -319,7 +316,7 @@ router.post("/store-token", async (req, res) => {
   }
 });
 
-// Status check - SIMPLIFIED (no automatic injection)
+// Status check
 router.get("/status", async (req, res) => {
   const { shop } = req.query;
   if (!shop) return res.status(400).json({ ok: false, error: "Missing shop" });
@@ -379,7 +376,7 @@ router.post("/disconnect", async (req, res) => {
   }
 });
 
-// Manual theme injection route (UPDATED)
+// Manual theme injection route
 router.post("/inject-script", async (req, res) => {
   const { shop } = req.body;
   if (!shop) {
@@ -424,7 +421,7 @@ router.post("/inject-script", async (req, res) => {
   }
 });
 
-// Get RabbitLoader dashboard data
+// Get RabbitLoader dashboard data - REPLACE WITH REAL API CALLS
 router.get("/dashboard-data", async (req, res) => {
   const { shop } = req.query;
   if (!shop) {
@@ -440,7 +437,7 @@ router.get("/dashboard-data", async (req, res) => {
       });
     }
 
-    // Mock data - replace with actual RabbitLoader API calls
+    // TODO: Replace with real RabbitLoader API calls
     const dashboardData = {
       did: shopRecord.short_id,
       psi_scores: {
@@ -472,7 +469,7 @@ router.get("/dashboard-data", async (req, res) => {
 
 // ====== DEFER CONFIGURATION INTERFACE ======
 
-// Configuration interface route (NEW)
+// Configuration interface route
 router.get("/configure-defer", async (req, res) => {
   const { shop } = req.query;
   if (!shop) {
@@ -737,7 +734,7 @@ router.get("/debug-shop", async (req, res) => {
   }
 });
 
-// Get manual installation instructions (UPDATED)
+// Get manual installation instructions (SINGLE SCRIPT ONLY)
 router.get("/manual-instructions", async (req, res) => {
   const { shop } = req.query;
   if (!shop) {
@@ -754,28 +751,25 @@ router.get("/manual-instructions", async (req, res) => {
     }
 
     const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
-    const mainScriptUrl = `https://cfw.rabbitloader.xyz/${shopRecord.short_id}/rl.uj.rd.js?mode=everyone`;
     
-    const combinedScriptTag = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>
-  <!-- RabbitLoader Main Script -->
-  <script src="${mainScriptUrl}"></script>`;
+    // Only provide the single defer script tag
+    const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
+  <script src="${deferLoaderUrl}"></script>`;
     
     res.json({
       ok: true,
       shop,
       did: shopRecord.short_id,
       deferLoaderUrl,
-      mainScriptUrl,
-      scriptTag: combinedScriptTag,
+      scriptTag: scriptTag,
       instructions: {
         step1: "Go to your Shopify Admin",
         step2: "Navigate to Online Store > Themes",
         step3: "Click 'Actions' > 'Edit code' on your active theme",
         step4: "Open the 'theme.liquid' file in the Layout folder",
-        step5: "Add these script tags in the <head> section, BEFORE any other JavaScript:",
+        step5: "Add this script tag in the <head> section, BEFORE any other JavaScript:",
         step6: "Save the file",
-        step7: "The RabbitLoader optimization with script deferring will now be active",
+        step7: "The RabbitLoader optimization with script deferring is now active",
         step8: `Configure script deferring rules at: ${process.env.APP_URL}/shopify/configure-defer?shop=${encodeURIComponent(shop)}`
       }
     });

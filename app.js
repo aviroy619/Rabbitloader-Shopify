@@ -123,18 +123,74 @@ app.get("/", (req, res) => {
     referer: req.headers.referer || 'none'
   });
 
+  // For embedded apps, shop parameter is REQUIRED
+  if (embedded === '1' && !shop) {
+    console.log(`Embedded app request missing shop parameter`);
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Shop Parameter Required</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            text-align: center; 
+            padding: 50px; 
+            background: #f6f6f7;
+          }
+          .error-container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            max-width: 500px;
+            margin: 0 auto;
+          }
+          h1 { color: #dc3545; margin-bottom: 20px; }
+          p { color: #6c757d; margin-bottom: 15px; }
+          .code { 
+            background: #f8f9fa; 
+            padding: 8px 12px; 
+            border-radius: 4px; 
+            font-family: monospace; 
+            color: #495057;
+            display: inline-block;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="error-container">
+          <h1>Missing Shop Parameter</h1>
+          <p>This embedded app requires a shop parameter to function.</p>
+          <p>Expected URL format:</p>
+          <p class="code">/?shop=your-shop.myshopify.com&embedded=1</p>
+        </div>
+      </body>
+      </html>
+    `);
+  }
+
   // Check if this is an embedded request from Shopify admin
   if (embedded === '1' && shop) {
     console.log(`Serving embedded app for shop: ${shop}`);
     
     try {
+      // Generate host parameter if missing (this is important for Shopify apps)
+      let finalHost = host;
+      if (!host && shop) {
+        finalHost = Buffer.from(`${shop}/admin`).toString('base64');
+        console.log(`Generated missing host parameter: ${finalHost}`);
+      }
+      
       // Render the embedded app interface
       res.render("index", {
         APP_URL: process.env.APP_URL,
         SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
         SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
         shop: shop,
-        host: host || '',
+        host: finalHost || '',
         embedded: true,
         connected: connected === '1'
       });
@@ -184,13 +240,13 @@ app.use((req, res, next) => {
   // Skip auth for defer-config routes (they have their own validation)
   const isDeferConfigRoute = req.path.startsWith('/defer-config');
   
-  // Allow root route with any parameters (it handles its own logic)
-  const isRootRoute = req.path === '/';
-  
   // Skip auth for webhooks
   const isWebhook = req.path.startsWith('/webhooks/');
   
-  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isRootRoute || isWebhook) {
+  // Skip auth for debug routes
+  const isDebugRoute = req.path.startsWith('/debug/');
+  
+  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isWebhook || isDebugRoute) {
     return next();
   }
   
@@ -282,7 +338,7 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ====== 404 Handler ======
+// ====== Enhanced 404 Handler for Embedded Apps ======
 app.use((req, res) => {
   console.log(`404 - Route not found:`, {
     method: req.method,
@@ -292,24 +348,52 @@ app.use((req, res) => {
     userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none'
   });
   
-  // For embedded requests, return HTML instead of JSON
+  // For embedded requests, return proper HTML with shop context
   if (req.query.embedded === '1') {
+    const shop = req.query.shop;
     res.status(404).send(`
       <!DOCTYPE html>
       <html>
       <head>
         <title>Page Not Found</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
-          body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            text-align: center; 
+            padding: 50px; 
+            background: #f6f6f7;
+          }
+          .error-container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            max-width: 500px;
+            margin: 0 auto;
+          }
           h1 { color: #dc3545; }
+          .btn {
+            background: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 20px;
+          }
         </style>
       </head>
       <body>
-        <h1>404 - Page Not Found</h1>
-        <p>The requested page could not be found.</p>
-        <p>Path: ${req.path}</p>
-        <p>Method: ${req.method}</p>
-        <p><a href="/?shop=${req.query.shop || ''}&embedded=1">Go to App Home</a></p>
+        <div class="error-container">
+          <h1>404 - Page Not Found</h1>
+          <p>The requested page could not be found.</p>
+          <p><strong>Path:</strong> ${req.path}</p>
+          <p><strong>Method:</strong> ${req.method}</p>
+          ${shop ? `<a href="/?shop=${encodeURIComponent(shop)}&embedded=1" class="btn">Go to App Home</a>` : ''}
+        </div>
       </body>
       </html>
     `);
@@ -322,15 +406,9 @@ app.use((req, res) => {
     });
   }
 });
-// Fallback route for SPA (Shopify Embedded app)
-app.get('*', (req, res) => {
-  res.render('index', {
-    SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
-    APP_URL: process.env.APP_URL,
-    SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION
-  });
-});
 
+// NOTE: REMOVED THE PROBLEMATIC WILDCARD ROUTE - IT WAS CAUSING 404 ISSUES
+// DO NOT ADD app.get('*', ...) BACK - IT BREAKS EMBEDDED APP ROUTING
 
 // ====== Start Server ======
 app.listen(PORT, () => {
