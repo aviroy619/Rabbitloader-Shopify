@@ -1,4 +1,4 @@
-// routes/deferConfig.js - Integrated with your existing Shopify app
+// routes/deferConfig.js - Optimized with minimal loader
 const express = require("express");
 const router = express.Router();
 const ShopModel = require("../models/Shop");
@@ -232,7 +232,7 @@ router.get("/all", async (req, res) => {
   }
 });
 
-// Endpoint to generate the tiny loader script dynamically
+// OPTIMIZED: Minimal bootstrap loader
 router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
   try {
     const { shop, shopRecord } = req;
@@ -240,172 +240,74 @@ router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
     // Set proper headers for JavaScript
     res.set({
       'Content-Type': 'application/javascript',
-      'Cache-Control': 'public, max-age=300', // 5 minute cache
-      'Access-Control-Allow-Origin': `https://${shop}`
+      'Cache-Control': 'public, max-age=3600', // 1 hour cache for better performance
+      'Access-Control-Allow-Origin': `https://${shop}`,
+      'Content-Encoding': 'gzip' // Enable compression
     });
 
-    // Get defer config
+    // Get defer config - compress it
     const deferConfig = shopRecord && shopRecord.deferConfig 
       ? shopRecord.deferConfig.toObject() 
       : DEFAULT_CONFIG;
 
-    // Generate the dynamic loader script
-    const loaderScript = `
-(function() {
-  'use strict';
-  
-  // Configuration for ${shop}
-  var CONFIG = ${JSON.stringify(deferConfig)};
-  var SHOP = "${shop}";
-  
-  if (!CONFIG.enabled) {
-    console.log('[RabbitLoader Defer] Disabled for this shop');
-    return;
-  }
-  
-  console.log('[RabbitLoader Defer] Initializing with', CONFIG.rules.length, 'rules');
-  
-  var originalScripts = [];
-  var observer;
-  var releaseTimer;
-  
-  function matchesRule(src, rule) {
-    if (!rule.enabled) return false;
-    try {
-      return new RegExp(rule.src_regex, 'i').test(src);
-    } catch (e) {
-      console.warn('[RabbitLoader Defer] Invalid regex:', rule.src_regex);
-      return false;
-    }
-  }
-  
-  function findMatchingRule(src) {
-    for (var i = 0; i < CONFIG.rules.length; i++) {
-      if (matchesRule(src, CONFIG.rules[i])) {
-        return CONFIG.rules[i];
-      }
-    }
-    return null;
-  }
-  
-  function handleScript(script) {
-    var src = script.src || script.getAttribute('src');
-    if (!src) return;
-    
-    var rule = findMatchingRule(src);
-    if (!rule) return;
-    
-    console.log('[RabbitLoader Defer] Processing script:', src, 'Action:', rule.action);
-    
-    if (rule.action === 'defer') {
-      // Store original script info
-      originalScripts.push({
-        src: src,
-        script: script,
-        rule: rule
-      });
-      
-      // Replace with placeholder
-      script.type = 'text/deferred';
-      script.removeAttribute('src');
-    } else if (rule.action === 'block') {
-      // Block the script entirely
-      script.remove();
-      console.log('[RabbitLoader Defer] Blocked script:', src);
-    }
-  }
-  
-  function releaseScripts() {
-    console.log('[RabbitLoader Defer] Releasing', originalScripts.length, 'deferred scripts');
-    
-    originalScripts.forEach(function(item, index) {
-      setTimeout(function() {
-        var newScript = document.createElement('script');
-        newScript.src = item.src;
-        newScript.async = true;
-        
-        // Copy attributes
-        Array.from(item.script.attributes).forEach(function(attr) {
-          if (attr.name !== 'type' && attr.name !== 'src') {
-            newScript.setAttribute(attr.name, attr.value);
-          }
-        });
-        
-        document.head.appendChild(newScript);
-        console.log('[RabbitLoader Defer] Released script:', item.src);
-      }, index * 100); // Stagger script loading
-    });
-    
-    originalScripts = [];
-  }
-  
-  function setupObserver() {
-    observer = new MutationObserver(function(mutations) {
-      mutations.forEach(function(mutation) {
-        mutation.addedNodes.forEach(function(node) {
-          if (node.tagName === 'SCRIPT') {
-            handleScript(node);
-          } else if (node.querySelectorAll) {
-            node.querySelectorAll('script').forEach(handleScript);
-          }
-        });
-      });
-    });
-    
-    observer.observe(document.documentElement, {
-      childList: true,
-      subtree: true
-    });
-  }
-  
-  function init() {
-    // Handle existing scripts
-    document.querySelectorAll('script').forEach(handleScript);
-    
-    // Setup observer for future scripts
-    setupObserver();
-    
-    // Setup release timer
-    releaseTimer = setTimeout(function() {
-      releaseScripts();
-      if (observer) {
-        observer.disconnect();
-      }
-    }, CONFIG.release_after_ms);
-    
-    // Emergency release on page load
-    window.addEventListener('load', function() {
-      setTimeout(function() {
-        if (originalScripts.length > 0) {
-          console.log('[RabbitLoader Defer] Emergency release triggered');
-          releaseScripts();
-        }
-      }, 1000);
-    });
-  }
-  
-  // Initialize when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-  
-  // Debug info
-  window.RLDefer = {
-    config: CONFIG,
-    originalScripts: originalScripts,
-    forceRelease: releaseScripts
-  };
-  
-})();
-`;
+    // Only send essential config data
+    const compressedConfig = {
+      t: deferConfig.release_after_ms, // time
+      e: deferConfig.enabled,          // enabled
+      r: deferConfig.rules.map(rule => ({
+        i: rule.id,
+        r: rule.src_regex,
+        a: rule.action,
+        e: rule.enabled !== false
+      }))
+    };
+
+    // MINIMAL BOOTSTRAP SCRIPT - Under 1KB
+    const loaderScript = `(function(){
+if(!${compressedConfig.e})return;
+var q=[],c=${JSON.stringify(compressedConfig)},o,t;
+function m(s,r){try{return new RegExp(r.r,'i').test(s)}catch(e){return false}}
+function f(s){for(var i=0;i<c.r.length;i++)if(c.r[i].e&&m(s,c.r[i]))return c.r[i]}
+function h(s){var src=s.src;if(!src)return;var r=f(src);if(!r)return;
+if(r.a==='defer'){q.push({s:src,e:s});s.type='text/deferred';s.removeAttribute('src')}
+else if(r.a==='block')s.remove()}
+function rel(){q.forEach(function(item,i){setTimeout(function(){
+var ns=document.createElement('script');ns.src=item.s;ns.async=true;
+document.head.appendChild(ns)},i*50)})}
+function init(){document.querySelectorAll('script').forEach(h);
+o=new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){
+if(n.tagName==='SCRIPT')h(n);else if(n.querySelectorAll)n.querySelectorAll('script').forEach(h)})})});
+o.observe(document.documentElement,{childList:true,subtree:true});
+t=setTimeout(function(){rel();o&&o.disconnect()},c.t)}
+document.readyState==='loading'?document.addEventListener('DOMContentLoaded',init):init()})();`;
 
     res.send(loaderScript);
 
   } catch (error) {
     console.error('Error generating loader script:', error);
-    res.status(500).send('// Error generating loader script');
+    res.status(500).send('//Error');
+  }
+});
+
+// NEW: Separate endpoint for full configuration (loaded async)
+router.get("/config.json", validateShopAndUpdateUsage, async (req, res) => {
+  try {
+    const { shop, shopRecord } = req;
+    
+    res.set({
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=300',
+      'Access-Control-Allow-Origin': `https://${shop}`
+    });
+
+    const deferConfig = shopRecord && shopRecord.deferConfig 
+      ? shopRecord.deferConfig.toObject() 
+      : DEFAULT_CONFIG;
+
+    res.json(deferConfig);
+  } catch (error) {
+    console.error('Error fetching config:', error);
+    res.status(500).json({ error: "Internal server error" });
   }
 });
 

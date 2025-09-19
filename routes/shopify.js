@@ -568,46 +568,46 @@ router.get("/configure-defer", async (req, res) => {
         </div>
 
         <script>
-          let currentConfig = { release_after_ms: 2000, rules: [], enabled: true };
-          const shop = "${shop}";
-          let ruleCounter = 1;
+          var currentConfig = { release_after_ms: 2000, rules: [], enabled: true };
+          var shop = "${shop}";
+          var ruleCounter = 1;
 
-          async function loadConfiguration() {
-            try {
-              showStatus('info', 'Loading configuration...');
-              const response = await fetch('/defer-config?shop=' + encodeURIComponent(shop));
-              const data = await response.json();
-              
-              if (data.ok !== false) {
-                currentConfig = data;
-                updateUI();
-                showStatus('success', 'Configuration loaded successfully');
-              }
-            } catch (error) {
-              showStatus('error', 'Failed to load configuration: ' + error.message);
-            }
+          function loadConfiguration() {
+            showStatus('info', 'Loading configuration...');
+            fetch('/defer-config?shop=' + encodeURIComponent(shop))
+              .then(function(response) { return response.json(); })
+              .then(function(data) {
+                if (data.ok !== false) {
+                  currentConfig = data;
+                  updateUI();
+                  showStatus('success', 'Configuration loaded successfully');
+                }
+              })
+              .catch(function(error) {
+                showStatus('error', 'Failed to load configuration: ' + error.message);
+              });
           }
 
-          async function saveConfiguration() {
-            try {
-              collectFormData();
-              showStatus('info', 'Saving configuration...');
-              
-              const response = await fetch('/defer-config', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ shop: shop, ...currentConfig })
-              });
-              
-              const result = await response.json();
+          function saveConfiguration() {
+            collectFormData();
+            showStatus('info', 'Saving configuration...');
+            
+            fetch('/defer-config', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ shop: shop, release_after_ms: currentConfig.release_after_ms, rules: currentConfig.rules, enabled: currentConfig.enabled })
+            })
+            .then(function(response) { return response.json(); })
+            .then(function(result) {
               if (result.ok) {
                 showStatus('success', 'Configuration saved successfully!');
               } else {
                 throw new Error(result.error || 'Save failed');
               }
-            } catch (error) {
+            })
+            .catch(function(error) {
               showStatus('error', 'Save failed: ' + error.message);
-            }
+            });
           }
 
           function collectFormData() {
@@ -615,8 +615,10 @@ router.get("/configure-defer", async (req, res) => {
             currentConfig.enabled = document.getElementById('enableDefer').checked;
             
             currentConfig.rules = [];
-            document.querySelectorAll('.rule-item').forEach(ruleEl => {
-              const rule = {
+            var ruleItems = document.querySelectorAll('.rule-item');
+            for (var i = 0; i < ruleItems.length; i++) {
+              var ruleEl = ruleItems[i];
+              var rule = {
                 id: ruleEl.querySelector('.rule-id').value,
                 src_regex: ruleEl.querySelector('.rule-regex').value,
                 action: ruleEl.querySelector('.rule-action').value,
@@ -624,7 +626,7 @@ router.get("/configure-defer", async (req, res) => {
                 enabled: ruleEl.querySelector('.rule-enabled').checked
               };
               if (rule.src_regex && rule.id) currentConfig.rules.push(rule);
-            });
+            }
           }
 
           function updateUI() {
@@ -634,7 +636,7 @@ router.get("/configure-defer", async (req, res) => {
           }
 
           function renderRules() {
-            const container = document.getElementById('rulesContainer');
+            var container = document.getElementById('rulesContainer');
             container.innerHTML = '';
             
             if (currentConfig.rules.length === 0) {
@@ -642,29 +644,30 @@ router.get("/configure-defer", async (req, res) => {
               return;
             }
             
-            currentConfig.rules.forEach((rule, index) => {
-              const ruleEl = document.createElement('div');
+            for (var i = 0; i < currentConfig.rules.length; i++) {
+              var rule = currentConfig.rules[i];
+              var ruleEl = document.createElement('div');
               ruleEl.className = 'rule-item';
               ruleEl.innerHTML = 
                 '<div class="rule-header">' +
-                  '<h3>🔌 ' + (rule.id || 'New Rule') + '</h3>' +
-                  '<button class="delete-btn" onclick="deleteRule(this)">🗑️ Delete</button>' +
+                  '<h3>Rule: ' + (rule.id || 'New Rule') + '</h3>' +
+                  '<button class="delete-btn" onclick="deleteRule(this)">Delete</button>' +
                 '</div>' +
                 '<div class="rule-content">' +
                   '<div class="form-group">' +
                     '<label>Rule ID:</label>' +
-                    '<input type="text" class="rule-id" value="' + (rule.id || '') + '" placeholder="e.g., google-analytics">' +
+                    '<input type="text" class="rule-id" value="' + (rule.id || '').replace(/"/g, '&quot;') + '" placeholder="e.g., google-analytics">' +
                   '</div>' +
                   '<div class="form-group">' +
                     '<label>Script URL Pattern (Regex):</label>' +
-                    '<input type="text" class="rule-regex" value="' + (rule.src_regex || '') + '" placeholder="e.g., googletagmanager\\\\.com">' +
+                    '<input type="text" class="rule-regex" value="' + (rule.src_regex || '').replace(/"/g, '&quot;') + '" placeholder="e.g., googletagmanager\\\\.com">' +
                   '</div>' +
                   '<div class="form-group">' +
                     '<label>Action:</label>' +
                     '<select class="rule-action">' +
                       '<option value="defer"' + (rule.action === 'defer' ? ' selected' : '') + '>Defer (load after delay)</option>' +
                       '<option value="delay"' + (rule.action === 'delay' ? ' selected' : '') + '>Delay (extended defer)</option>' +
-                      '<option value="block"' + (rule.action === 'block' ? ' selected' : '') + '>Block (don\'t load)</option>' +
+                      '<option value="block"' + (rule.action === 'block' ? ' selected' : '') + '>Block (do not load)</option>' +
                     '</select>' +
                   '</div>' +
                   '<div class="form-group">' +
@@ -676,17 +679,18 @@ router.get("/configure-defer", async (req, res) => {
                   '</div>' +
                 '</div>';
               container.appendChild(ruleEl);
-            });
+            }
           }
 
           function addNewRule() {
             currentConfig.rules.push({
-              id: 'rule-' + ruleCounter++,
+              id: 'rule-' + ruleCounter,
               src_regex: '',
               action: 'defer',
               priority: 0,
               enabled: true
             });
+            ruleCounter++;
             renderRules();
           }
 
@@ -697,13 +701,13 @@ router.get("/configure-defer", async (req, res) => {
           }
 
           function showStatus(type, message) {
-            const banner = document.getElementById('statusBanner');
+            var banner = document.getElementById('statusBanner');
             banner.className = 'status-banner ' + type;
             banner.textContent = message;
             banner.style.display = 'block';
             
             if (type === 'success') {
-              setTimeout(() => { 
+              setTimeout(function() { 
                 banner.style.display = 'none'; 
               }, 4000);
             }
