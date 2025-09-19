@@ -1,4 +1,4 @@
-// routes/deferConfig.js - Optimized with minimal loader
+// routes/deferConfig.js - Fixed with single working loader
 const express = require("express");
 const router = express.Router();
 const ShopModel = require("../models/Shop");
@@ -50,7 +50,6 @@ async function validateShopAndUpdateUsage(req, res, next) {
 }
 
 // GET configuration for a shop
-// Return current config in JSON
 router.get("/", validateShopAndUpdateUsage, async (req, res) => {
   try {
     const { shop, shopRecord } = req;
@@ -60,7 +59,7 @@ router.get("/", validateShopAndUpdateUsage, async (req, res) => {
         ...shopRecord.deferConfig.toObject(),
         ok: true,
         source: "database",
-        shop
+        shop: shop
       });
     }
 
@@ -69,45 +68,17 @@ router.get("/", validateShopAndUpdateUsage, async (req, res) => {
       ...DEFAULT_CONFIG,
       ok: true,
       source: "default",
-      shop
+      shop: shop
     });
 
   } catch (error) {
-    console.error("Error fetching defer config:", error);
-    res.status(500).json({
+    console.error('Error fetching defer config:', error);
+    res.status(500).json({ 
       error: "Internal server error",
-      ok: false
+      ok: false 
     });
   }
 });
-
-// Bootstrap JS loader
-router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
-  try {
-    const { shop } = req;
-
-    res.set({
-      "Content-Type": "application/javascript",
-      "Cache-Control": "public, max-age=3600",
-      "Access-Control-Allow-Origin": `https://${shop}`
-      // ❌ DO NOT manually set Content-Encoding here
-    });
-
-    const loaderJs = `
-      (function(){
-        console.log("✅ RabbitLoader defer script loaded for shop: ${shop}");
-        window.deferConfig = window.deferConfig || {};
-        // You can extend with config fetch here if needed
-      })();
-    `;
-
-    res.send(loaderJs);
-  } catch (err) {
-    console.error("Error serving loader.js:", err);
-    res.status(500).type("application/javascript").send("// Loader failed");
-  }
-});
-
 
 // POST/PUT to update configuration
 router.post("/", validateShopAndUpdateUsage, async (req, res) => {
@@ -261,7 +232,7 @@ router.get("/all", async (req, res) => {
   }
 });
 
-// OPTIMIZED: Minimal bootstrap loader
+// WORKING LOADER SCRIPT - Generates actual defer functionality
 router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
   try {
     const { shop, shopRecord } = req;
@@ -269,17 +240,17 @@ router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
     // Set proper headers for JavaScript
     res.set({
       'Content-Type': 'application/javascript',
-      'Cache-Control': 'public, max-age=3600', // 1 hour cache for better performance
-      'Access-Control-Allow-Origin': `https://${shop}`,
-      'Content-Encoding': 'gzip' // Enable compression
+      'Cache-Control': 'public, max-age=3600',
+      'Access-Control-Allow-Origin': `https://${shop}`
+      // Compression handled by Express middleware
     });
 
-    // Get defer config - compress it
+    // Get defer config
     const deferConfig = shopRecord && shopRecord.deferConfig 
       ? shopRecord.deferConfig.toObject() 
       : DEFAULT_CONFIG;
 
-    // Only send essential config data
+    // Compress config for smaller script size
     const compressedConfig = {
       t: deferConfig.release_after_ms, // time
       e: deferConfig.enabled,          // enabled
@@ -291,34 +262,37 @@ router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
       }))
     };
 
-    // MINIMAL BOOTSTRAP SCRIPT - Under 1KB
+    // Generate minified defer script with actual functionality
     const loaderScript = `(function(){
 if(!${compressedConfig.e})return;
 var q=[],c=${JSON.stringify(compressedConfig)},o,t;
 function m(s,r){try{return new RegExp(r.r,'i').test(s)}catch(e){return false}}
 function f(s){for(var i=0;i<c.r.length;i++)if(c.r[i].e&&m(s,c.r[i]))return c.r[i]}
 function h(s){var src=s.src;if(!src)return;var r=f(src);if(!r)return;
+console.log('[RL Defer] Processing:',src,'Action:',r.a);
 if(r.a==='defer'){q.push({s:src,e:s});s.type='text/deferred';s.removeAttribute('src')}
-else if(r.a==='block')s.remove()}
-function rel(){q.forEach(function(item,i){setTimeout(function(){
+else if(r.a==='block'){s.remove();console.log('[RL Defer] Blocked:',src)}}
+function rel(){console.log('[RL Defer] Releasing',q.length,'scripts');
+q.forEach(function(item,i){setTimeout(function(){
 var ns=document.createElement('script');ns.src=item.s;ns.async=true;
-document.head.appendChild(ns)},i*50)})}
+document.head.appendChild(ns);console.log('[RL Defer] Released:',item.s)},i*50)})}
 function init(){document.querySelectorAll('script').forEach(h);
 o=new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){
 if(n.tagName==='SCRIPT')h(n);else if(n.querySelectorAll)n.querySelectorAll('script').forEach(h)})})});
 o.observe(document.documentElement,{childList:true,subtree:true});
-t=setTimeout(function(){rel();o&&o.disconnect()},c.t)}
+t=setTimeout(function(){rel();o&&o.disconnect()},c.t);
+console.log('[RL Defer] Initialized with',c.r.length,'rules, release in',c.t+'ms')}
 document.readyState==='loading'?document.addEventListener('DOMContentLoaded',init):init()})();`;
 
     res.send(loaderScript);
 
   } catch (error) {
     console.error('Error generating loader script:', error);
-    res.status(500).send('//Error');
+    res.status(500).send('//Error generating loader script');
   }
 });
 
-// NEW: Separate endpoint for full configuration (loaded async)
+// Separate endpoint for full configuration (for debugging)
 router.get("/config.json", validateShopAndUpdateUsage, async (req, res) => {
   try {
     const { shop, shopRecord } = req;
