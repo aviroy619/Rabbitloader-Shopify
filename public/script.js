@@ -1,9 +1,9 @@
-// Frontend Dashboard Logic for RabbitLoader Shopify App
+// Frontend Dashboard Logic for RabbitLoader Shopify App - COMPLETE FIXED VERSION
 class RabbitLoaderDashboard {
   constructor() {
     this.shop = window.appState.shop || new URLSearchParams(window.location.search).get('shop');
     this.host = window.appState.host || new URLSearchParams(window.location.search).get('host');
-    this.embedded = window.appState.embedded || false;
+    this.embedded = window.appState.embedded || (new URLSearchParams(window.location.search).get('embedded') === '1');
     this.isRLConnected = false;
     this.currentDID = null;
     this.history = [];
@@ -22,7 +22,8 @@ class RabbitLoaderDashboard {
     console.log('RabbitLoader Dashboard initializing...', {
       shop: this.shop,
       embedded: this.embedded,
-      host: this.host ? this.host.substring(0, 20) + '...' : 'none'
+      host: this.host ? this.host.substring(0, 20) + '...' : 'none',
+      isInFrame: window.top !== window.self
     });
 
     // Set up event listeners
@@ -57,8 +58,13 @@ class RabbitLoaderDashboard {
     // Handle URL changes (for connected parameter)
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('connected') === '1') {
+      this.showSuccess('Successfully connected to RabbitLoader!');
       // Re-check status after connection
       setTimeout(() => this.checkStatus(), 1000);
+    }
+
+    if (urlParams.get('shopify_auth') === '1') {
+      this.showSuccess('Shopify authentication completed!');
     }
   }
 
@@ -148,20 +154,6 @@ class RabbitLoaderDashboard {
     }
     if (this.connectedState) {
       this.connectedState.style.display = 'none';
-    }
-  }
-
-  showConnectedState() {
-    if (this.connectedState) {
-      this.connectedState.style.display = 'block';
-      
-      // Add enhanced dashboard if we have data
-      if (this.dashboardData) {
-        this.renderEnhancedDashboard();
-      }
-    }
-    if (this.disconnectedState) {
-      this.disconnectedState.style.display = 'none';
     }
   }
 
@@ -281,14 +273,14 @@ class RabbitLoaderDashboard {
     const instructionsHTML = `
       <div class="script-instructions">
         <h3>Manual Script Installation</h3>
-        <p>If automatic injection didn't work, you can manually add the RabbitLoader script:</p>
+        <p>If automatic injection didn't work, you can manually add the RabbitLoader scripts:</p>
         
         <div class="script-actions">
           <button class="btn btn-primary" onclick="dashboard.autoInjectScript()">Try Auto-Inject</button>
         </div>
         
         <div class="script-tag-box">
-          <h4>Script to Add:</h4>
+          <h4>Scripts to Add:</h4>
           <div class="copy-container">
             <code>${this.escapeHtml(data.scriptTag)}</code>
             <button class="copy-btn" onclick="dashboard.copyToClipboard('${this.escapeHtml(data.scriptTag)}')">Copy</button>
@@ -303,7 +295,7 @@ class RabbitLoaderDashboard {
             <li>${data.instructions.step3}</li>
             <li>${data.instructions.step4}</li>
             <li>${data.instructions.step5}</li>
-            <li>Copy and paste the script tag above</li>
+            <li>Copy and paste the script tags above</li>
             <li>${data.instructions.step6}</li>
             <li>${data.instructions.step7}</li>
             <li>Optional: ${data.instructions.step8}</li>
@@ -387,6 +379,7 @@ class RabbitLoaderDashboard {
     }
   }
 
+  // FIXED: Use correct RabbitLoader URL and handle embedded app properly
   initiateRabbitLoaderConnection() {
     if (!this.shop) {
       this.showError('Shop parameter is required for connection');
@@ -395,15 +388,14 @@ class RabbitLoaderDashboard {
 
     console.log(`Initiating RabbitLoader connection for shop: ${this.shop}`);
 
-    // Build RabbitLoader connect URL
-    const connectUrl = new URL('/account', window.location.origin);
+    // Build RabbitLoader connect URL - CORRECTED TO USE RABBITLOADER.COM
+    const connectUrl = new URL('https://rabbitloader.com/account/');
     connectUrl.searchParams.set('source', 'shopify');
     connectUrl.searchParams.set('action', 'connect');
     connectUrl.searchParams.set('site_url', `https://${this.shop}`);
     
-    // Build redirect URL back to this app
-    const redirectUrl = new URL(window.location.origin);
-    redirectUrl.pathname = '/shopify/auth/callback';
+    // Build redirect URL back to this app - FIXED to use proper callback route
+    const redirectUrl = new URL('/rl/rl-callback', window.env.APP_URL);
     redirectUrl.searchParams.set('shop', this.shop);
     if (this.host) {
       redirectUrl.searchParams.set('host', this.host);
@@ -413,10 +405,17 @@ class RabbitLoaderDashboard {
     connectUrl.searchParams.set('cms_v', 'shopify');
     connectUrl.searchParams.set('plugin_v', '1.0.0');
 
-    console.log('Redirecting to RabbitLoader connect:', connectUrl.toString());
+    const finalUrl = connectUrl.toString();
+    console.log('Redirecting to RabbitLoader connect:', finalUrl);
 
-    // Redirect to RabbitLoader connection flow
-    window.location.href = connectUrl.toString();
+    // FIXED: For embedded apps, use top-level navigation to break out of frame
+    if (this.embedded || window.top !== window.self) {
+      // Break out of Shopify iframe and redirect to RabbitLoader
+      window.top.location.href = finalUrl;
+    } else {
+      // Regular redirect for standalone mode
+      window.location.href = finalUrl;
+    }
   }
 
   // Utility methods

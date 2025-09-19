@@ -55,9 +55,9 @@ app.use((req, res, next) => {
     res.setHeader(
       "Content-Security-Policy",
       "frame-ancestors https://admin.shopify.com https://*.myshopify.com; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com https://shopify.rb8.in; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com https://shopify.rb8.in https://cfw.rabbitloader.xyz; " +
       "style-src 'self' 'unsafe-inline' https://unpkg.com; " +
-      "connect-src 'self' https://shopify.rb8.in https://*.myshopify.com https://rabbitloader.com; " +
+      "connect-src 'self' https://shopify.rb8.in https://*.myshopify.com https://rabbitloader.com https://cfw.rabbitloader.xyz; " +
       "img-src 'self' data: https:; " +
       "font-src 'self' https: data:;"
     );
@@ -71,7 +71,7 @@ app.use((req, res, next) => {
     res.setHeader(
       "Content-Security-Policy",
       "frame-ancestors 'self'; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com https://cfw.rabbitloader.xyz; " +
       "style-src 'self' 'unsafe-inline';"
     );
     
@@ -107,8 +107,8 @@ const shopifyConnectRoutes = require("./routes/shopifyConnect");
 // Defer configuration routes - these need shop parameter validation but not OAuth
 app.use("/defer-config", deferConfigRoutes);
 
-// RabbitLoader Connect Routes
-app.use("/", shopifyConnectRoutes);
+// RabbitLoader Connect Routes - FIXED: Mount on specific path to avoid conflicts
+app.use("/rl", shopifyConnectRoutes);
 
 // ====== Root Route (BEFORE auth middleware) ======
 app.get("/", (req, res) => {
@@ -226,7 +226,7 @@ app.use((req, res, next) => {
     '/shopify/auth', 
     '/shopify/auth/callback', 
     '/',
-    '/account', // RabbitLoader connect route
+    '/rl/rl-callback',  // RabbitLoader callback route
     '/health'   // Health check
   ];
   
@@ -246,7 +246,10 @@ app.use((req, res, next) => {
   // Skip auth for debug routes
   const isDebugRoute = req.path.startsWith('/debug/');
   
-  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isWebhook || isDebugRoute) {
+  // Skip auth for RL routes
+  const isRlRoute = req.path.startsWith('/rl/');
+  
+  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isWebhook || isDebugRoute || isRlRoute) {
     return next();
   }
   

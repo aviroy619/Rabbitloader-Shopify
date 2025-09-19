@@ -1,136 +1,126 @@
 const express = require("express");
 const router = express.Router();
 
-router.get("/account", async (req, res) => {
-  const { source, action, site_url, redirect_url, cms_v, plugin_v } = req.query;
+// Handle RabbitLoader callbacks ONLY - frontend redirects directly to rabbitloader.com
+// This route processes the callback when RabbitLoader redirects back to our app
 
-  if (source !== "shopify" || action !== "connect") {
-    return res.status(400).send("Invalid parameters");
-  }
+router.get("/rl-callback", async (req, res) => {
+  const { shop, "rl-token": rlToken } = req.query;
 
-  console.log("RabbitLoader connect request:", {
-    site_url,
-    redirect_url,
-    cms_v,
-    plugin_v
+  console.log("RabbitLoader callback received:", {
+    hasRlToken: !!rlToken,
+    shop,
+    allParams: Object.keys(req.query),
+    referer: req.headers.referer
   });
 
-  // Validate required parameters
-  if (!site_url || !redirect_url) {
-    return res.status(400).send("Missing required parameters: site_url or redirect_url");
+  if (!rlToken || !shop) {
+    console.error("Missing rl-token or shop parameter in callback");
+    return res.status(400).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Callback Error</title>
+        <style>body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }</style>
+      </head>
+      <body>
+        <h2>RabbitLoader Callback Error</h2>
+        <p>Missing required parameters. Please try connecting again.</p>
+        <a href="/?shop=${encodeURIComponent(shop || '')}" style="color: #007bff;">Return to App</a>
+      </body>
+      </html>
+    `);
   }
 
   try {
-    // Step 1: Call real RabbitLoader API to register/connect site
-    const rlApiUrl = process.env.RABBITLOADER_API_V1 || process.env.RABBITLOADER_API_V2;
-    if (!rlApiUrl) {
-      console.error("No RabbitLoader API URL configured");
-      return res.status(500).send("RabbitLoader API not configured");
-    }
-
-    const rlResponse = await fetch(`${rlApiUrl}/sites/connect`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${process.env.RABBITLOADER_PARTNER_TOKEN}`,
-        'User-Agent': 'Shopify-RabbitLoader-App/1.0.0'
+    // Decode the RabbitLoader token
+    const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
+    console.log("Decoded RL token:", {
+      hasDid: !!(decoded.did || decoded.short_id),
+      hasApiToken: !!decoded.api_token,
+      platform: decoded.platform,
+      accountId: decoded.account_id
+    });
+    
+    // Store the connection data in database
+    const ShopModel = require("../models/Shop");
+    
+    const updateData = {
+      $set: {
+        short_id: decoded.did || decoded.short_id,
+        api_token: decoded.api_token,
+        connected_at: new Date()
       },
-      body: JSON.stringify({
-        site_url: site_url,
-        platform: 'shopify',
-        cms_version: cms_v || 'unknown',
-        plugin_version: plugin_v || '1.0.0',
-        callback_url: redirect_url
-      })
-    });
-
-    if (!rlResponse.ok) {
-      const errorText = await rlResponse.text();
-      console.error(`RabbitLoader API error: ${rlResponse.status}`, errorText);
-      
-      // For development/testing, fall back to mock data if API fails
-      if (process.env.NODE_ENV === 'development') {
-        console.log("Development mode: Using mock RabbitLoader data due to API failure");
-        
-        const mockPayload = {
-          did: "rl_dev_" + Math.random().toString(36).substring(2, 8),
-          short_id: "rl_dev_" + Math.random().toString(36).substring(2, 8),
-          api_token: "rl_dev_token_" + Math.random().toString(36).substring(2, 12),
-          connected_at: new Date().toISOString(),
-          platform: 'shopify'
-        };
-
-        const rlToken = Buffer.from(JSON.stringify(mockPayload)).toString("base64");
-        const redirectWithToken = `${redirect_url}&rl-token=${encodeURIComponent(rlToken)}`;
-        
-        return res.redirect(redirectWithToken);
+      $push: {
+        history: {
+          event: "connect",
+          timestamp: new Date(),
+          details: { 
+            via: "rl-callback",
+            platform: decoded.platform || 'shopify'
+          }
+        }
       }
-      
-      return res.status(500).send("Failed to connect with RabbitLoader service. Please try again later.");
-    }
-
-    const rlData = await rlResponse.json();
-    
-    // Step 2: Extract real connection data
-    const { short_id, api_token, account_id, did } = rlData;
-    
-    // RabbitLoader might return either short_id or did
-    const finalDid = short_id || did;
-    
-    if (!finalDid || !api_token) {
-      console.error("Invalid response from RabbitLoader API:", rlData);
-      return res.status(500).send("Invalid response from RabbitLoader service");
-    }
-
-    console.log(`Site connected to RabbitLoader:`, {
-      site_url,
-      did: finalDid,
-      account_id,
-      hasApiToken: !!api_token
-    });
-
-    // Step 3: Build real payload
-    const payload = {
-      did: finalDid,           // Use 'did' as the primary identifier
-      short_id: finalDid,      // Also set short_id for backward compatibility
-      api_token: api_token,
-      account_id: account_id,
-      connected_at: new Date().toISOString(),
-      platform: 'shopify'
     };
 
-    // Step 4: Base64 encode
-    const rlToken = Buffer.from(JSON.stringify(payload)).toString("base64");
+    // Add account_id if provided
+    if (decoded.account_id) {
+      updateData.$set.account_id = decoded.account_id;
+    }
 
-    // Step 5: Redirect back to Shopify app with real token
-    const redirectWithToken = `${redirect_url}&rl-token=${encodeURIComponent(rlToken)}`;
+    await ShopModel.findOneAndUpdate(
+      { shop },
+      updateData,
+      { upsert: true }
+    );
+
+    console.log(`RabbitLoader connection saved for shop: ${shop}`, {
+      did: decoded.did || decoded.short_id,
+      hasApiToken: !!decoded.api_token
+    });
+
+    // Redirect back to Shopify admin with success parameters
+    const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
+    const hostParam = req.query.host || shopBase64;
     
-    console.log("Redirecting back to Shopify with real RabbitLoader token");
-    return res.redirect(redirectWithToken);
+    const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1`;
+    
+    console.log("Redirecting back to Shopify admin:", redirectUrl);
+    res.redirect(redirectUrl);
 
   } catch (error) {
-    console.error("RabbitLoader connection error:", error);
+    console.error("RabbitLoader callback processing error:", error);
     
-    // For development/testing, fall back to mock data
-    if (process.env.NODE_ENV === 'development') {
-      console.log("Development mode: Using mock RabbitLoader data due to network error");
-      
-      const mockPayload = {
-        did: "rl_dev_" + Math.random().toString(36).substring(2, 8),
-        short_id: "rl_dev_" + Math.random().toString(36).substring(2, 8),
-        api_token: "rl_dev_token_" + Math.random().toString(36).substring(2, 12),
-        connected_at: new Date().toISOString(),
-        platform: 'shopify'
-      };
-
-      const rlToken = Buffer.from(JSON.stringify(mockPayload)).toString("base64");
-      const redirectWithToken = `${redirect_url}&rl-token=${encodeURIComponent(rlToken)}`;
-      
-      return res.redirect(redirectWithToken);
-    }
-    
-    return res.status(500).send(`Connection failed: ${error.message}`);
+    res.status(500).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Connection Error</title>
+        <style>body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }</style>
+      </head>
+      <body>
+        <h2>RabbitLoader Connection Error</h2>
+        <p>Failed to process the connection. Please try again.</p>
+        <p><strong>Error:</strong> ${error.message}</p>
+        <a href="/?shop=${encodeURIComponent(shop || '')}" style="color: #007bff;">Return to App</a>
+      </body>
+      </html>
+    `);
   }
 });
+
+// Health check for RabbitLoader routes
+router.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    service: "rabbitloader-connect",
+    timestamp: new Date().toISOString(),
+    routes: ["rl-callback"]
+  });
+});
+
+// NOTE: Removed the /account route that was causing conflicts
+// Frontend now redirects directly to https://rabbitloader.com/account/
+// This eliminates the 500 error and routing conflicts
 
 module.exports = router;

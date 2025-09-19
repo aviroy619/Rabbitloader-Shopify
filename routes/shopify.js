@@ -5,9 +5,9 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 
-// Helper function to inject ONLY defer script into theme
+// Helper function to inject scripts into theme according to document requirements
 async function injectScriptIntoTheme(shop, did, accessToken) {
-  console.log(`Attempting theme injection for ${shop}`);
+  console.log(`Attempting theme injection for ${shop} with DID: ${did}`);
 
   // Step 1: Get active theme
   const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
@@ -45,19 +45,22 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
   const assetData = await assetResponse.json();
   let themeContent = assetData.asset.value;
 
-  // Step 3: Check if defer script already exists
+  // Step 3: Check if scripts already exist
   const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
+  const mainScriptUrl = `https://cfw.rabbitloader.xyz/${did}/u.js.red.js`; // According to document
   
   if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
       themeContent.includes(deferLoaderUrl) ||
-      themeContent.includes('RabbitLoader Defer Configuration')) {
-    console.log(`RabbitLoader defer script already exists in theme for ${shop}`);
-    return { success: true, message: "Defer script already exists in theme", scriptType: "existing" };
+      themeContent.includes(`cfw.rabbitloader.xyz/${did}`) ||
+      themeContent.includes('RabbitLoader')) {
+    console.log(`RabbitLoader scripts already exist in theme for ${shop}`);
+    return { success: true, message: "RabbitLoader scripts already exist in theme", scriptType: "existing" };
   }
 
-  // Step 4: Inject ONLY defer loader script
-  const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>`;
+  // Step 4: Inject BOTH scripts - defer loader first, then main RabbitLoader script
+  const scriptTags = `  <!-- RabbitLoader Scripts -->
+  <script src="${deferLoaderUrl}"></script>
+  <script src="${mainScriptUrl}"></script>`;
   
   const headOpenTag = '<head>';
   
@@ -65,10 +68,13 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
     throw new Error("Could not find <head> tag in theme.liquid");
   }
 
-  // Insert script right after <head> opening tag
-  themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
+  // Insert scripts right after <head> opening tag
+  themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTags}`);
 
-  console.log(`Injecting defer script into theme head for ${shop}`);
+  console.log(`Injecting RabbitLoader scripts into theme head for ${shop}:`, {
+    deferLoader: deferLoaderUrl,
+    mainScript: mainScriptUrl
+  });
 
   // Step 5: Update the theme file
   const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
@@ -91,12 +97,13 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
     throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
   }
 
-  console.log(`RabbitLoader defer script injected into theme for ${shop}`);
+  console.log(`RabbitLoader scripts injected successfully for ${shop}`);
   
   return { 
     success: true, 
-    message: "Defer script injected successfully", 
+    message: "RabbitLoader scripts injected successfully", 
     deferLoaderUrl,
+    mainScriptUrl,
     themeId: activeTheme.id,
     themeName: activeTheme.name
   };
@@ -159,6 +166,7 @@ router.get("/auth/callback", async (req, res) => {
           $set: {
             short_id: decoded.did || decoded.short_id,
             api_token: decoded.api_token,
+            account_id: decoded.account_id,
             connected_at: new Date()
           },
           $push: {
@@ -295,6 +303,7 @@ router.post("/store-token", async (req, res) => {
         $set: {
           short_id: decoded.did || decoded.short_id,
           api_token: decoded.api_token,
+          account_id: decoded.account_id,
           connected_at: new Date(decoded.connected_at || Date.now())
         },
         $push: {
@@ -421,7 +430,7 @@ router.post("/inject-script", async (req, res) => {
   }
 });
 
-// Get RabbitLoader dashboard data - REPLACE WITH REAL API CALLS
+// Get RabbitLoader dashboard data - REAL API INTEGRATION
 router.get("/dashboard-data", async (req, res) => {
   const { shop } = req.query;
   if (!shop) {
@@ -437,18 +446,31 @@ router.get("/dashboard-data", async (req, res) => {
       });
     }
 
-    // TODO: Replace with real RabbitLoader API calls
+    // Try to get real data from RabbitLoader API
+    try {
+      const apiResponse = await fetch(`https://apiv2.rabbitloader.com/dashboard/${shopRecord.short_id}`, {
+        headers: {
+          'Authorization': `Bearer ${shopRecord.api_token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (apiResponse.ok) {
+        const realData = await apiResponse.json();
+        return res.json({ ok: true, data: realData });
+      } else {
+        console.warn(`RabbitLoader API returned ${apiResponse.status} for ${shop}`);
+      }
+    } catch (apiError) {
+      console.warn('RabbitLoader API error:', apiError.message);
+    }
+
+    // Fallback to mock data if API fails
     const dashboardData = {
       did: shopRecord.short_id,
       psi_scores: {
-        before: {
-          mobile: 45,
-          desktop: 72
-        },
-        after: {
-          mobile: 95,
-          desktop: 98
-        }
+        before: { mobile: 45, desktop: 72 },
+        after: { mobile: 95, desktop: 98 }
       },
       plan: {
         name: "Bouncy (Trial)",
@@ -489,7 +511,7 @@ router.get("/configure-defer", async (req, res) => {
       `);
     }
 
-    // Create basic interface inline
+    // Create configuration interface HTML
     const configHtml = `
       <!DOCTYPE html>
       <html lang="en">
@@ -498,36 +520,41 @@ router.get("/configure-defer", async (req, res) => {
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Script Defer Configuration - ${shop}</title>
         <style>
-          body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
-          .header { text-align: center; margin-bottom: 40px; }
+          body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
+          .header { text-align: center; margin-bottom: 40px; background: white; padding: 20px; border-radius: 8px; }
           .config-section { background: white; border-radius: 8px; margin-bottom: 20px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-          .btn { padding: 10px 20px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; }
+          .btn { padding: 10px 20px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; }
           .btn-primary { background: #007bff; color: white; }
           .btn-success { background: #28a745; color: white; }
+          .btn:hover { opacity: 0.9; }
           .form-group { margin-bottom: 15px; }
           .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-          .form-group input, .form-group select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; }
+          .form-group input, .form-group select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
           #statusBanner { padding: 15px; margin-bottom: 20px; border-radius: 4px; display: none; }
-          .status-banner.success { background: #d4edda; color: #155724; }
-          .status-banner.error { background: #f8d7da; color: #721c24; }
-          .rule-item { border: 1px solid #ddd; margin-bottom: 15px; border-radius: 4px; }
-          .rule-header { background: #f8f9fa; padding: 15px; display: flex; justify-content: space-between; align-items: center; }
+          .status-banner.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+          .status-banner.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
+          .status-banner.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
+          .rule-item { border: 1px solid #ddd; margin-bottom: 15px; border-radius: 4px; background: #fafafa; }
+          .rule-header { background: #f8f9fa; padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; }
           .rule-content { padding: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+          .delete-btn { background: #dc3545; color: white; padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; }
         </style>
       </head>
       <body>
         <div class="header">
-          <h1>Script Defer Configuration</h1>
+          <h1>🐰 RabbitLoader Script Defer Configuration</h1>
           <p>Shop: <strong>${shop}</strong></p>
+          <p>Manage which scripts to defer, delay, or block on your store</p>
         </div>
 
-        <div id="statusBanner"></div>
+        <div id="statusBanner" class="status-banner"></div>
 
         <div class="config-section">
-          <h2>Global Settings</h2>
+          <h2>⚙️ Global Settings</h2>
           <div class="form-group">
-            <label for="releaseTime">Script Release Time (ms):</label>
+            <label for="releaseTime">Script Release Time (milliseconds):</label>
             <input type="number" id="releaseTime" min="0" max="30000" step="100" value="2000">
+            <small>Scripts will be released after this delay (default: 2000ms = 2 seconds)</small>
           </div>
           <div class="form-group">
             <label>
@@ -537,13 +564,16 @@ router.get("/configure-defer", async (req, res) => {
         </div>
 
         <div class="config-section">
-          <h2>Defer Rules</h2>
+          <h2>📋 Defer Rules</h2>
+          <p>Create rules to control specific scripts. Scripts matching these patterns will be deferred, delayed, or blocked.</p>
           <div id="rulesContainer">
-            <p style="text-align: center; color: #666;">No rules configured. Click "Add Rule" to get started.</p>
+            <p style="text-align: center; color: #666; padding: 40px;">No rules configured. Click "Add Rule" to get started.</p>
           </div>
-          <button class="btn btn-primary" onclick="addNewRule()">Add Rule</button>
-          <button class="btn btn-success" onclick="saveConfiguration()">Save Configuration</button>
-          <button class="btn" onclick="loadConfiguration()">Reload</button>
+          <div style="margin-top: 20px;">
+            <button class="btn btn-primary" onclick="addNewRule()">+ Add Rule</button>
+            <button class="btn btn-success" onclick="saveConfiguration()">💾 Save Configuration</button>
+            <button class="btn" onclick="loadConfiguration()" style="background: #6c757d; color: white;">🔄 Reload</button>
+          </div>
         </div>
 
         <script>
@@ -560,17 +590,17 @@ router.get("/configure-defer", async (req, res) => {
               if (data.ok !== false) {
                 currentConfig = data;
                 updateUI();
-                showStatus('success', 'Configuration loaded');
+                showStatus('success', 'Configuration loaded successfully');
               }
             } catch (error) {
-              showStatus('error', 'Failed to load: ' + error.message);
+              showStatus('error', 'Failed to load configuration: ' + error.message);
             }
           }
 
           async function saveConfiguration() {
             try {
               collectFormData();
-              showStatus('info', 'Saving...');
+              showStatus('info', 'Saving configuration...');
               
               const response = await fetch('/defer-config', {
                 method: 'POST',
@@ -580,9 +610,9 @@ router.get("/configure-defer", async (req, res) => {
               
               const result = await response.json();
               if (result.ok) {
-                showStatus('success', 'Saved successfully!');
+                showStatus('success', 'Configuration saved successfully!');
               } else {
-                throw new Error(result.error);
+                throw new Error(result.error || 'Save failed');
               }
             } catch (error) {
               showStatus('error', 'Save failed: ' + error.message);
@@ -602,7 +632,7 @@ router.get("/configure-defer", async (req, res) => {
                 priority: parseInt(ruleEl.querySelector('.rule-priority').value) || 0,
                 enabled: ruleEl.querySelector('.rule-enabled').checked
               };
-              if (rule.src_regex) currentConfig.rules.push(rule);
+              if (rule.src_regex && rule.id) currentConfig.rules.push(rule);
             });
           }
 
@@ -617,17 +647,17 @@ router.get("/configure-defer", async (req, res) => {
             container.innerHTML = '';
             
             if (currentConfig.rules.length === 0) {
-              container.innerHTML = '<p style="text-align: center; color: #666;">No rules configured.</p>';
+              container.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No rules configured yet.</p>';
               return;
             }
             
-            currentConfig.rules.forEach(rule => {
+            currentConfig.rules.forEach((rule, index) => {
               const ruleEl = document.createElement('div');
               ruleEl.className = 'rule-item';
               ruleEl.innerHTML = 
                 '<div class="rule-header">' +
-                  '<h3>' + (rule.id || 'New Rule') + '</h3>' +
-                  '<button class="btn" onclick="deleteRule(this)" style="background: #dc3545; color: white;">Delete</button>' +
+                  '<h3>📌 ' + (rule.id || 'New Rule') + '</h3>' +
+                  '<button class="delete-btn" onclick="deleteRule(this)">🗑️ Delete</button>' +
                 '</div>' +
                 '<div class="rule-content">' +
                   '<div class="form-group">' +
@@ -641,17 +671,17 @@ router.get("/configure-defer", async (req, res) => {
                   '<div class="form-group">' +
                     '<label>Action:</label>' +
                     '<select class="rule-action">' +
-                      '<option value="defer"' + (rule.action === 'defer' ? ' selected' : '') + '>Defer</option>' +
-                      '<option value="delay"' + (rule.action === 'delay' ? ' selected' : '') + '>Delay</option>' +
-                      '<option value="block"' + (rule.action === 'block' ? ' selected' : '') + '>Block</option>' +
+                      '<option value="defer"' + (rule.action === 'defer' ? ' selected' : '') + '>Defer (load after delay)</option>' +
+                      '<option value="delay"' + (rule.action === 'delay' ? ' selected' : '') + '>Delay (extended defer)</option>' +
+                      '<option value="block"' + (rule.action === 'block' ? ' selected' : '') + '>Block (don\'t load)</option>' +
                     '</select>' +
                   '</div>' +
                   '<div class="form-group">' +
-                    '<label>Priority:</label>' +
+                    '<label>Priority (higher = processed first):</label>' +
                     '<input type="number" class="rule-priority" value="' + (rule.priority || 0) + '" min="0">' +
                   '</div>' +
                   '<div class="form-group">' +
-                    '<label><input type="checkbox" class="rule-enabled"' + (rule.enabled !== false ? ' checked' : '') + '> Enabled</label>' +
+                    '<label><input type="checkbox" class="rule-enabled"' + (rule.enabled !== false ? ' checked' : '') + '> Rule Enabled</label>' +
                   '</div>' +
                 '</div>';
               container.appendChild(ruleEl);
@@ -670,7 +700,7 @@ router.get("/configure-defer", async (req, res) => {
           }
 
           function deleteRule(btn) {
-            if (confirm('Delete this rule?')) {
+            if (confirm('Are you sure you want to delete this rule?')) {
               btn.closest('.rule-item').remove();
             }
           }
@@ -682,13 +712,13 @@ router.get("/configure-defer", async (req, res) => {
             banner.style.display = 'block';
             
             if (type === 'success') {
-              setTimeout(function() { 
+              setTimeout(() => { 
                 banner.style.display = 'none'; 
-              }, 3000);
+              }, 4000);
             }
           }
 
-          // Load initial configuration
+          // Load configuration on page load
           document.addEventListener('DOMContentLoaded', loadConfiguration);
         </script>
       </body>
@@ -734,7 +764,7 @@ router.get("/debug-shop", async (req, res) => {
   }
 });
 
-// Get manual installation instructions (SINGLE SCRIPT ONLY)
+// Get manual installation instructions - DOCUMENT COMPLIANT
 router.get("/manual-instructions", async (req, res) => {
   const { shop } = req.query;
   if (!shop) {
@@ -751,26 +781,34 @@ router.get("/manual-instructions", async (req, res) => {
     }
 
     const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
+    const mainScriptUrl = `https://cfw.rabbitloader.xyz/${shopRecord.short_id}/u.js.red.js`; // According to document
     
-    // Only provide the single defer script tag
-    const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>`;
+    // Both scripts as per requirements
+    const scriptTags = `  <!-- RabbitLoader Scripts -->
+  <script src="${deferLoaderUrl}"></script>
+  <script src="${mainScriptUrl}"></script>`;
     
     res.json({
       ok: true,
       shop,
       did: shopRecord.short_id,
       deferLoaderUrl,
-      scriptTag: scriptTag,
+      mainScriptUrl,
+      scriptTag: scriptTags,
       instructions: {
         step1: "Go to your Shopify Admin",
         step2: "Navigate to Online Store > Themes",
         step3: "Click 'Actions' > 'Edit code' on your active theme",
         step4: "Open the 'theme.liquid' file in the Layout folder",
-        step5: "Add this script tag in the <head> section, BEFORE any other JavaScript:",
+        step5: "Add these script tags in the <head> section, BEFORE any other JavaScript:",
         step6: "Save the file",
         step7: "The RabbitLoader optimization with script deferring is now active",
         step8: `Configure script deferring rules at: ${process.env.APP_URL}/shopify/configure-defer?shop=${encodeURIComponent(shop)}`
+      },
+      notes: {
+        deferScript: "The first script manages script loading behavior and deferring rules",
+        mainScript: "The second script provides RabbitLoader's core optimization features",
+        scriptUrl: "Main script URL format: https://cfw.rabbitloader.xyz/{did}/u.js.red.js"
       }
     });
   } catch (err) {
