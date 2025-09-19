@@ -7,17 +7,17 @@
   <link rel="stylesheet" href="/style.css">
   <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
   <script>
-    // Expose env vars to frontend
+    // Expose env vars to frontend - using <%- for unescaped output
     window.env = {
-      APP_URL: "<%= APP_URL || '' %>",
-      SHOPIFY_API_VERSION: "<%= SHOPIFY_API_VERSION || '' %>",
-      SHOPIFY_API_KEY: "<%= SHOPIFY_API_KEY || '' %>"
+      APP_URL: "<%- APP_URL || '' %>",
+      SHOPIFY_API_VERSION: "<%- SHOPIFY_API_VERSION || '' %>",
+      SHOPIFY_API_KEY: "<%- SHOPIFY_API_KEY || '' %>"
     };
     
     // Expose app state from server
     window.appState = {
-      shop: "<%= shop || '' %>",
-      host: "<%= host || '' %>",
+      shop: "<%- shop || '' %>",
+      host: "<%- host || '' %>",
       embedded: <%= embedded || false %>,
       connected: <%= connected || false %>
     };
@@ -264,15 +264,14 @@
       // Check if we're in an embedded context
       var isEmbedded = window.top !== window.self || embedded;
       
-      if (isEmbedded && shop && window.env.SHOPIFY_API_KEY) {
+      if (isEmbedded && shop && window.env.SHOPIFY_API_KEY && host) {
         try {
           var AppBridge = window['app-bridge'];
           if (AppBridge && AppBridge.createApp) {
-            var appHost = host || btoa(shop + '/admin');
-            
+            // Use the provided host parameter directly (don't generate)
             var app = AppBridge.createApp({
               apiKey: window.env.SHOPIFY_API_KEY,
-              host: appHost,
+              host: host,
               forceRedirect: true
             });
             

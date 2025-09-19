@@ -50,6 +50,7 @@ async function validateShopAndUpdateUsage(req, res, next) {
 }
 
 // GET configuration for a shop
+// Return current config in JSON
 router.get("/", validateShopAndUpdateUsage, async (req, res) => {
   try {
     const { shop, shopRecord } = req;
@@ -59,7 +60,7 @@ router.get("/", validateShopAndUpdateUsage, async (req, res) => {
         ...shopRecord.deferConfig.toObject(),
         ok: true,
         source: "database",
-        shop: shop
+        shop
       });
     }
 
@@ -68,17 +69,45 @@ router.get("/", validateShopAndUpdateUsage, async (req, res) => {
       ...DEFAULT_CONFIG,
       ok: true,
       source: "default",
-      shop: shop
+      shop
     });
 
   } catch (error) {
-    console.error('Error fetching defer config:', error);
-    res.status(500).json({ 
+    console.error("Error fetching defer config:", error);
+    res.status(500).json({
       error: "Internal server error",
-      ok: false 
+      ok: false
     });
   }
 });
+
+// Bootstrap JS loader
+router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
+  try {
+    const { shop } = req;
+
+    res.set({
+      "Content-Type": "application/javascript",
+      "Cache-Control": "public, max-age=3600",
+      "Access-Control-Allow-Origin": `https://${shop}`
+      // ❌ DO NOT manually set Content-Encoding here
+    });
+
+    const loaderJs = `
+      (function(){
+        console.log("✅ RabbitLoader defer script loaded for shop: ${shop}");
+        window.deferConfig = window.deferConfig || {};
+        // You can extend with config fetch here if needed
+      })();
+    `;
+
+    res.send(loaderJs);
+  } catch (err) {
+    console.error("Error serving loader.js:", err);
+    res.status(500).type("application/javascript").send("// Loader failed");
+  }
+});
+
 
 // POST/PUT to update configuration
 router.post("/", validateShopAndUpdateUsage, async (req, res) => {

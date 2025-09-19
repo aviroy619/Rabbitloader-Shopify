@@ -1,3 +1,4 @@
+const compression = require("compression");
 require("dotenv").config();
 
 // Environment validation
@@ -30,6 +31,7 @@ const ShopModel = require("./models/Shop");
 
 // Initialize express
 const app = express();
+app.use(compression());
 const PORT = process.env.PORT || 3000;
 
 // ====== Middleware ======
