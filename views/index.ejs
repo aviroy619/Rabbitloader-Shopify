@@ -26,19 +26,20 @@
     window.openScriptConfiguration = function() {
       var shop = new URLSearchParams(window.location.search).get("shop") || window.appState.shop;
       if (!shop) {
-        if (typeof showFlash === 'function') showFlash("Shop parameter missing", "error");
+        console.error("Shop parameter missing");
         return;
       }
       
-      if (typeof showFlash === 'function') showFlash("Opening script configuration...", "info");
       var configUrl = "/shopify/configure-defer?shop=" + encodeURIComponent(shop);
-      
-      // Open in new tab for better experience
       window.open(configUrl, '_blank');
+    };
+
+    // Open RabbitLoader reports
+    window.openReports = function() {
+      window.open("https://rabbitloader.com/account", '_blank');
     };
   </script>
   <style>
-    /* Desktop-First Design */
     body {
       background: #f5f7fa;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -47,7 +48,7 @@
     }
 
     .dashboard-container {
-      max-width: 1200px;
+      max-width: 1000px;
       margin: 0 auto;
       padding: 40px 20px;
       min-height: 100vh;
@@ -62,7 +63,7 @@
       box-shadow: 0 4px 20px rgba(0,0,0,0.08);
       padding: 40px;
       width: 100%;
-      max-width: 800px;
+      max-width: 700px;
       text-align: center;
     }
 
@@ -119,134 +120,6 @@
       margin-bottom: 30px;
     }
 
-    /* Enhanced Dashboard Grid - Desktop Layout */
-    .enhanced-dashboard {
-      margin-top: 30px;
-      text-align: left;
-    }
-    
-    .dashboard-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 30px;
-      margin-bottom: 30px;
-    }
-    
-    .psi-scores-section, .plan-section, .analytics-section, .actions-section {
-      background: #f8f9fa;
-      padding: 25px;
-      border-radius: 10px;
-      border: 1px solid #e9ecef;
-    }
-
-    .psi-scores-section {
-      grid-column: 1 / -1;
-    }
-    
-    .psi-comparison {
-      display: flex;
-      align-items: center;
-      gap: 40px;
-      justify-content: center;
-      flex-wrap: wrap;
-    }
-    
-    .score-box {
-      display: flex;
-      gap: 20px;
-      margin-top: 15px;
-    }
-    
-    .score {
-      text-align: center;
-      padding: 15px;
-      border-radius: 8px;
-      background: white;
-      min-width: 90px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }
-    
-    .score-value {
-      display: block;
-      font-size: 28px;
-      font-weight: bold;
-      margin-bottom: 5px;
-    }
-    
-    .score-value.poor { color: #dc3545; }
-    .score-value.average { color: #ffc107; }
-    .score-value.good { color: #28a745; }
-    
-    .score-label {
-      font-size: 13px;
-      color: #666;
-      font-weight: 500;
-    }
-    
-    .improvement-arrow {
-      font-size: 32px;
-      color: #28a745;
-      font-weight: bold;
-    }
-    
-    .section-title {
-      font-size: 18px;
-      font-weight: 600;
-      color: #1a1a1a;
-      margin-bottom: 15px;
-    }
-
-    .plan-info {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      gap: 20px;
-    }
-    
-    .plan-details h4 {
-      margin: 0 0 8px 0;
-      color: #007bff;
-      font-size: 16px;
-    }
-    
-    .plan-details p {
-      margin: 4px 0;
-      color: #666;
-      font-size: 14px;
-    }
-    
-    .analytics-stats {
-      margin: 15px 0;
-    }
-    
-    .stat {
-      text-align: center;
-      padding: 20px;
-      background: white;
-      border-radius: 8px;
-      margin-bottom: 15px;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-    }
-    
-    .stat-value {
-      display: block;
-      font-size: 32px;
-      font-weight: bold;
-      color: #1976d2;
-    }
-    
-    .stat-label {
-      font-size: 14px;
-      color: #666;
-      margin-top: 5px;
-    }
-    
-    .action-buttons {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    
     .btn {
       padding: 14px 24px;
       border: none;
@@ -258,8 +131,7 @@
       display: inline-block;
       text-align: center;
       transition: all 0.2s ease;
-      min-height: 48px;
-      box-sizing: border-box;
+      margin: 8px;
     }
     
     .btn-primary {
@@ -281,18 +153,6 @@
       background: #545b62;
       transform: translateY(-1px);
     }
-    
-    .btn-outline {
-      background: white;
-      color: #007bff;
-      border: 2px solid #007bff;
-    }
-    
-    .btn-outline:hover {
-      background: #007bff;
-      color: white;
-      transform: translateY(-1px);
-    }
 
     .btn-config {
       background: #28a745;
@@ -301,6 +161,16 @@
 
     .btn-config:hover {
       background: #218838;
+      transform: translateY(-1px);
+    }
+
+    .btn-reports {
+      background: #17a2b8;
+      color: white;
+    }
+
+    .btn-reports:hover {
+      background: #138496;
       transform: translateY(-1px);
     }
 
@@ -348,34 +218,13 @@
     .footer-link:hover {
       color: #007bff;
     }
-    
-    .flash-message {
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      padding: 12px 20px;
-      border-radius: 6px;
-      color: white;
-      font-weight: 500;
-      z-index: 1000;
-      opacity: 1;
-      transition: opacity 0.5s;
-    }
-    
-    .flash-message.success {
-      background: #28a745;
-    }
-    
-    .flash-message.error {
-      background: #dc3545;
-    }
-    
-    .flash-message.info {
-      background: #17a2b8;
-    }
-    
-    .flash-message.fade-out {
-      opacity: 0;
+
+    .actions-section {
+      margin-top: 30px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      align-items: center;
     }
 
     /* Responsive design - Mobile adjustments */
@@ -388,38 +237,19 @@
         padding: 25px 20px;
       }
 
-      .dashboard-grid {
-        grid-template-columns: 1fr;
-        gap: 20px;
-      }
-      
-      .psi-comparison {
-        flex-direction: column;
-        gap: 20px;
-      }
-      
-      .improvement-arrow {
-        transform: rotate(90deg);
-      }
-      
-      .plan-info {
-        flex-direction: column;
-        align-items: flex-start;
-      }
-
       .main-title {
         font-size: 28px;
       }
 
-      .score-value {
-        font-size: 24px;
+      .btn {
+        width: 100%;
+        max-width: 300px;
       }
     }
   </style>
   <script>
     // Initialize Shopify App Bridge for embedded app
     document.addEventListener('DOMContentLoaded', function() {
-      // Use server-provided state first, then fall back to URL params
       var urlParams = new URLSearchParams(window.location.search);
       var shop = window.appState.shop || urlParams.get('shop');
       var host = window.appState.host || urlParams.get('host');
@@ -428,9 +258,7 @@
       console.log('App initialization:', { 
         shop: shop, 
         host: host, 
-        embedded: embedded,
-        serverState: window.appState,
-        urlParams: urlParams.toString()
+        embedded: embedded
       });
       
       // Check if we're in an embedded context
@@ -438,16 +266,9 @@
       
       if (isEmbedded && shop && window.env.SHOPIFY_API_KEY) {
         try {
-          // Initialize App Bridge
           var AppBridge = window['app-bridge'];
           if (AppBridge && AppBridge.createApp) {
-            // Use host parameter or generate from shop
             var appHost = host || btoa(shop + '/admin');
-            
-            console.log('Initializing App Bridge with:', {
-              apiKey: window.env.SHOPIFY_API_KEY,
-              host: appHost
-            });
             
             var app = AppBridge.createApp({
               apiKey: window.env.SHOPIFY_API_KEY,
@@ -455,7 +276,6 @@
               forceRedirect: true
             });
             
-            // Create title bar if available
             if (AppBridge.actions && AppBridge.actions.TitleBar) {
               var TitleBar = AppBridge.actions.TitleBar;
               var titleBar = TitleBar.create(app, { 
@@ -464,19 +284,10 @@
             }
             
             console.log('App Bridge initialized successfully');
-          } else {
-            console.error('App Bridge library not loaded properly');
           }
         } catch (error) {
           console.error('App Bridge initialization failed:', error);
         }
-      } else if (!shop) {
-        console.log('No shop parameter found, need Shopify authentication');
-        if (!isEmbedded) {
-          console.log('Standalone mode - waiting for manual shop entry');
-        }
-      } else {
-        console.log('App loaded in standalone mode for shop:', shop);
       }
     });
   </script>
@@ -509,7 +320,7 @@
         </div>
         
         <div class="disconnected-section">
-            <h1 class="main-title">Get 100/100 PageSpeed</h1>
+          <h1 class="main-title">Get 100/100 PageSpeed</h1>
           <p class="subtitle">on Google PageSpeed Insights</p>
           <a href="#" class="btn btn-primary" id="activateBtn">Activate RabbitLoader</a>
         </div>
@@ -522,7 +333,7 @@
       </div>
     </div>
 
-    <!-- Connected State: Enhanced Dashboard -->
+    <!-- Connected State: Simple Dashboard -->
     <div id="connectedState" class="page-state" style="display: none;">
       <div class="dashboard-card">
         <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
@@ -538,99 +349,16 @@
         <div class="connected-section">
           <h1 class="main-title">Optimization Active</h1>
           <p class="subtitle">Your store is now optimized with RabbitLoader</p>
-          <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
           
-          <!-- Enhanced dashboard content will be inserted here by JavaScript -->
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- Flash messages container -->
-  <div id="flashMessages"></div>
-
-  <script src="/script.js"></script>
-</body>
-</html>title">Get 100/100 PageSpeed</h1>
-          <p class="subtitle">on Google PageSpeed Insights</p>
-          <a href="#" class="btn btn-primary" id="activateBtn">Activate RabbitLoader</a>
-        </div>
-        
-        <div class="footer-links">
-          <a href="#" class="footer-link">Crash Courses</a>
-          <a href="#" class="footer-link">Terms & Conditions</a>
-          <a href="#" class="footer-link">Get Support</a>
-        </div>
-      </div>
-    </div>
-
-    <!-- Connected State: Enhanced Dashboard -->
-    <div id="connectedState" class="page-state" style="display: none;">
-      <div class="dashboard-card">
-        <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
-        
-        <div class="store-info">
-          <div class="store-name" id="storeNameConnected">Loading...</div>
-          <div class="connection-status">
-            <div class="status-indicator success"></div>
-            <span class="status-text">Connected to RabbitLoader</span>
+          <div class="actions-section">
+            <button class="btn btn-config" onclick="openScriptConfiguration()">Configure Defer Rules</button>
+            <button class="btn btn-reports" onclick="openReports()">View Reports</button>
+            <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
           </div>
         </div>
-
-        <div class="connected-section">
-          <h1 class="main-title">Optimization Active</h1>
-          <p class="subtitle">Your store is now optimized with RabbitLoader</p>
-          <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
-          
-          <!-- Enhanced dashboard content will be inserted here by JavaScript -->
-        </div>
       </div>
     </div>
   </div>
-
-  <!-- Flash messages container -->
-  <div id="flashMessages"></div>
-
-  <script src="/script.js"></script>
-</body>
-</html>title">Get 100/100 PageSpeed</h1>
-        <p class="subtitle">on Google PageSpeed Insight</p>
-        <a href="#" class="btn btn-primary" id="activateBtn">Activate RabbitLoader</a>
-      </div>
-      
-      <div class="footer-links">
-        <a href="#" class="footer-link">Crash Courses</a>
-        <a href="#" class="footer-link">Terms & Conditions</a>
-        <a href="#" class="footer-link">Get Support</a>
-      </div>
-    </div>
-  </div>
-
-  <!-- Connected State: Enhanced Dashboard -->
-  <div id="connectedState" class="page-state" style="display: none;">
-    <div class="dashboard-card">
-      <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
-      
-      <div class="store-info">
-        <div class="store-name" id="storeNameConnected">Loading...</div>
-        <div class="connection-status">
-          <div class="status-indicator success"></div>
-          <span class="status-text">Connected to RabbitLoader</span>
-        </div>
-      </div>
-
-      <div class="connected-section">
-        <h1 class="main-title">Optimization Active</h1>
-        <p class="subtitle">Your store is now optimized with RabbitLoader</p>
-        <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
-        
-        <!-- Enhanced dashboard content will be inserted here by JavaScript -->
-      </div>
-    </div>
-  </div>
-
-  <!-- Flash messages container -->
-  <div id="flashMessages"></div>
 
   <script src="/script.js"></script>
 </body>

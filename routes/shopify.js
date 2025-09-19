@@ -55,7 +55,7 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
     return { success: true, message: "Defer script already exists in theme", scriptType: "existing" };
   }
 
-  // Step 4: Inject ONLY defer loader script (NO main RabbitLoader script)
+  // Step 4: Inject defer loader script as THE FIRST SCRIPT
   const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
   <script src="${deferLoaderUrl}"></script>`;
   
@@ -65,10 +65,26 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
     throw new Error("Could not find <head> tag in theme.liquid");
   }
 
-  // Insert script right after <head> opening tag
-  themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
+  // Strategy: Inject as the absolute first script in head
+  // Look for existing RabbitLoader scripts or any other scripts and inject BEFORE them
+  const existingRLScript = themeContent.match(/<script[^>]*src[^>]*(?:rabbitloader|cfw\.rabbitloader)[^>]*><\/script>/i);
+  const firstScript = themeContent.match(/<script[^>]*>/i);
+  
+  if (existingRLScript) {
+    // If RabbitLoader script exists, inject defer script BEFORE it
+    themeContent = themeContent.replace(existingRLScript[0], `${scriptTag}\n  ${existingRLScript[0]}`);
+    console.log(`Injected defer script BEFORE existing RabbitLoader script for ${shop}`);
+  } else if (firstScript) {
+    // If any script exists, inject defer script BEFORE the first one
+    themeContent = themeContent.replace(firstScript[0], `${scriptTag}\n  ${firstScript[0]}`);
+    console.log(`Injected defer script BEFORE first script tag for ${shop}`);
+  } else {
+    // Fallback: inject immediately after <head> if no scripts found
+    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
+    console.log(`Injected defer script immediately after <head> tag for ${shop}`);
+  }
 
-  console.log(`Injecting ONLY defer script into theme head for ${shop}:`, {
+  console.log(`Injecting defer script with priority loading for ${shop}:`, {
     deferLoader: deferLoaderUrl
   });
 
