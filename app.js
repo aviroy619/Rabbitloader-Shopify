@@ -46,18 +46,18 @@ app.use(session({
   cookie: { secure: false } // Set to true in production with HTTPS
 }));
 
-// ====== Security: Enhanced CSP for Shopify Embedding ======
+// ====== Security: Enhanced CSP for Shopify Embedding (UPDATED - Removed RabbitLoader CDN) ======
 app.use((req, res, next) => {
   const { embedded } = req.query;
   
   if (embedded === '1') {
-    // Embedded app - more restrictive CSP
+    // Embedded app - more restrictive CSP (removed cfw.rabbitloader.xyz since we only use defer script now)
     res.setHeader(
       "Content-Security-Policy",
       "frame-ancestors https://admin.shopify.com https://*.myshopify.com; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com https://shopify.rb8.in https://cfw.rabbitloader.xyz; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com https://shopify.rb8.in; " +
       "style-src 'self' 'unsafe-inline' https://unpkg.com; " +
-      "connect-src 'self' https://shopify.rb8.in https://*.myshopify.com https://rabbitloader.com https://cfw.rabbitloader.xyz; " +
+      "connect-src 'self' https://shopify.rb8.in https://*.myshopify.com https://rabbitloader.com https://apiv2.rabbitloader.com; " +
       "img-src 'self' data: https:; " +
       "font-src 'self' https: data:;"
     );
@@ -67,12 +67,13 @@ app.use((req, res, next) => {
     
     console.log(`Setting embedded app CSP headers for ${req.path}`);
   } else {
-    // Standalone app - standard CSP
+    // Standalone app - standard CSP (removed cfw.rabbitloader.xyz)
     res.setHeader(
       "Content-Security-Policy",
       "frame-ancestors 'self'; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com https://cfw.rabbitloader.xyz; " +
-      "style-src 'self' 'unsafe-inline';"
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com; " +
+      "style-src 'self' 'unsafe-inline'; " +
+      "connect-src 'self' https://rabbitloader.com https://apiv2.rabbitloader.com;"
     );
     
     res.setHeader("X-Frame-Options", "SAMEORIGIN");
@@ -112,13 +113,14 @@ app.use("/rl", shopifyConnectRoutes);
 
 // ====== Root Route (BEFORE auth middleware) ======
 app.get("/", (req, res) => {
-  const { shop, host, embedded, connected } = req.query;
+  const { shop, host, embedded, connected, script_injected } = req.query;
   
   console.log(`Root route accessed:`, {
     shop: shop || 'none',
     host: host ? `${host.substring(0, 20)}...` : 'none',
     embedded: embedded || 'none',
     connected: connected || 'none',
+    script_injected: script_injected || 'none',
     userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none',
     referer: req.headers.referer || 'none'
   });
@@ -192,7 +194,8 @@ app.get("/", (req, res) => {
         shop: shop,
         host: finalHost || '',
         embedded: true,
-        connected: connected === '1'
+        connected: connected === '1',
+        script_injected: script_injected === '1'
       });
     } catch (renderError) {
       console.error('Template render error:', renderError);
@@ -210,7 +213,8 @@ app.get("/", (req, res) => {
         shop: shop || null,
         host: host || null,
         embedded: false,
-        connected: false
+        connected: false,
+        script_injected: false
       });
     } catch (renderError) {
       console.error('Template render error:', renderError);
@@ -308,7 +312,8 @@ app.get('/health', (req, res) => {
     ok: true, 
     timestamp: new Date().toISOString(),
     app: 'rl-shopify',
-    version: '1.0.0',
+    version: '2.0.0',
+    features: ['defer-script-only', 'auto-injection'],
     environment: process.env.NODE_ENV || 'development'
   });
 });
@@ -419,4 +424,5 @@ app.listen(PORT, () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`App URL: ${process.env.APP_URL}`);
   console.log(`Shopify API Key: ${process.env.SHOPIFY_API_KEY ? 'Set' : 'Missing'}`);
+  console.log(`Features: Defer script only, Auto-injection enabled`);
 });

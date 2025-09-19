@@ -21,6 +21,21 @@
       embedded: <%= embedded %>,
       connected: <%= connected %>
     };
+
+    // Add defer configuration function
+    window.openScriptConfiguration = function() {
+      const shop = new URLSearchParams(window.location.search).get("shop") || window.appState.shop;
+      if (!shop) {
+        showFlash("Shop parameter missing", "error");
+        return;
+      }
+      
+      showFlash("Opening script configuration...", "info");
+      const configUrl = `/shopify/configure-defer?shop=${encodeURIComponent(shop)}`;
+      
+      // Open in new tab for better experience
+      window.open(configUrl, '_blank');
+    };
   </script>
   <style>
     /* Enhanced Dashboard Styles */
@@ -176,6 +191,15 @@
     .btn-outline:hover {
       background: #007bff;
       color: white;
+    }
+
+    .btn-config {
+      background: #28a745;
+      color: white;
+    }
+
+    .btn-config:hover {
+      background: #218838;
     }
     
     .script-instructions {
@@ -447,7 +471,7 @@
       </div>
 
       <div class="connected-section">
-        <h1 class="main-title">Optimization Active 🚀</h1>
+        <h1 class="main-title">Optimization Active</h1>
         <p class="subtitle">Your store is now optimized with RabbitLoader</p>
         <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
         

@@ -1,9 +1,102 @@
 const express = require("express");
 const router = express.Router();
 
-// Handle RabbitLoader callbacks ONLY - frontend redirects directly to rabbitloader.com
-// This route processes the callback when RabbitLoader redirects back to our app
+// Helper function to inject defer script (import from shopify.js)
+async function injectDeferScript(shop, did, accessToken) {
+  console.log(`Attempting auto defer script injection for ${shop} with DID: ${did}`);
 
+  try {
+    // Get active theme
+    const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!themesResponse.ok) {
+      throw new Error(`Failed to fetch themes: ${themesResponse.status}`);
+    }
+
+    const themesData = await themesResponse.json();
+    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
+    
+    if (!activeTheme) {
+      throw new Error("No active theme found");
+    }
+
+    // Get theme.liquid file
+    const assetResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!assetResponse.ok) {
+      throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status}`);
+    }
+
+    const assetData = await assetResponse.json();
+    let themeContent = assetData.asset.value;
+
+    // Check if defer script already exists
+    const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
+    
+    if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
+        themeContent.includes(deferLoaderUrl) ||
+        themeContent.includes('RabbitLoader Defer Configuration')) {
+      console.log(`Defer script already exists in theme for ${shop}`);
+      return { success: true, message: "Defer script already exists", already_exists: true };
+    }
+
+    // Inject defer script
+    const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
+  <script src="${deferLoaderUrl}"></script>`;
+    
+    const headOpenTag = '<head>';
+    
+    if (!themeContent.includes(headOpenTag)) {
+      throw new Error("Could not find <head> tag in theme.liquid");
+    }
+
+    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
+
+    // Update theme file
+    const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
+      method: 'PUT',
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        asset: {
+          key: 'layout/theme.liquid',
+          value: themeContent
+        }
+      })
+    });
+
+    if (!updateResponse.ok) {
+      const errorData = await updateResponse.json();
+      throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
+    }
+
+    console.log(`Defer script auto-injected successfully for ${shop}`);
+    return { 
+      success: true, 
+      message: "Defer script injected successfully",
+      deferLoaderUrl,
+      themeId: activeTheme.id
+    };
+
+  } catch (error) {
+    console.error(`Auto-injection failed for ${shop}:`, error);
+    throw error;
+  }
+}
+
+// Handle RabbitLoader callbacks with auto-injection
 router.get("/rl-callback", async (req, res) => {
   const { shop, "rl-token": rlToken } = req.query;
 
@@ -68,10 +161,10 @@ router.get("/rl-callback", async (req, res) => {
       updateData.$set.account_id = decoded.account_id;
     }
 
-    await ShopModel.findOneAndUpdate(
+    const updatedShop = await ShopModel.findOneAndUpdate(
       { shop },
       updateData,
-      { upsert: true }
+      { upsert: true, new: true }
     );
 
     console.log(`RabbitLoader connection saved for shop: ${shop}`, {
@@ -79,11 +172,79 @@ router.get("/rl-callback", async (req, res) => {
       hasApiToken: !!decoded.api_token
     });
 
+    // AUTO-INJECT DEFER SCRIPT AFTER SUCCESSFUL CONNECTION
+    let injectionResult = null;
+    if (updatedShop.access_token && !updatedShop.script_injected) {
+      try {
+        console.log(`Attempting automatic defer script injection for ${shop}`);
+        
+        injectionResult = await injectDeferScript(
+          shop, 
+          updatedShop.short_id, 
+          updatedShop.access_token
+        );
+        
+        if (injectionResult.success) {
+          // Update database to mark as injected
+          await ShopModel.updateOne(
+            { shop }, 
+            { 
+              $set: { 
+                script_injected: true,
+                script_injection_attempted: true 
+              },
+              $push: {
+                history: {
+                  event: "auto_script_inject",
+                  timestamp: new Date(),
+                  details: { 
+                    success: true, 
+                    message: injectionResult.message,
+                    already_exists: injectionResult.already_exists || false
+                  }
+                }
+              }
+            }
+          );
+          
+          console.log(`Defer script automatically injected for ${shop}`);
+        }
+      } catch (injectionError) {
+        console.warn(`Automatic script injection failed for ${shop}:`, injectionError.message);
+        
+        // Log the attempt but continue - user can inject manually
+        await ShopModel.updateOne(
+          { shop }, 
+          { 
+            $set: { script_injection_attempted: true },
+            $push: {
+              history: {
+                event: "auto_script_inject",
+                timestamp: new Date(),
+                details: { 
+                  success: false, 
+                  error: injectionError.message 
+                }
+              }
+            }
+          }
+        );
+      }
+    } else if (updatedShop.script_injected) {
+      console.log(`Script already injected for ${shop}, skipping auto-injection`);
+    } else if (!updatedShop.access_token) {
+      console.log(`No Shopify access token for ${shop}, skipping auto-injection`);
+    }
+
     // Redirect back to Shopify admin with success parameters
     const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
     const hostParam = req.query.host || shopBase64;
     
-    const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1`;
+    // Add injection status to redirect URL
+    let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1`;
+    if (injectionResult && injectionResult.success) {
+      redirectUrl += '&script_injected=1';
+    }
     
     console.log("Redirecting back to Shopify admin:", redirectUrl);
     res.redirect(redirectUrl);
@@ -115,12 +276,36 @@ router.get("/health", (req, res) => {
     ok: true,
     service: "rabbitloader-connect",
     timestamp: new Date().toISOString(),
-    routes: ["rl-callback"]
+    routes: ["rl-callback"],
+    features: ["auto-script-injection"]
   });
 });
 
-// NOTE: Removed the /account route that was causing conflicts
-// Frontend now redirects directly to https://rabbitloader.com/account/
-// This eliminates the 500 error and routing conflicts
+// Debug route to check connection status
+router.get("/debug/:shop", async (req, res) => {
+  const { shop } = req.params;
+  
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop: shop + '.myshopify.com' });
+    
+    if (!shopRecord) {
+      return res.json({ found: false, shop });
+    }
+    
+    res.json({
+      found: true,
+      shop: shopRecord.shop,
+      connected: !!shopRecord.api_token,
+      script_injected: shopRecord.script_injected || false,
+      injection_attempted: shopRecord.script_injection_attempted || false,
+      connected_at: shopRecord.connected_at,
+      did: shopRecord.short_id,
+      history: shopRecord.history || []
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 module.exports = router;

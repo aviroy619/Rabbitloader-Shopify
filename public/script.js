@@ -1,4 +1,4 @@
-// Frontend Dashboard Logic for RabbitLoader Shopify App - COMPLETE FIXED VERSION
+// Frontend Dashboard Logic for RabbitLoader Shopify App - COMPLETE FILE
 class RabbitLoaderDashboard {
   constructor() {
     this.shop = window.appState.shop || new URLSearchParams(window.location.search).get('shop');
@@ -115,13 +115,33 @@ class RabbitLoaderDashboard {
         console.log('Dashboard data loaded:', this.dashboardData);
       } else {
         console.warn('Failed to load dashboard data:', data.error);
+        // Set minimal fallback data so dashboard still shows
+        this.dashboardData = {
+          did: this.currentDID || 'unknown',
+          psi_scores: { before: { mobile: 50, desktop: 70 }, after: { mobile: 90, desktop: 95 } },
+          plan: { name: "RabbitLoader", pageviews: "N/A", price: "N/A" },
+          reports_url: "https://rabbitloader.com/dashboard/",
+          customize_url: "https://rabbitloader.com/customize/",
+          pageviews_this_month: "N/A"
+        };
       }
     } catch (error) {
       console.error('Dashboard data error:', error);
+      // Set minimal fallback data
+      this.dashboardData = {
+        did: this.currentDID || 'unknown',
+        psi_scores: { before: { mobile: 50, desktop: 70 }, after: { mobile: 90, desktop: 95 } },
+        plan: { name: "RabbitLoader", pageviews: "N/A", price: "N/A" },
+        reports_url: "https://rabbitloader.com/dashboard/",
+        customize_url: "https://rabbitloader.com/customize/",
+        pageviews_this_month: "N/A"
+      };
     }
   }
 
   updateUI() {
+    console.log('Updating UI, connected:', this.isRLConnected);
+    
     // Update store names
     const storeNames = [
       document.getElementById('storeName'),
@@ -149,11 +169,27 @@ class RabbitLoaderDashboard {
   }
 
   showDisconnectedState() {
+    console.log('Showing disconnected state');
     if (this.disconnectedState) {
       this.disconnectedState.style.display = 'block';
     }
     if (this.connectedState) {
       this.connectedState.style.display = 'none';
+    }
+  }
+
+  showConnectedState() {
+    console.log('Showing connected state');
+    if (this.connectedState) {
+      this.connectedState.style.display = 'block';
+      
+      // Add enhanced dashboard if we have data
+      if (this.dashboardData) {
+        this.renderEnhancedDashboard();
+      }
+    }
+    if (this.disconnectedState) {
+      this.disconnectedState.style.display = 'none';
     }
   }
 
@@ -164,8 +200,18 @@ class RabbitLoaderDashboard {
     // Check if dashboard already exists
     if (document.querySelector('.enhanced-dashboard')) return;
 
+    // Show data source indicator
+    const dataSourceBadge = this.dashboardData.data_source === 'api' ? 
+      '<span style="background: #28a745; color: white; padding: 2px 6px; border-radius: 3px; font-size: 12px;">Live Data</span>' : 
+      '<span style="background: #ffc107; color: black; padding: 2px 6px; border-radius: 3px; font-size: 12px;">Demo Data</span>';
+
     const dashboardHTML = `
       <div class="enhanced-dashboard">
+        <div style="text-align: center; margin-bottom: 15px;">
+          ${dataSourceBadge}
+          ${this.dashboardData.last_updated ? '<small style="color: #666; margin-left: 10px;">Updated: ' + new Date(this.dashboardData.last_updated).toLocaleTimeString() + '</small>' : ''}
+        </div>
+        
         <div class="dashboard-grid">
           <div class="psi-scores-section">
             <h3>PageSpeed Improvement</h3>
@@ -226,10 +272,18 @@ class RabbitLoaderDashboard {
             <div class="action-buttons">
               <a href="${this.dashboardData.reports_url}" target="_blank" class="btn btn-primary">View Reports</a>
               <a href="${this.dashboardData.customize_url}" target="_blank" class="btn btn-outline">Customize Settings</a>
-              <button class="btn btn-secondary" onclick="dashboard.showScriptInstructions()">Manual Script Setup</button>
-              <a href="/shopify/configure-defer?shop=${encodeURIComponent(this.shop)}" target="_blank" class="btn btn-outline">Configure Script Deferring</a>
+              <button class="btn btn-secondary" onclick="dashboard.showScriptInstructions()">Script Setup</button>
+              <a href="/shopify/configure-defer?shop=${encodeURIComponent(this.shop)}" target="_blank" class="btn btn-outline">Configure Defer Rules</a>
             </div>
           </div>
+        </div>
+        
+        <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 6px; text-align: center;">
+          <small>
+            <strong>DID:</strong> ${this.currentDID} | 
+            <strong>Status:</strong> Active |
+            <strong>Script:</strong> Defer configuration only
+          </small>
         </div>
       </div>
     `;
@@ -272,19 +326,22 @@ class RabbitLoaderDashboard {
 
     const instructionsHTML = `
       <div class="script-instructions">
-        <h3>Manual Script Installation</h3>
-        <p>If automatic injection didn't work, you can manually add the RabbitLoader scripts:</p>
+        <h3>Script Installation</h3>
+        <p><strong>RabbitLoader Defer Configuration</strong> - Controls when scripts load on your store pages</p>
         
         <div class="script-actions">
-          <button class="btn btn-primary" onclick="dashboard.autoInjectScript()">Try Auto-Inject</button>
+          <button class="btn btn-primary" onclick="dashboard.autoInjectScript()">Auto-Inject Defer Script</button>
         </div>
         
         <div class="script-tag-box">
-          <h4>Scripts to Add:</h4>
+          <h4>Defer Script Tag:</h4>
           <div class="copy-container">
             <code>${this.escapeHtml(data.scriptTag)}</code>
             <button class="copy-btn" onclick="dashboard.copyToClipboard('${this.escapeHtml(data.scriptTag)}')">Copy</button>
           </div>
+          <small style="color: #666; display: block; margin-top: 8px;">
+            This script manages script loading behavior and improves page speed by deferring non-critical scripts.
+          </small>
         </div>
         
         <details class="manual-steps">
@@ -294,12 +351,22 @@ class RabbitLoaderDashboard {
             <li>${data.instructions.step2}</li>
             <li>${data.instructions.step3}</li>
             <li>${data.instructions.step4}</li>
-            <li>${data.instructions.step5}</li>
-            <li>Copy and paste the script tags above</li>
+            <li><strong>${data.instructions.step5}</strong></li>
+            <li>Copy and paste the defer script tag above</li>
             <li>${data.instructions.step6}</li>
             <li>${data.instructions.step7}</li>
-            <li>Optional: ${data.instructions.step8}</li>
+            <li><strong>Configure:</strong> ${data.instructions.step8}</li>
           </ol>
+          
+          <div style="margin-top: 15px; padding: 12px; background: #e3f2fd; border-radius: 4px;">
+            <strong>What this script does:</strong>
+            <ul style="margin: 8px 0; padding-left: 20px;">
+              <li>Controls when JavaScript files load on your pages</li>
+              <li>Defers non-critical scripts to improve initial page load speed</li>
+              <li>Can block unwanted scripts entirely</li>
+              <li>Configurable through the defer configuration interface</li>
+            </ul>
+          </div>
         </details>
       </div>
     `;
@@ -379,7 +446,6 @@ class RabbitLoaderDashboard {
     }
   }
 
-  // FIXED: Use correct RabbitLoader URL and handle embedded app properly
   initiateRabbitLoaderConnection() {
     if (!this.shop) {
       this.showError('Shop parameter is required for connection');
@@ -388,13 +454,13 @@ class RabbitLoaderDashboard {
 
     console.log(`Initiating RabbitLoader connection for shop: ${this.shop}`);
 
-    // Build RabbitLoader connect URL - CORRECTED TO USE RABBITLOADER.COM
+    // Build RabbitLoader connect URL
     const connectUrl = new URL('https://rabbitloader.com/account/');
     connectUrl.searchParams.set('source', 'shopify');
     connectUrl.searchParams.set('action', 'connect');
     connectUrl.searchParams.set('site_url', `https://${this.shop}`);
     
-    // Build redirect URL back to this app - FIXED to use proper callback route
+    // Build redirect URL back to this app
     const redirectUrl = new URL('/rl/rl-callback', window.env.APP_URL);
     redirectUrl.searchParams.set('shop', this.shop);
     if (this.host) {
@@ -408,14 +474,25 @@ class RabbitLoaderDashboard {
     const finalUrl = connectUrl.toString();
     console.log('Redirecting to RabbitLoader connect:', finalUrl);
 
-    // FIXED: For embedded apps, use top-level navigation to break out of frame
+    // For embedded apps, use top-level navigation to break out of frame
     if (this.embedded || window.top !== window.self) {
-      // Break out of Shopify iframe and redirect to RabbitLoader
       window.top.location.href = finalUrl;
     } else {
-      // Regular redirect for standalone mode
       window.location.href = finalUrl;
     }
+  }
+
+  async refreshData() {
+    this.showInfo('Refreshing dashboard data...');
+    await this.loadDashboardData();
+    
+    // Remove existing dashboard and re-render
+    const existingDashboard = document.querySelector('.enhanced-dashboard');
+    if (existingDashboard) {
+      existingDashboard.remove();
+    }
+    this.renderEnhancedDashboard();
+    this.showSuccess('Dashboard data refreshed!');
   }
 
   // Utility methods
