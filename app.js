@@ -105,7 +105,9 @@ const shopifyConnectRoutes = require("./routes/shopifyConnect");
 // ====== Public Routes (BEFORE auth middleware) ======
 // These need to be mounted before the auth middleware to avoid shop parameter requirements
 
-// API Route for Environment Variables (NEW)
+// ====== API Routes for Lighthouse Integration ======
+
+// API Route for Environment Variables
 app.get("/api/env", (req, res) => {
   res.json({
     ok: true,
@@ -115,6 +117,108 @@ app.get("/api/env", (req, res) => {
       SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY
     }
   });
+});
+
+// NEW: API Route for Lighthouse-generated configurations
+app.post("/api/lighthouse-config", async (req, res) => {
+  try {
+    const { shop, config } = req.body;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        error: "shop parameter required",
+        ok: false 
+      });
+    }
+
+    // Validate shop format
+    if (!shop.includes('.myshopify.com')) {
+      return res.status(400).json({ 
+        error: "Invalid shop format",
+        ok: false 
+      });
+    }
+
+    // Validate configuration structure
+    if (!config || !config.rules || !Array.isArray(config.rules)) {
+      return res.status(400).json({ 
+        error: "Invalid configuration format - missing rules array",
+        ok: false 
+      });
+    }
+
+    // Save Lighthouse-generated configuration
+    const updatedShop = await ShopModel.findOneAndUpdate(
+      { shop },
+      { 
+        $set: { 
+          deferConfig: {
+            ...config,
+            source: "lighthouse",
+            updated_at: new Date(),
+            version: "1.0.0"
+          }
+        } 
+      },
+      { upsert: true, new: true }
+    );
+
+    console.log(`Lighthouse config saved for ${shop}:`, {
+      rules: config.rules.length,
+      enabled: config.enabled,
+      source: "lighthouse"
+    });
+
+    res.json({
+      ...config,
+      ok: true,
+      message: "Lighthouse configuration saved successfully",
+      shop: shop,
+      source: "lighthouse"
+    });
+
+  } catch (error) {
+    console.error('Error saving lighthouse config:', error);
+    res.status(500).json({ 
+      error: "Internal server error",
+      ok: false 
+    });
+  }
+});
+
+// NEW: API Route to trigger Lighthouse analysis
+app.post("/api/analyze-performance", async (req, res) => {
+  try {
+    const { shop, url } = req.body;
+    
+    if (!shop || !url) {
+      return res.status(400).json({ 
+        error: "shop and url parameters required",
+        ok: false 
+      });
+    }
+
+    // This would integrate with your Lighthouse API service
+    // For now, return a placeholder response
+    res.json({
+      ok: true,
+      message: "Performance analysis queued",
+      shop: shop,
+      url: url,
+      analysis_id: `analysis_${Date.now()}`,
+      status: "pending"
+    });
+
+    // TODO: Implement actual Lighthouse API integration here
+    console.log(`Performance analysis requested for ${shop}: ${url}`);
+
+  } catch (error) {
+    console.error('Error triggering performance analysis:', error);
+    res.status(500).json({ 
+      error: "Failed to trigger analysis",
+      ok: false 
+    });
+  }
 });
 
 // Defer configuration routes - these need shop parameter validation but not OAuth

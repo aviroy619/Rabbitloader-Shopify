@@ -1,828 +1,507 @@
-const express = require("express");
-const router = express.Router();
-const ShopModel = require("../models/Shop");
-const crypto = require("crypto");
-const path = require("path");
-const fs = require("fs");
+const compression = require("compression");
+require("dotenv").config();
 
-// Helper function to inject ONLY defer script into theme
-async function injectScriptIntoTheme(shop, did, accessToken) {
-  console.log(`Attempting theme injection for ${shop} with DID: ${did}`);
+// Environment validation
+const requiredEnvVars = [
+  'SHOPIFY_API_KEY', 
+  'SHOPIFY_API_SECRET',
+  'APP_URL', 
+  'MONGO_URI',
+  'SESSION_SECRET'
+];
 
-  // Step 1: Get active theme
-  const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
-    headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!themesResponse.ok) {
-    throw new Error(`Failed to fetch themes: ${themesResponse.status} ${themesResponse.statusText}`);
+requiredEnvVars.forEach(envVar => {
+  if (!process.env[envVar]) {
+    console.error(`Missing required environment variable: ${envVar}`);
+    console.error(`Please add ${envVar} to your .env file`);
+    process.exit(1);
   }
-
-  const themesData = await themesResponse.json();
-  const activeTheme = themesData.themes.find(theme => theme.role === 'main');
-  
-  if (!activeTheme) {
-    throw new Error("No active theme found");
-  }
-
-  console.log(`Found active theme: ${activeTheme.name} (ID: ${activeTheme.id})`);
-
-  // Step 2: Get theme.liquid file
-  const assetResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-    headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!assetResponse.ok) {
-    throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status} ${assetResponse.statusText}`);
-  }
-
-  const assetData = await assetResponse.json();
-  let themeContent = assetData.asset.value;
-
-  // Step 3: Check if defer script already exists
-  const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
-  
-  if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
-      themeContent.includes(deferLoaderUrl) ||
-      themeContent.includes('RabbitLoader Defer Configuration')) {
-    console.log(`RabbitLoader defer script already exists in theme for ${shop}`);
-    return { success: true, message: "Defer script already exists in theme", scriptType: "existing" };
-  }
-
-  // Step 4: Inject defer loader script as THE FIRST SCRIPT
-  const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>`;
-  
-  const headOpenTag = '<head>';
-  
-  if (!themeContent.includes(headOpenTag)) {
-    throw new Error("Could not find <head> tag in theme.liquid");
-  }
-
-  // Strategy: Inject as the absolute first script in head
-  // Look for existing RabbitLoader scripts or any other scripts and inject BEFORE them
-  const existingRLScript = themeContent.match(/<script[^>]*src[^>]*(?:rabbitloader|cfw\.rabbitloader)[^>]*><\/script>/i);
-  const firstScript = themeContent.match(/<script[^>]*>/i);
-  
-  if (existingRLScript) {
-    // If RabbitLoader script exists, inject defer script BEFORE it
-    themeContent = themeContent.replace(existingRLScript[0], `${scriptTag}\n  ${existingRLScript[0]}`);
-    console.log(`Injected defer script BEFORE existing RabbitLoader script for ${shop}`);
-  } else if (firstScript) {
-    // If any script exists, inject defer script BEFORE the first one
-    themeContent = themeContent.replace(firstScript[0], `${scriptTag}\n  ${firstScript[0]}`);
-    console.log(`Injected defer script BEFORE first script tag for ${shop}`);
-  } else {
-    // Fallback: inject immediately after <head> if no scripts found
-    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
-    console.log(`Injected defer script immediately after <head> tag for ${shop}`);
-  }
-
-  console.log(`Injecting defer script with priority loading for ${shop}:`, {
-    deferLoader: deferLoaderUrl
-  });
-
-  // Step 5: Update the theme file
-  const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
-    method: 'PUT',
-    headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      asset: {
-        key: 'layout/theme.liquid',
-        value: themeContent
-      }
-    })
-  });
-
-  if (!updateResponse.ok) {
-    const errorData = await updateResponse.json();
-    console.error(`Theme update failed:`, errorData);
-    throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
-  }
-
-  console.log(`RabbitLoader defer script injected successfully for ${shop}`);
-  
-  return { 
-    success: true, 
-    message: "Defer script injected successfully", 
-    deferLoaderUrl,
-    themeId: activeTheme.id,
-    themeName: activeTheme.name
-  };
-}
-
-// ====== SHOPIFY OAUTH FLOW ======
-
-// Start Shopify OAuth
-router.get("/auth", (req, res) => {
-  const { shop } = req.query;
-  
-  if (!shop) {
-    return res.status(400).send("Missing shop parameter");
-  }
-
-  // Validate shop domain
-  if (!shop.includes('.myshopify.com')) {
-    return res.status(400).send("Invalid shop domain");
-  }
-
-  const shopifyApiKey = process.env.SHOPIFY_API_KEY;
-  const scopes = process.env.SHOPIFY_SCOPES || "read_themes,write_themes,read_script_tags,write_script_tags";
-  const redirectUri = `${process.env.APP_URL}/shopify/auth/callback`;
-  const state = crypto.randomBytes(16).toString('hex');
-
-  // Store state for validation (in production, use session or database)
-  req.session = req.session || {};
-  req.session.state = state;
-
-  const authUrl = `https://${shop}/admin/oauth/authorize?` +
-    `client_id=${shopifyApiKey}&` +
-    `scope=${scopes}&` +
-    `redirect_uri=${encodeURIComponent(redirectUri)}&` +
-    `state=${state}`;
-
-  res.redirect(authUrl);
 });
 
-// Shopify OAuth Callback
-router.get("/auth/callback", async (req, res) => {
-  const { code, hmac, shop, state, timestamp } = req.query;
-  const { "rl-token": rlToken } = req.query;
+console.log(`Environment validation passed`);
+console.log(`MongoDB URI configured for: rabbitloader-shopify database`);
 
-  console.log("Callback received:", {
-    hasCode: !!code,
-    hasRlToken: !!rlToken,
-    shop,
-    hmac: hmac ? hmac.substring(0, 10) + "..." : "none"
+const express = require("express");
+const axios = require("axios");
+const bodyParser = require("body-parser");
+const cookieParser = require("cookie-parser");
+const mongoose = require("mongoose");
+const path = require("path");
+const ShopModel = require("./models/Shop");
+
+// Initialize express
+const app = express();
+app.use(compression());
+const PORT = process.env.PORT || 3000;
+
+// ====== Middleware ======
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+app.use(cookieParser());
+
+// ====== Session Support for OAuth ======
+const session = require('express-session');
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-session-secret',
+  resave: false,
+  saveUninitialized: true,
+  cookie: { secure: false } // Set to true in production with HTTPS
+}));
+
+// ====== Security: Enhanced CSP for Shopify Embedding ======
+app.use((req, res, next) => {
+  const { embedded } = req.query;
+  
+  if (embedded === '1') {
+    // Embedded app - more restrictive CSP
+    res.setHeader(
+      "Content-Security-Policy",
+      "frame-ancestors https://admin.shopify.com https://*.myshopify.com; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com https://shopify.rb8.in; " +
+      "style-src 'self' 'unsafe-inline' https://unpkg.com; " +
+      "connect-src 'self' https://shopify.rb8.in https://*.myshopify.com https://rabbitloader.com https://apiv2.rabbitloader.com; " +
+      "img-src 'self' data: https:; " +
+      "font-src 'self' https: data:;"
+    );
+    
+    // Allow embedding in Shopify admin
+    res.removeHeader("X-Frame-Options");
+    
+    console.log(`Setting embedded app CSP headers for ${req.path}`);
+  } else {
+    // Standalone app - standard CSP
+    res.setHeader(
+      "Content-Security-Policy",
+      "frame-ancestors 'self'; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://unpkg.com https://cdn.shopify.com; " +
+      "style-src 'self' 'unsafe-inline'; " +
+      "connect-src 'self' https://rabbitloader.com https://apiv2.rabbitloader.com;"
+    );
+    
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
+  }
+  
+  next();
+});
+
+// ====== MongoDB Connection ======
+mongoose.connect(process.env.MONGO_URI);
+
+mongoose.connection.on("connected", () => {
+  console.log("MongoDB connected");
+});
+mongoose.connection.on("error", (err) => {
+  console.error("MongoDB connection error:", err);
+});
+
+// ====== Static Files ======
+app.use(express.static(path.join(__dirname, "public")));
+
+// ====== Route Imports ======
+const shopifyRoutes = require("./routes/shopify");
+const deferConfigRoutes = require("./routes/deferConfig");
+const shopifyConnectRoutes = require("./routes/shopifyConnect");
+
+// ====== Public Routes (BEFORE auth middleware) ======
+// These need to be mounted before the auth middleware to avoid shop parameter requirements
+
+// ====== API Routes for Lighthouse Integration ======
+
+// API Route for Environment Variables
+app.get("/api/env", (req, res) => {
+  res.json({
+    ok: true,
+    env: {
+      APP_URL: process.env.APP_URL,
+      SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
+      SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY
+    }
   });
+});
 
-  // Handle RabbitLoader callback (when coming back from RL)
-  if (rlToken && shop) {
-    console.log(`Processing RabbitLoader callback for ${shop}`);
-    try {
-      const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
-      
-      await ShopModel.findOneAndUpdate(
-        { shop },
-        {
-          $set: {
-            short_id: decoded.did || decoded.short_id,
-            api_token: decoded.api_token,
-            account_id: decoded.account_id,
-            connected_at: new Date()
-          },
-          $push: {
-            history: {
-              event: "connect",
-              timestamp: new Date(),
-              details: { via: "rl-callback" }
-            }
-          }
-        },
-        { upsert: true }
-      );
-
-      console.log(`RabbitLoader token saved for ${shop}`, {
-        did: decoded.did || decoded.short_id,
-        hasApiToken: !!decoded.api_token
-      });
-
-      // Generate proper host parameter for Shopify embedded app
-      const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
-      const hostParam = req.query.host || shopBase64;
-      
-      // Redirect back to embedded app with proper host parameter
-      const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1`;
-      
-      console.log("Redirecting to embedded app:", redirectUrl);
-      console.log("Generated host parameter:", hostParam);
-      return res.redirect(redirectUrl);
-      
-    } catch (err) {
-      console.error("RL callback error:", err);
-      return res.status(400).send("Failed to process RabbitLoader token");
-    }
-  }
-
-  // Handle Shopify OAuth callback (when coming back from Shopify)
-  if (!code || !shop) {
-    return res.status(400).send("Missing authorization code or shop");
-  }
-
+// NEW: API Route for Lighthouse-generated configurations
+app.post("/api/lighthouse-config", async (req, res) => {
   try {
-    // HMAC verification
-    const queryObj = { ...req.query };
-    delete queryObj.hmac;
-    delete queryObj.signature;
-
-    const queryString = Object.keys(queryObj)
-      .sort()
-      .map(key => `${key}=${queryObj[key]}`)
-      .join('&');
-
-    const calculatedHmac = crypto
-      .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
-      .update(queryString)
-      .digest('hex');
-
-    if (calculatedHmac !== hmac) {
-      console.error("HMAC verification failed");
-      return res.status(401).send("Invalid HMAC - Security verification failed");
+    const { shop, config } = req.body;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        error: "shop parameter required",
+        ok: false 
+      });
     }
 
-    console.log("HMAC verification passed");
-
-    // Exchange code for access token
-    const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        client_id: process.env.SHOPIFY_API_KEY,
-        client_secret: process.env.SHOPIFY_API_SECRET,
-        code: code
-      })
-    });
-
-    const tokenData = await tokenResponse.json();
-
-    if (!tokenData.access_token) {
-      throw new Error("Failed to get access token from Shopify");
+    // Validate shop format
+    if (!shop.includes('.myshopify.com')) {
+      return res.status(400).json({ 
+        error: "Invalid shop format",
+        ok: false 
+      });
     }
 
-    // Save shop with access token
-    const shopRecord = await ShopModel.findOneAndUpdate(
+    // Validate configuration structure
+    if (!config || !config.rules || !Array.isArray(config.rules)) {
+      return res.status(400).json({ 
+        error: "Invalid configuration format - missing rules array",
+        ok: false 
+      });
+    }
+
+    // Save Lighthouse-generated configuration
+    const updatedShop = await ShopModel.findOneAndUpdate(
       { shop },
-      {
-        shop,
-        access_token: tokenData.access_token,
-        connected_at: new Date(),
-        $push: {
-          history: {
-            event: "shopify_auth",
-            timestamp: new Date(),
-            details: { via: "oauth" }
+      { 
+        $set: { 
+          deferConfig: {
+            ...config,
+            source: "lighthouse",
+            updated_at: new Date(),
+            version: "1.0.0"
           }
-        }
+        } 
       },
       { upsert: true, new: true }
     );
 
-    console.log(`Shopify OAuth completed for ${shop}`);
+    console.log(`Lighthouse config saved for ${shop}:`, {
+      rules: config.rules.length,
+      enabled: config.enabled,
+      source: "lighthouse"
+    });
 
-    // Generate proper host parameter for Shopify OAuth redirect
-    const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
-    const hostParam = req.query.host || shopBase64;
-    
-    // Redirect to app with proper host parameter
-    const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&shopify_auth=1`;
-    
-    console.log("Shopify OAuth redirect:", redirectUrl);
-    console.log("Generated host parameter:", hostParam);
-    res.redirect(redirectUrl);
+    res.json({
+      ...config,
+      ok: true,
+      message: "Lighthouse configuration saved successfully",
+      shop: shop,
+      source: "lighthouse"
+    });
 
-  } catch (err) {
-    console.error("OAuth callback error:", err);
-    res.status(500).send(`Authentication failed: ${err.message}`);
-  }
-});
-
-// ====== RABBITLOADER INTEGRATION ======
-
-// Save RabbitLoader token after RL auth
-router.post("/store-token", async (req, res) => {
-  const { shop, rlToken } = req.body;
-
-  if (!shop || !rlToken) {
-    return res.status(400).json({ ok: false, error: "Missing shop or rl-token" });
-  }
-
-  try {
-    const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
-
-    await ShopModel.updateOne(
-      { shop },
-      {
-        $set: {
-          short_id: decoded.did || decoded.short_id,
-          api_token: decoded.api_token,
-          account_id: decoded.account_id,
-          connected_at: new Date(decoded.connected_at || Date.now())
-        },
-        $push: {
-          history: {
-            event: "connect",
-            timestamp: new Date(),
-            details: { via: "rl-token" }
-          }
-        }
-      },
-      { upsert: true }
-    );
-
-    console.log(`Stored RL token for ${shop}`);
-    res.json({ ok: true, message: "RL token stored" });
-  } catch (err) {
-    console.error("store-token error:", err);
-    res.status(500).json({ ok: false, error: "Failed to store RL token" });
-  }
-});
-
-// Status check
-router.get("/status", async (req, res) => {
-  const { shop } = req.query;
-  if (!shop) return res.status(400).json({ ok: false, error: "Missing shop" });
-
-  try {
-    const record = await ShopModel.findOne({ shop });
-
-    if (record && record.api_token) {
-      return res.json({
-        ok: true,
-        connected: true,
-        shop: record.shop,
-        connected_at: record.connected_at,
-        script_injected: record.script_injected || false,
-        did: record.short_id
-      });
-    }
-
-    return res.json({ ok: true, connected: false, shop });
-  } catch (err) {
-    console.error("status error:", err);
-    res.status(500).json({ ok: false, error: "Failed to fetch status" });
-  }
-});
-
-// Disconnect
-router.post("/disconnect", async (req, res) => {
-  const { shop } = req.body;
-  if (!shop) return res.status(400).json({ ok: false, error: "Missing shop" });
-
-  try {
-    await ShopModel.updateOne(
-      { shop },
-      {
-        $unset: { 
-          api_token: "", 
-          short_id: "",
-          script_injected: "",
-          script_injection_attempted: ""
-        },
-        $set: { connected_at: null },
-        $push: {
-          history: {
-            event: "disconnect",
-            timestamp: new Date(),
-            details: { via: "manual" }
-          }
-        }
-      }
-    );
-
-    console.log(`Disconnected shop: ${shop}`);
-    res.json({ ok: true, message: "Disconnected" });
-  } catch (err) {
-    console.error("disconnect error:", err);
-    res.status(500).json({ ok: false, error: "Failed to disconnect" });
-  }
-});
-
-// Manual theme injection route
-router.post("/inject-script", async (req, res) => {
-  const { shop } = req.body;
-  if (!shop) {
-    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
-  }
-
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop not connected to RabbitLoader" 
-      });
-    }
-
-    if (!shopRecord.access_token) {
-      throw new Error("No access token found for shop");
-    }
-
-    const result = await injectScriptIntoTheme(shop, shopRecord.short_id, shopRecord.access_token);
-    
-    // Update database to mark as injected
-    await ShopModel.updateOne(
-      { shop }, 
-      { 
-        $set: { 
-          script_injected: true,
-          script_injection_attempted: true 
-        } 
-      }
-    );
-    
-    res.json({ ok: true, ...result });
-
-  } catch (err) {
-    console.error("Manual script injection error:", err);
+  } catch (error) {
+    console.error('Error saving lighthouse config:', error);
     res.status(500).json({ 
-      ok: false, 
-      error: err.message,
-      details: "Check server logs for more information" 
+      error: "Internal server error",
+      ok: false 
     });
   }
 });
 
-// Get RabbitLoader dashboard data - ROBUST API handling
-router.get("/dashboard-data", async (req, res) => {
-  const { shop } = req.query;
-  if (!shop) {
-    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
-  }
-
+// NEW: API Route to trigger Lighthouse analysis
+app.post("/api/analyze-performance", async (req, res) => {
   try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord || !shopRecord.api_token) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop not connected to RabbitLoader" 
+    const { shop, url } = req.body;
+    
+    if (!shop || !url) {
+      return res.status(400).json({ 
+        error: "shop and url parameters required",
+        ok: false 
       });
     }
 
-    // Always return mock data for now (you can add real API later)
-    const dashboardData = {
-      did: shopRecord.short_id,
-      psi_scores: {
-        before: { mobile: 45, desktop: 72 },
-        after: { mobile: 95, desktop: 98 }
-      },
-      plan: {
-        name: "Bouncy (Trial)",
-        pageviews: "50,000",
-        price: "$0/month"
-      },
-      reports_url: `https://rabbitloader.com/dashboard/${shopRecord.short_id}`,
-      customize_url: `https://rabbitloader.com/customize/${shopRecord.short_id}`,
-      pageviews_this_month: "12,450"
-    };
-
-    console.log(`Dashboard data served for ${shop}:`, {
-      did: shopRecord.short_id,
-      connected: true
+    // This would integrate with your Lighthouse API service
+    // For now, return a placeholder response
+    res.json({
+      ok: true,
+      message: "Performance analysis queued",
+      shop: shop,
+      url: url,
+      analysis_id: `analysis_${Date.now()}`,
+      status: "pending"
     });
 
-    res.json({ ok: true, data: dashboardData });
-  } catch (err) {
-    console.error("Dashboard data error:", err);
-    res.json({ 
-      ok: true, 
-      data: {
-        did: 'unknown',
-        psi_scores: { before: { mobile: 50, desktop: 75 }, after: { mobile: 90, desktop: 95 } },
-        plan: { name: "Loading...", pageviews: "0", price: "$0/month" },
-        reports_url: "https://rabbitloader.com/dashboard/",
-        customize_url: "https://rabbitloader.com/customize/",
-        pageviews_this_month: "0"
-      }
+    // TODO: Implement actual Lighthouse API integration here
+    console.log(`Performance analysis requested for ${shop}: ${url}`);
+
+  } catch (error) {
+    console.error('Error triggering performance analysis:', error);
+    res.status(500).json({ 
+      error: "Failed to trigger analysis",
+      ok: false 
     });
   }
 });
 
-// ====== DEFER CONFIGURATION INTERFACE ======
+// Defer configuration routes - these need shop parameter validation but not OAuth
+app.use("/defer-config", deferConfigRoutes);
 
-// Configuration interface route
-router.get("/configure-defer", async (req, res) => {
-  const { shop } = req.query;
-  if (!shop) {
-    return res.status(400).send("Missing shop parameter");
-  }
+// RabbitLoader Connect Routes - FIXED: Mount on specific path to avoid conflicts
+app.use("/rl", shopifyConnectRoutes);
 
-  try {
-    // Verify shop exists and is connected
-    const shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord || !shopRecord.api_token) {
-      return res.status(404).send(`
-        <div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
-          <h2>Shop Not Connected</h2>
-          <p>Please connect your shop to RabbitLoader first.</p>
-          <a href="/?shop=${encodeURIComponent(shop)}" style="color: #007bff;">Go back to main app</a>
-        </div>
-      `);
-    }
+// ====== Root Route (BEFORE auth middleware) - UPDATED FOR STATIC HTML ======
+app.get("/", (req, res) => {
+  const { shop, host, embedded, connected, script_injected } = req.query;
+  
+  console.log(`Root route accessed:`, {
+    shop: shop || 'none',
+    host: host ? `${host.substring(0, 20)}...` : 'none',
+    embedded: embedded || 'none',
+    connected: connected || 'none',
+    script_injected: script_injected || 'none',
+    userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none',
+    referer: req.headers.referer || 'none'
+  });
 
-    // Create configuration interface HTML
-    const configHtml = `
+  // For embedded apps, shop parameter is REQUIRED
+  if (embedded === '1' && !shop) {
+    console.log(`Embedded app request missing shop parameter`);
+    return res.status(400).send(`
       <!DOCTYPE html>
-      <html lang="en">
+      <html>
       <head>
+        <title>Shop Parameter Required</title>
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Script Defer Configuration - ${shop}</title>
         <style>
-          body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; background: #f5f5f5; }
-          .header { text-align: center; margin-bottom: 40px; background: white; padding: 20px; border-radius: 8px; }
-          .config-section { background: white; border-radius: 8px; margin-bottom: 20px; padding: 20px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
-          .btn { padding: 10px 20px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; font-weight: 500; }
-          .btn-primary { background: #007bff; color: white; }
-          .btn-success { background: #28a745; color: white; }
-          .btn:hover { opacity: 0.9; }
-          .form-group { margin-bottom: 15px; }
-          .form-group label { display: block; margin-bottom: 5px; font-weight: bold; }
-          .form-group input, .form-group select { width: 100%; padding: 8px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box; }
-          #statusBanner { padding: 15px; margin-bottom: 20px; border-radius: 4px; display: none; }
-          .status-banner.success { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
-          .status-banner.error { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-          .status-banner.info { background: #d1ecf1; color: #0c5460; border: 1px solid #bee5eb; }
-          .rule-item { border: 1px solid #ddd; margin-bottom: 15px; border-radius: 4px; background: #fafafa; }
-          .rule-header { background: #f8f9fa; padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; }
-          .rule-content { padding: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
-          .delete-btn { background: #dc3545; color: white; padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; }
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            text-align: center; 
+            padding: 50px; 
+            background: #f6f6f7;
+          }
+          .error-container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            max-width: 500px;
+            margin: 0 auto;
+          }
+          h1 { color: #dc3545; margin-bottom: 20px; }
+          p { color: #6c757d; margin-bottom: 15px; }
+          .code { 
+            background: #f8f9fa; 
+            padding: 8px 12px; 
+            border-radius: 4px; 
+            font-family: monospace; 
+            color: #495057;
+            display: inline-block;
+          }
         </style>
       </head>
       <body>
-        <div class="header">
-          <h1>🐰 RabbitLoader Script Defer Configuration</h1>
-          <p>Shop: <strong>${shop}</strong></p>
-          <p>Manage which scripts to defer, delay, or block on your store</p>
+        <div class="error-container">
+          <h1>Missing Shop Parameter</h1>
+          <p>This embedded app requires a shop parameter to function.</p>
+          <p>Expected URL format:</p>
+          <p class="code">/?shop=your-shop.myshopify.com&embedded=1</p>
         </div>
-
-        <div id="statusBanner" class="status-banner"></div>
-
-        <div class="config-section">
-          <h2>⚙️ Global Settings</h2>
-          <div class="form-group">
-            <label for="releaseTime">Script Release Time (milliseconds):</label>
-            <input type="number" id="releaseTime" min="0" max="30000" step="100" value="2000">
-            <small>Scripts will be released after this delay (default: 2000ms = 2 seconds)</small>
-          </div>
-          <div class="form-group">
-            <label>
-              <input type="checkbox" id="enableDefer" checked> Enable Defer System
-            </label>
-          </div>
-        </div>
-
-        <div class="config-section">
-          <h2>📋 Defer Rules</h2>
-          <p>Create rules to control specific scripts. Scripts matching these patterns will be deferred, delayed, or blocked.</p>
-          <div id="rulesContainer">
-            <p style="text-align: center; color: #666; padding: 40px;">No rules configured. Click "Add Rule" to get started.</p>
-          </div>
-          <div style="margin-top: 20px;">
-            <button class="btn btn-primary" onclick="addNewRule()">+ Add Rule</button>
-            <button class="btn btn-success" onclick="saveConfiguration()">💾 Save Configuration</button>
-            <button class="btn" onclick="loadConfiguration()" style="background: #6c757d; color: white;">🔄 Reload</button>
-          </div>
-        </div>
-
-        <script>
-          var currentConfig = { release_after_ms: 2000, rules: [], enabled: true };
-          var shop = "${shop}";
-          var ruleCounter = 1;
-
-          function loadConfiguration() {
-            showStatus('info', 'Loading configuration...');
-            fetch('/defer-config?shop=' + encodeURIComponent(shop))
-              .then(function(response) { return response.json(); })
-              .then(function(data) {
-                if (data.ok !== false) {
-                  currentConfig = data;
-                  updateUI();
-                  showStatus('success', 'Configuration loaded successfully');
-                }
-              })
-              .catch(function(error) {
-                showStatus('error', 'Failed to load configuration: ' + error.message);
-              });
-          }
-
-          function saveConfiguration() {
-            collectFormData();
-            showStatus('info', 'Saving configuration...');
-            
-            fetch('/defer-config', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ shop: shop, release_after_ms: currentConfig.release_after_ms, rules: currentConfig.rules, enabled: currentConfig.enabled })
-            })
-            .then(function(response) { return response.json(); })
-            .then(function(result) {
-              if (result.ok) {
-                showStatus('success', 'Configuration saved successfully!');
-              } else {
-                throw new Error(result.error || 'Save failed');
-              }
-            })
-            .catch(function(error) {
-              showStatus('error', 'Save failed: ' + error.message);
-            });
-          }
-
-          function collectFormData() {
-            currentConfig.release_after_ms = parseInt(document.getElementById('releaseTime').value) || 2000;
-            currentConfig.enabled = document.getElementById('enableDefer').checked;
-            
-            currentConfig.rules = [];
-            var ruleItems = document.querySelectorAll('.rule-item');
-            for (var i = 0; i < ruleItems.length; i++) {
-              var ruleEl = ruleItems[i];
-              var rule = {
-                id: ruleEl.querySelector('.rule-id').value,
-                src_regex: ruleEl.querySelector('.rule-regex').value,
-                action: ruleEl.querySelector('.rule-action').value,
-                priority: parseInt(ruleEl.querySelector('.rule-priority').value) || 0,
-                enabled: ruleEl.querySelector('.rule-enabled').checked
-              };
-              if (rule.src_regex && rule.id) currentConfig.rules.push(rule);
-            }
-          }
-
-          function updateUI() {
-            document.getElementById('releaseTime').value = currentConfig.release_after_ms || 2000;
-            document.getElementById('enableDefer').checked = currentConfig.enabled !== false;
-            renderRules();
-          }
-
-          function renderRules() {
-            var container = document.getElementById('rulesContainer');
-            container.innerHTML = '';
-            
-            if (currentConfig.rules.length === 0) {
-              container.innerHTML = '<p style="text-align: center; color: #666; padding: 40px;">No rules configured yet.</p>';
-              return;
-            }
-            
-            for (var i = 0; i < currentConfig.rules.length; i++) {
-              var rule = currentConfig.rules[i];
-              var ruleEl = document.createElement('div');
-              ruleEl.className = 'rule-item';
-              ruleEl.innerHTML = 
-                '<div class="rule-header">' +
-                  '<h3>Rule: ' + (rule.id || 'New Rule') + '</h3>' +
-                  '<button class="delete-btn" onclick="deleteRule(this)">Delete</button>' +
-                '</div>' +
-                '<div class="rule-content">' +
-                  '<div class="form-group">' +
-                    '<label>Rule ID:</label>' +
-                    '<input type="text" class="rule-id" value="' + (rule.id || '').replace(/"/g, '&quot;') + '" placeholder="e.g., google-analytics">' +
-                  '</div>' +
-                  '<div class="form-group">' +
-                    '<label>Script URL Pattern (Regex):</label>' +
-                    '<input type="text" class="rule-regex" value="' + (rule.src_regex || '').replace(/"/g, '&quot;') + '" placeholder="e.g., googletagmanager\\\\.com">' +
-                  '</div>' +
-                  '<div class="form-group">' +
-                    '<label>Action:</label>' +
-                    '<select class="rule-action">' +
-                      '<option value="defer"' + (rule.action === 'defer' ? ' selected' : '') + '>Defer (load after delay)</option>' +
-                      '<option value="delay"' + (rule.action === 'delay' ? ' selected' : '') + '>Delay (extended defer)</option>' +
-                      '<option value="block"' + (rule.action === 'block' ? ' selected' : '') + '>Block (do not load)</option>' +
-                    '</select>' +
-                  '</div>' +
-                  '<div class="form-group">' +
-                    '<label>Priority (higher = processed first):</label>' +
-                    '<input type="number" class="rule-priority" value="' + (rule.priority || 0) + '" min="0">' +
-                  '</div>' +
-                  '<div class="form-group">' +
-                    '<label><input type="checkbox" class="rule-enabled"' + (rule.enabled !== false ? ' checked' : '') + '> Rule Enabled</label>' +
-                  '</div>' +
-                '</div>';
-              container.appendChild(ruleEl);
-            }
-          }
-
-          function addNewRule() {
-            currentConfig.rules.push({
-              id: 'rule-' + ruleCounter,
-              src_regex: '',
-              action: 'defer',
-              priority: 0,
-              enabled: true
-            });
-            ruleCounter++;
-            renderRules();
-          }
-
-          function deleteRule(btn) {
-            if (confirm('Are you sure you want to delete this rule?')) {
-              btn.closest('.rule-item').remove();
-            }
-          }
-
-          function showStatus(type, message) {
-            var banner = document.getElementById('statusBanner');
-            banner.className = 'status-banner ' + type;
-            banner.textContent = message;
-            banner.style.display = 'block';
-            
-            if (type === 'success') {
-              setTimeout(function() { 
-                banner.style.display = 'none'; 
-              }, 4000);
-            }
-          }
-
-          // Load configuration on page load
-          document.addEventListener('DOMContentLoaded', loadConfiguration);
-        </script>
       </body>
       </html>
-    `;
-
-    res.send(configHtml);
-
-  } catch (err) {
-    console.error("Configure defer error:", err);
-    res.status(500).send("Failed to load configuration interface");
-  }
-});
-
-// Debug routes
-router.get("/debug-shop", async (req, res) => {
-  const { shop } = req.query;
-  if (!shop) {
-    return res.status(400).json({ error: "Missing shop parameter" });
+    `);
   }
 
+  // Serve static HTML file instead of rendering EJS template
   try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord) {
-      return res.json({ found: false, shop });
-    }
-
-    res.json({
-      found: true,
-      shop: shopRecord.shop,
-      has_access_token: !!shopRecord.access_token,
-      has_api_token: !!shopRecord.api_token,
-      short_id: shopRecord.short_id,
-      connected_at: shopRecord.connected_at,
-      script_injected: shopRecord.script_injected || false,
-      script_injection_attempted: shopRecord.script_injection_attempted || false,
-      history: shopRecord.history,
-      defer_config: shopRecord.deferConfig || null
-    });
-  } catch (err) {
-    console.error("Debug shop error:", err);
-    res.status(500).json({ error: "Database error" });
+    console.log(`Serving static HTML for shop: ${shop || 'unknown'}`);
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  } catch (error) {
+    console.error('Error serving static HTML:', error);
+    res.status(500).send('Failed to load page');
   }
 });
 
-// Get manual installation instructions - DEFER SCRIPT ONLY
-router.get("/manual-instructions", async (req, res) => {
-  const { shop } = req.query;
-  if (!shop) {
+// ====== Embedded App Authentication Middleware ======
+app.use((req, res, next) => {
+  // Skip auth for public routes and static files
+  const publicRoutes = [
+    '/shopify/auth', 
+    '/shopify/auth/callback', 
+    '/',
+    '/api/env',  // NEW: Allow API env route
+    '/rl/rl-callback',  // RabbitLoader callback route
+    '/health'   // Health check
+  ];
+  
+  const isStaticFile = req.path.startsWith('/assets/') || 
+                      req.path.endsWith('.css') || 
+                      req.path.endsWith('.js') || 
+                      req.path.endsWith('.png') ||
+                      req.path.endsWith('.jpg') ||
+                      req.path.endsWith('.ico') ||
+                      req.path.endsWith('.html');
+  
+  // Skip auth for defer-config routes (they have their own validation)
+  const isDeferConfigRoute = req.path.startsWith('/defer-config');
+  
+  // Skip auth for webhooks
+  const isWebhook = req.path.startsWith('/webhooks/');
+  
+  // Skip auth for debug routes
+  const isDebugRoute = req.path.startsWith('/debug/');
+  
+  // Skip auth for RL routes
+  const isRlRoute = req.path.startsWith('/rl/');
+  
+  // Skip auth for API routes
+  const isApiRoute = req.path.startsWith('/api/');
+  
+  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isWebhook || isDebugRoute || isRlRoute || isApiRoute) {
+    return next();
+  }
+  
+  // For shopify routes, ensure shop parameter exists
+  const shop = (req.query && req.query.shop) || (req.body && req.body.shop);
+  if (!shop && req.path.startsWith('/shopify/')) {
+    console.log(`Blocking shopify route ${req.path} - missing shop parameter`);
     return res.status(400).json({ ok: false, error: "Missing shop parameter" });
   }
+  
+  next();
+});
 
+// ====== Shopify Routes (AFTER auth middleware) ======
+app.use("/shopify", shopifyRoutes);
+
+// ====== Webhook Handler ======
+app.post("/webhooks/app/uninstalled", express.raw({ type: 'application/json' }), async (req, res) => {
   try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop not connected to RabbitLoader" 
-      });
+    const shop = req.get('X-Shopify-Shop-Domain');
+    console.log(`App uninstalled for shop: ${shop}`);
+    
+    if (shop) {
+      await ShopModel.updateOne(
+        { shop },
+        { 
+          $unset: { 
+            access_token: "", 
+            api_token: "", 
+            short_id: "",
+            script_injected: "",
+            script_injection_attempted: ""
+          },
+          $set: { connected_at: null },
+          $push: {
+            history: {
+              event: "uninstalled",
+              timestamp: new Date(),
+              details: { via: "webhook" }
+            }
+          }
+        }
+      );
     }
-
-    const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
     
-    // Only provide the single defer script tag
-    const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>`;
-    
-    res.json({
-      ok: true,
-      shop,
-      did: shopRecord.short_id,
-      deferLoaderUrl,
-      scriptTag: scriptTag,
-      instructions: {
-        step1: "Go to your Shopify Admin",
-        step2: "Navigate to Online Store > Themes", 
-        step3: "Click 'Actions' > 'Edit code' on your active theme",
-        step4: "Open the 'theme.liquid' file in the Layout folder",
-        step5: "Add this script tag in the <head> section, BEFORE any other JavaScript:",
-        step6: "Save the file",
-        step7: "The RabbitLoader defer system is now active on your store",
-        step8: `Configure script deferring rules at: ${process.env.APP_URL}/shopify/configure-defer?shop=${encodeURIComponent(shop)}`
-      },
-      notes: {
-        purpose: "This script manages and controls when other scripts load on your store pages",
-        benefits: "Improves page load speed by deferring non-critical scripts",
-        configuration: "You can configure which scripts to defer, delay, or block through the configuration interface"
-      }
-    });
+    res.status(200).send('OK');
   } catch (err) {
-    console.error("Manual instructions error:", err);
-    res.status(500).json({ ok: false, error: "Failed to get instructions" });
+    console.error('Webhook error:', err);
+    res.status(500).send('Error');
   }
 });
 
-module.exports = router;
+// ====== Health Check ======
+app.get('/health', (req, res) => {
+  res.json({ 
+    ok: true, 
+    timestamp: new Date().toISOString(),
+    app: 'rl-shopify',
+    version: '2.0.0',
+    features: ['defer-script-only', 'auto-injection', 'static-html'],
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// ====== Debug Route ======
+app.get('/debug/headers', (req, res) => {
+  res.json({
+    headers: req.headers,
+    query: req.query,
+    path: req.path,
+    method: req.method,
+    embedded: req.query.embedded === '1'
+  });
+});
+
+// ====== Error Handling ======
+app.use((err, req, res, next) => {
+  console.error('Unhandled error:', err);
+  console.error('Request details:', {
+    method: req.method,
+    path: req.path,
+    query: req.query,
+    embedded: req.query.embedded === '1'
+  });
+  
+  res.status(500).json({ 
+    ok: false, 
+    error: 'Internal server error',
+    message: process.env.NODE_ENV === 'development' ? err.message : 'Something went wrong'
+  });
+});
+
+// ====== Enhanced 404 Handler for Embedded Apps ======
+app.use((req, res) => {
+  console.log(`404 - Route not found:`, {
+    method: req.method,
+    path: req.path,
+    query: req.query,
+    embedded: req.query.embedded === '1',
+    userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none'
+  });
+  
+  // For embedded requests, return proper HTML with shop context
+  if (req.query.embedded === '1') {
+    const shop = req.query.shop;
+    res.status(404).send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Page Not Found</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; 
+            text-align: center; 
+            padding: 50px; 
+            background: #f6f6f7;
+          }
+          .error-container {
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            max-width: 500px;
+            margin: 0 auto;
+          }
+          h1 { color: #dc3545; }
+          .btn {
+            background: #007bff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 20px;
+          }
+        </style>
+      </head>
+      <body>
+        <div class="error-container">
+          <h1>404 - Page Not Found</h1>
+          <p>The requested page could not be found.</p>
+          <p><strong>Path:</strong> ${req.path}</p>
+          <p><strong>Method:</strong> ${req.method}</p>
+          ${shop ? `<a href="/?shop=${encodeURIComponent(shop)}&embedded=1" class="btn">Go to App Home</a>` : ''}
+        </div>
+      </body>
+      </html>
+    `);
+  } else {
+    res.status(404).json({ 
+      ok: false, 
+      error: 'Route not found',
+      path: req.path,
+      method: req.method
+    });
+  }
+});
+
+// ====== Start Server ======
+app.listen(PORT, () => {
+  console.log(`RL-Shopify app running on port ${PORT}`);
+  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`App URL: ${process.env.APP_URL}`);
+  console.log(`Shopify API Key: ${process.env.SHOPIFY_API_KEY ? 'Set' : 'Missing'}`);
+  console.log(`Features: Static HTML, Defer script only, Auto-injection enabled`);
+});
