@@ -7,17 +7,17 @@
   <link rel="stylesheet" href="/style.css">
   <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
   <script>
-    // Expose env vars to frontend - using <%- for unescaped output
+    // Expose env vars to frontend - using <%= for escaped output
     window.env = {
-      APP_URL: "<%- APP_URL || '' %>",
-      SHOPIFY_API_VERSION: "<%- SHOPIFY_API_VERSION || '' %>",
-      SHOPIFY_API_KEY: "<%- SHOPIFY_API_KEY || '' %>"
+      APP_URL: "<%= APP_URL || '' %>",
+      SHOPIFY_API_VERSION: "<%= SHOPIFY_API_VERSION || '' %>",
+      SHOPIFY_API_KEY: "<%= SHOPIFY_API_KEY || '' %>"
     };
     
     // Expose app state from server
     window.appState = {
-      shop: "<%- shop || '' %>",
-      host: "<%- host || '' %>",
+      shop: "<%= shop || '' %>",
+      host: "<%= host || '' %>",
       embedded: <%= embedded || false %>,
       connected: <%= connected || false %>
     };
