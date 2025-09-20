@@ -48,12 +48,12 @@ app.use(session({
   cookie: { secure: false } // Set to true in production with HTTPS
 }));
 
-// ====== Security: Enhanced CSP for Shopify Embedding (UPDATED - Removed RabbitLoader CDN) ======
+// ====== Security: Enhanced CSP for Shopify Embedding ======
 app.use((req, res, next) => {
   const { embedded } = req.query;
   
   if (embedded === '1') {
-    // Embedded app - more restrictive CSP (removed cfw.rabbitloader.xyz since we only use defer script now)
+    // Embedded app - more restrictive CSP
     res.setHeader(
       "Content-Security-Policy",
       "frame-ancestors https://admin.shopify.com https://*.myshopify.com; " +
@@ -69,7 +69,7 @@ app.use((req, res, next) => {
     
     console.log(`Setting embedded app CSP headers for ${req.path}`);
   } else {
-    // Standalone app - standard CSP (removed cfw.rabbitloader.xyz)
+    // Standalone app - standard CSP
     res.setHeader(
       "Content-Security-Policy",
       "frame-ancestors 'self'; " +
@@ -94,9 +94,7 @@ mongoose.connection.on("error", (err) => {
   console.error("MongoDB connection error:", err);
 });
 
-// ====== Views & Static Files (BEFORE auth middleware) ======
-app.set("view engine", "ejs");
-app.set("views", path.join(__dirname, "views"));
+// ====== Static Files ======
 app.use(express.static(path.join(__dirname, "public")));
 
 // ====== Route Imports ======
@@ -107,13 +105,25 @@ const shopifyConnectRoutes = require("./routes/shopifyConnect");
 // ====== Public Routes (BEFORE auth middleware) ======
 // These need to be mounted before the auth middleware to avoid shop parameter requirements
 
+// API Route for Environment Variables (NEW)
+app.get("/api/env", (req, res) => {
+  res.json({
+    ok: true,
+    env: {
+      APP_URL: process.env.APP_URL,
+      SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
+      SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY
+    }
+  });
+});
+
 // Defer configuration routes - these need shop parameter validation but not OAuth
 app.use("/defer-config", deferConfigRoutes);
 
 // RabbitLoader Connect Routes - FIXED: Mount on specific path to avoid conflicts
 app.use("/rl", shopifyConnectRoutes);
 
-// ====== Root Route (BEFORE auth middleware) ======
+// ====== Root Route (BEFORE auth middleware) - UPDATED FOR STATIC HTML ======
 app.get("/", (req, res) => {
   const { shop, host, embedded, connected, script_injected } = req.query;
   
@@ -176,52 +186,13 @@ app.get("/", (req, res) => {
     `);
   }
 
-  // Check if this is an embedded request from Shopify admin
-  if (embedded === '1' && shop) {
-    console.log(`Serving embedded app for shop: ${shop}`);
-    
-    try {
-      // Generate host parameter if missing (this is important for Shopify apps)
-      let finalHost = host;
-      if (!host && shop) {
-        finalHost = Buffer.from(`${shop}/admin`).toString('base64');
-        console.log(`Generated missing host parameter: ${finalHost}`);
-      }
-      
-      // Render the embedded app interface
-      res.render("index", {
-        APP_URL: process.env.APP_URL,
-        SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
-        SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
-        shop: shop,
-        host: finalHost || '',
-        embedded: true,
-        connected: connected === '1',
-        script_injected: script_injected === '1'
-      });
-    } catch (renderError) {
-      console.error('Template render error:', renderError);
-      res.status(500).send('Template rendering failed');
-    }
-  } else {
-    // Regular standalone access or testing
-    console.log(`Serving standalone app for shop: ${shop || 'unknown'}`);
-    
-    try {
-      res.render("index", {
-        APP_URL: process.env.APP_URL,
-        SHOPIFY_API_VERSION: process.env.SHOPIFY_API_VERSION || "2025-01",
-        SHOPIFY_API_KEY: process.env.SHOPIFY_API_KEY,
-        shop: shop || null,
-        host: host || null,
-        embedded: false,
-        connected: false,
-        script_injected: false
-      });
-    } catch (renderError) {
-      console.error('Template render error:', renderError);
-      res.status(500).send('Template rendering failed');
-    }
+  // Serve static HTML file instead of rendering EJS template
+  try {
+    console.log(`Serving static HTML for shop: ${shop || 'unknown'}`);
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  } catch (error) {
+    console.error('Error serving static HTML:', error);
+    res.status(500).send('Failed to load page');
   }
 });
 
@@ -232,6 +203,7 @@ app.use((req, res, next) => {
     '/shopify/auth', 
     '/shopify/auth/callback', 
     '/',
+    '/api/env',  // NEW: Allow API env route
     '/rl/rl-callback',  // RabbitLoader callback route
     '/health'   // Health check
   ];
@@ -241,7 +213,8 @@ app.use((req, res, next) => {
                       req.path.endsWith('.js') || 
                       req.path.endsWith('.png') ||
                       req.path.endsWith('.jpg') ||
-                      req.path.endsWith('.ico');
+                      req.path.endsWith('.ico') ||
+                      req.path.endsWith('.html');
   
   // Skip auth for defer-config routes (they have their own validation)
   const isDeferConfigRoute = req.path.startsWith('/defer-config');
@@ -255,7 +228,10 @@ app.use((req, res, next) => {
   // Skip auth for RL routes
   const isRlRoute = req.path.startsWith('/rl/');
   
-  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isWebhook || isDebugRoute || isRlRoute) {
+  // Skip auth for API routes
+  const isApiRoute = req.path.startsWith('/api/');
+  
+  if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isWebhook || isDebugRoute || isRlRoute || isApiRoute) {
     return next();
   }
   
@@ -315,7 +291,7 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     app: 'rl-shopify',
     version: '2.0.0',
-    features: ['defer-script-only', 'auto-injection'],
+    features: ['defer-script-only', 'auto-injection', 'static-html'],
     environment: process.env.NODE_ENV || 'development'
   });
 });
@@ -417,14 +393,11 @@ app.use((req, res) => {
   }
 });
 
-// NOTE: REMOVED THE PROBLEMATIC WILDCARD ROUTE - IT WAS CAUSING 404 ISSUES
-// DO NOT ADD app.get('*', ...) BACK - IT BREAKS EMBEDDED APP ROUTING
-
 // ====== Start Server ======
 app.listen(PORT, () => {
   console.log(`RL-Shopify app running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`App URL: ${process.env.APP_URL}`);
   console.log(`Shopify API Key: ${process.env.SHOPIFY_API_KEY ? 'Set' : 'Missing'}`);
-  console.log(`Features: Defer script only, Auto-injection enabled`);
+  console.log(`Features: Static HTML, Defer script only, Auto-injection enabled`);
 });

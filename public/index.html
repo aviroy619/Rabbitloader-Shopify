@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RabbitLoader - Connect Store</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
+  <script>
+    // Get data from URL parameters instead of server variables
+    const urlParams = new URLSearchParams(window.location.search);
+    
+    // Expose env vars to frontend - will be loaded via API
+    window.env = {
+      APP_URL: '',
+      SHOPIFY_API_VERSION: '',
+      SHOPIFY_API_KEY: ''
+    };
+    
+    // Expose app state from URL parameters
+    window.appState = {
+      shop: urlParams.get('shop') || '',
+      host: urlParams.get('host') || '',
+      embedded: urlParams.get('embedded') === '1',
+      connected: urlParams.get('connected') === '1'
+    };
+
+    // Load environment variables from API
+    async function loadEnvVars() {
+      try {
+        const response = await fetch('/api/env');
+        const data = await response.json();
+        if (data.ok) {
+          window.env = data.env;
+        }
+      } catch (error) {
+        console.error('Failed to load environment variables:', error);
+      }
+    }
+
+    // Load env vars when page loads
+    document.addEventListener('DOMContentLoaded', loadEnvVars);
+  </script>
+</head>
+<body>
+  <div class="dashboard-container">
+    <!-- Loading State -->
+    <div id="loadingState" class="loading-screen">
+      <div class="dashboard-card">
+        <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+        <div class="store-name" id="storeName">Loading...</div>
+        <div class="loading-container">
+          <div class="spinner"></div>
+          <p>Checking connection...</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Disconnected State: Connect to RabbitLoader -->
+    <div id="disconnectedState" class="page-state" style="display: none;">
+      <div class="dashboard-card">
+        <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+        
+        <div class="store-info">
+          <div class="store-name" id="storeNameDisconnected">Loading...</div>
+          <div class="connection-status">
+            <div class="status-indicator error"></div>
+            <span class="status-text">Not Connected</span>
+          </div>
+        </div>
+        
+        <div class="disconnected-section">
+          <h1 class="main-title">Get 100/100 PageSpeed</h1>
+          <p class="subtitle">on Google PageSpeed Insights</p>
+          <a href="#" class="btn btn-primary" id="activateBtn">Activate RabbitLoader</a>
+        </div>
+        
+        <div class="footer-links">
+          <a href="#" class="footer-link">Crash Courses</a>
+          <a href="#" class="footer-link">Terms & Conditions</a>
+          <a href="#" class="footer-link">Get Support</a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Connected State: Simple Dashboard -->
+    <div id="connectedState" class="page-state" style="display: none;">
+      <div class="dashboard-card">
+        <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+        
+        <div class="store-info">
+          <div class="store-name" id="storeNameConnected">Loading...</div>
+          <div class="connection-status">
+            <div class="status-indicator success"></div>
+            <span class="status-text">Connected to RabbitLoader</span>
+          </div>
+        </div>
+
+        <div class="connected-section">
+          <h1 class="main-title">Optimization Active</h1>
+          <p class="subtitle">Your store is now optimized with RabbitLoader</p>
+          
+          <div class="actions-section">
+            <button class="btn btn-config" onclick="openScriptConfiguration()">Configure Defer Rules</button>
+            <button class="btn btn-reports" onclick="openReports()">View Reports</button>
+            <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/dashboard.js"></script>
+</body>
+</html>
