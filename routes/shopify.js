@@ -498,7 +498,7 @@ router.get("/dashboard-data", async (req, res) => {
 
 // ====== DEFER CONFIGURATION INTERFACE ======
 
-// Configuration interface route
+// Configuration interface route (HTML)
 router.get("/configure-defer", async (req, res) => {
   const { shop } = req.query;
   if (!shop) {
@@ -545,6 +545,10 @@ router.get("/configure-defer", async (req, res) => {
           .rule-header { background: #f8f9fa; padding: 15px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd; }
           .rule-content { padding: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
           .delete-btn { background: #dc3545; color: white; padding: 5px 10px; border: none; border-radius: 3px; cursor: pointer; }
+          .api-section { background: #f8f9fa; border: 1px solid #dee2e6; border-radius: 8px; padding: 20px; margin-top: 20px; }
+          .api-endpoints { background: white; border-radius: 4px; padding: 15px; margin-top: 15px; }
+          .endpoint { margin-bottom: 10px; padding: 10px; background: #f8f9fa; border-radius: 4px; font-family: monospace; }
+          .endpoint .method { font-weight: bold; color: #007bff; }
         </style>
       </head>
       <body>
@@ -583,6 +587,24 @@ router.get("/configure-defer", async (req, res) => {
           </div>
         </div>
 
+        <div class="api-section">
+          <h2>🔗 JSON API Access</h2>
+          <p>Use these endpoints to programmatically manage defer configurations:</p>
+          <div class="api-endpoints">
+            <div class="endpoint">
+              <span class="method">POST</span> /shopify/configure-defer - Save configuration via JSON
+            </div>
+            <div class="endpoint">
+              <span class="method">GET</span> /shopify/configure-defer/api?shop=${encodeURIComponent(shop)} - Get current configuration
+            </div>
+            <div class="endpoint">
+              <span class="method">POST</span> /shopify/configure-defer/validate - Validate configuration without saving
+            </div>
+          </div>
+          <button class="btn btn-primary" onclick="exportConfiguration()">📤 Export as JSON</button>
+          <button class="btn btn-primary" onclick="showImportDialog()">📥 Import JSON</button>
+        </div>
+
         <script>
           var currentConfig = { release_after_ms: 2000, rules: [], enabled: true };
           var shop = "${shop}";
@@ -590,13 +612,17 @@ router.get("/configure-defer", async (req, res) => {
 
           function loadConfiguration() {
             showStatus('info', 'Loading configuration...');
-            fetch('/defer-config?shop=' + encodeURIComponent(shop))
+            fetch('/shopify/configure-defer/api?shop=' + encodeURIComponent(shop))
               .then(function(response) { return response.json(); })
               .then(function(data) {
-                if (data.ok !== false) {
-                  currentConfig = data;
+                if (data.ok && data.config) {
+                  currentConfig = data.config;
                   updateUI();
                   showStatus('success', 'Configuration loaded successfully');
+                } else {
+                  // Use defaults if no config exists
+                  updateUI();
+                  showStatus('info', 'Using default configuration');
                 }
               })
               .catch(function(error) {
@@ -608,10 +634,15 @@ router.get("/configure-defer", async (req, res) => {
             collectFormData();
             showStatus('info', 'Saving configuration...');
             
-            fetch('/defer-config', {
+            fetch('/shopify/configure-defer', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ shop: shop, release_after_ms: currentConfig.release_after_ms, rules: currentConfig.rules, enabled: currentConfig.enabled })
+              body: JSON.stringify({ 
+                shop: shop, 
+                release_after_ms: currentConfig.release_after_ms, 
+                rules: currentConfig.rules, 
+                enabled: currentConfig.enabled 
+              })
             })
             .then(function(response) { return response.json(); })
             .then(function(result) {
@@ -624,6 +655,56 @@ router.get("/configure-defer", async (req, res) => {
             .catch(function(error) {
               showStatus('error', 'Save failed: ' + error.message);
             });
+          }
+
+          function exportConfiguration() {
+            collectFormData();
+            const configJson = JSON.stringify(currentConfig, null, 2);
+            const blob = new Blob([configJson], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'defer-config-' + shop.replace('.myshopify.com', '') + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            showStatus('success', 'Configuration exported successfully!');
+          }
+
+          function showImportDialog() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.json';
+            input.onchange = function(e) {
+              const file = e.target.files[0];
+              if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                  try {
+                    const importedConfig = JSON.parse(e.target.result);
+                    if (validateConfig(importedConfig)) {
+                      currentConfig = importedConfig;
+                      updateUI();
+                      showStatus('success', 'Configuration imported successfully!');
+                    } else {
+                      showStatus('error', 'Invalid configuration format');
+                    }
+                  } catch (error) {
+                    showStatus('error', 'Failed to parse JSON: ' + error.message);
+                  }
+                };
+                reader.readAsText(file);
+              }
+            };
+            input.click();
+          }
+
+          function validateConfig(config) {
+            return config && 
+                   typeof config.release_after_ms === 'number' &&
+                   typeof config.enabled === 'boolean' &&
+                   Array.isArray(config.rules);
           }
 
           function collectFormData() {
@@ -741,6 +822,219 @@ router.get("/configure-defer", async (req, res) => {
   } catch (err) {
     console.error("Configure defer error:", err);
     res.status(500).send("Failed to load configuration interface");
+  }
+});
+
+// API endpoint to save defer configuration (accepts JSON)
+router.post("/configure-defer", async (req, res) => {
+  const { shop, release_after_ms, rules, enabled } = req.body;
+  
+  if (!shop) {
+    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
+  }
+
+  try {
+    // Verify shop exists and is connected
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord || !shopRecord.api_token) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not connected to RabbitLoader" 
+      });
+    }
+
+    // Validate configuration data
+    const config = {
+      release_after_ms: parseInt(release_after_ms) || 2000,
+      enabled: enabled !== false, // default to true
+      rules: Array.isArray(rules) ? rules : [],
+      updated_at: new Date(),
+      version: "1.0.0"
+    };
+
+    // Validate rules
+    const validatedRules = config.rules.map((rule, index) => {
+      if (!rule.id || !rule.src_regex) {
+        throw new Error(`Rule ${index + 1} missing required fields (id, src_regex)`);
+      }
+      
+      if (!['defer', 'delay', 'block'].includes(rule.action)) {
+        throw new Error(`Rule ${index + 1} has invalid action: ${rule.action}`);
+      }
+
+      // Validate regex
+      try {
+        new RegExp(rule.src_regex);
+      } catch (e) {
+        throw new Error(`Rule ${index + 1} has invalid regex pattern: ${rule.src_regex}`);
+      }
+
+      return {
+        id: String(rule.id).trim(),
+        src_regex: String(rule.src_regex).trim(),
+        action: rule.action,
+        priority: parseInt(rule.priority) || 0,
+        enabled: rule.enabled !== false
+      };
+    });
+
+    config.rules = validatedRules;
+
+    // Save configuration to database
+    await ShopModel.updateOne(
+      { shop },
+      { 
+        $set: { 
+          deferConfig: config
+        },
+        $push: {
+          history: {
+            event: "defer_config_updated",
+            timestamp: new Date(),
+            details: { 
+              rules_count: config.rules.length,
+              enabled: config.enabled,
+              via: "json_api"
+            }
+          }
+        }
+      }
+    );
+
+    console.log(`Defer configuration saved for ${shop}:`, {
+      rules: config.rules.length,
+      enabled: config.enabled,
+      release_after_ms: config.release_after_ms
+    });
+
+    res.json({
+      ok: true,
+      message: "Configuration saved successfully",
+      config: config,
+      shop: shop
+    });
+
+  } catch (err) {
+    console.error("Configure defer POST error:", err);
+    res.status(500).json({ 
+      ok: false, 
+      error: err.message || "Failed to save configuration"
+    });
+  }
+});
+
+// API endpoint to get defer configuration (returns JSON)
+router.get("/configure-defer/api", async (req, res) => {
+  const { shop } = req.query;
+  
+  if (!shop) {
+    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
+  }
+
+  try {
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord || !shopRecord.api_token) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not connected to RabbitLoader" 
+      });
+    }
+
+    // Return current configuration or defaults
+    const config = shopRecord.deferConfig || {
+      release_after_ms: 2000,
+      enabled: true,
+      rules: [],
+      updated_at: new Date(),
+      version: "1.0.0"
+    };
+
+    res.json({
+      ok: true,
+      config: config,
+      shop: shop
+    });
+
+  } catch (err) {
+    console.error("Get defer config error:", err);
+    res.status(500).json({ 
+      ok: false, 
+      error: "Failed to load configuration"
+    });
+  }
+});
+
+// API endpoint to validate defer configuration without saving
+router.post("/configure-defer/validate", async (req, res) => {
+  const { shop, release_after_ms, rules, enabled } = req.body;
+  
+  if (!shop) {
+    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
+  }
+
+  try {
+    // Validate configuration structure
+    const errors = [];
+    
+    // Validate release time
+    const releaseTime = parseInt(release_after_ms);
+    if (isNaN(releaseTime) || releaseTime < 0 || releaseTime > 30000) {
+      errors.push("Release time must be between 0 and 30000 milliseconds");
+    }
+
+    // Validate rules
+    if (Array.isArray(rules)) {
+      rules.forEach((rule, index) => {
+        if (!rule.id || typeof rule.id !== 'string' || !rule.id.trim()) {
+          errors.push(`Rule ${index + 1}: ID is required`);
+        }
+        
+        if (!rule.src_regex || typeof rule.src_regex !== 'string' || !rule.src_regex.trim()) {
+          errors.push(`Rule ${index + 1}: Source regex is required`);
+        } else {
+          // Test if regex is valid
+          try {
+            new RegExp(rule.src_regex);
+          } catch (e) {
+            errors.push(`Rule ${index + 1}: Invalid regex pattern`);
+          }
+        }
+        
+        if (!['defer', 'delay', 'block'].includes(rule.action)) {
+          errors.push(`Rule ${index + 1}: Action must be 'defer', 'delay', or 'block'`);
+        }
+        
+        const priority = parseInt(rule.priority);
+        if (isNaN(priority) || priority < 0) {
+          errors.push(`Rule ${index + 1}: Priority must be a non-negative number`);
+        }
+      });
+    }
+
+    if (errors.length > 0) {
+      return res.status(400).json({
+        ok: false,
+        error: "Validation failed",
+        errors: errors
+      });
+    }
+
+    res.json({
+      ok: true,
+      message: "Configuration is valid",
+      validated_config: {
+        release_after_ms: releaseTime,
+        enabled: enabled !== false,
+        rules: rules || []
+      }
+    });
+
+  } catch (err) {
+    console.error("Validate defer config error:", err);
+    res.status(500).json({ 
+      ok: false, 
+      error: "Validation failed"
+    });
   }
 });
 
