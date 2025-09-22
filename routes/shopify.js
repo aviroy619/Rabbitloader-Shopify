@@ -258,13 +258,15 @@ router.get("/auth/callback", async (req, res) => {
       throw new Error("Failed to get access token from Shopify");
     }
 
-    // Save shop with access token
+    // Save or update shop with new access token
     const shopRecord = await ShopModel.findOneAndUpdate(
       { shop },
       {
-        shop,
-        access_token: tokenData.access_token,
-        connected_at: new Date(),
+        $set: {
+          shop,
+          access_token: tokenData.access_token,
+          connected_at: new Date()
+        },
         $push: {
           history: {
             event: "shopify_auth",
@@ -275,6 +277,8 @@ router.get("/auth/callback", async (req, res) => {
       },
       { upsert: true, new: true }
     );
+    
+    console.log(`✅ Saved new Shopify access_token for ${shop}`);
 
     console.log(`Shopify OAuth completed for ${shop}`);
 
