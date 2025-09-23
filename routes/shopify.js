@@ -150,6 +150,7 @@ router.get("/auth", (req, res) => {
     `redirect_uri=${encodeURIComponent(redirectUri)}&` +
     `state=${state}`;
 
+  console.log(`Starting OAuth for ${shop}, redirecting to Shopify`);
   res.redirect(authUrl);
 });
 
@@ -158,7 +159,7 @@ router.get("/auth/callback", async (req, res) => {
   const { code, hmac, shop, state, timestamp } = req.query;
   const { "rl-token": rlToken } = req.query;
 
-  console.log("Callback received:", {
+  console.log("OAuth Callback received:", {
     hasCode: !!code,
     hasRlToken: !!rlToken,
     shop,
@@ -235,13 +236,14 @@ router.get("/auth/callback", async (req, res) => {
       .digest('hex');
 
     if (calculatedHmac !== hmac) {
-      console.error("HMAC verification failed");
+      console.error("HMAC verification failed for shop:", shop);
       return res.status(401).send("Invalid HMAC - Security verification failed");
     }
 
-    console.log("HMAC verification passed");
+    console.log("HMAC verification passed for shop:", shop);
 
     // Exchange code for access token
+    console.log(`Exchanging OAuth code for access token for ${shop}`);
     const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -253,34 +255,51 @@ router.get("/auth/callback", async (req, res) => {
     });
 
     const tokenData = await tokenResponse.json();
+    console.log("Token exchange response:", {
+      hasAccessToken: !!tokenData.access_token,
+      tokenLength: tokenData.access_token?.length || 0,
+      startsWithShpat: tokenData.access_token?.startsWith('shpat_') || false,
+      scope: tokenData.scope
+    });
 
     if (!tokenData.access_token) {
+      console.error("No access token received from Shopify for shop:", shop);
+      console.error("Full token response:", tokenData);
       throw new Error("Failed to get access token from Shopify");
     }
 
-    // Save or update shop with new access token
+    // ENHANCED: Save or update shop with new access token
+    console.log(`Saving access token to database for ${shop}`);
     const shopRecord = await ShopModel.findOneAndUpdate(
       { shop },
       {
         $set: {
           shop,
           access_token: tokenData.access_token,
-          connected_at: new Date()
+          connected_at: new Date(),
+          scope: tokenData.scope
         },
         $push: {
           history: {
             event: "shopify_auth",
             timestamp: new Date(),
-            details: { via: "oauth" }
+            details: { 
+              via: "oauth",
+              token_length: tokenData.access_token.length,
+              scope: tokenData.scope
+            }
           }
         }
       },
       { upsert: true, new: true }
     );
     
-    console.log(`✅ Saved new Shopify access_token for ${shop}`);
-
-    console.log(`Shopify OAuth completed for ${shop}`);
+    console.log(`✅ Successfully saved Shopify access token for ${shop}`, {
+      tokenSaved: !!shopRecord.access_token,
+      tokenLength: shopRecord.access_token?.length || 0,
+      startsWithShpat: shopRecord.access_token?.startsWith('shpat_') || false,
+      shopRecordId: shopRecord._id
+    });
 
     // Generate proper host parameter for Shopify OAuth redirect
     const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
@@ -289,13 +308,93 @@ router.get("/auth/callback", async (req, res) => {
     // Redirect to app with proper host parameter
     const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&shopify_auth=1`;
     
-    console.log("Shopify OAuth redirect:", redirectUrl);
-    console.log("Generated host parameter:", hostParam);
+    console.log("Shopify OAuth successful, redirecting:", redirectUrl);
     res.redirect(redirectUrl);
 
   } catch (err) {
-    console.error("OAuth callback error:", err);
+    console.error("OAuth callback error for shop:", shop, err);
     res.status(500).send(`Authentication failed: ${err.message}`);
+  }
+});
+
+// ====== DEBUG ROUTES FOR TOKEN CHECKING ======
+
+// Debug route to check if access tokens are being saved
+router.get("/debug/check-token/:shop", async (req, res) => {
+  const shop = req.params.shop;
+  try {
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    res.json({
+      found: !!shopRecord,
+      shop: shop,
+      has_access_token: !!(shopRecord?.access_token),
+      token_length: shopRecord?.access_token?.length || 0,
+      token_starts_with: shopRecord?.access_token?.substring(0, 8) || 'none',
+      token_preview: shopRecord?.access_token ? `${shopRecord.access_token.substring(0, 12)}...` : 'none',
+      connected_at: shopRecord?.connected_at,
+      has_shopify_auth_in_history: shopRecord?.history?.some(h => h.event === 'shopify_auth') || false,
+      latest_history: shopRecord?.history?.slice(-3) || []
+    });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// Debug route to list all shops and their token status
+router.get("/debug/list-shops", async (req, res) => {
+  try {
+    const shops = await ShopModel.find({}, { 
+      shop: 1, 
+      access_token: 1, 
+      connected_at: 1,
+      short_id: 1,
+      api_token: 1
+    });
+    
+    const shopSummary = shops.map(shop => ({
+      shop: shop.shop,
+      has_shopify_token: !!shop.access_token,
+      shopify_token_length: shop.access_token?.length || 0,
+      has_rl_connection: !!shop.short_id,
+      connected_at: shop.connected_at
+    }));
+    
+    res.json({
+      total_shops: shops.length,
+      shops_with_shopify_tokens: shopSummary.filter(s => s.has_shopify_token).length,
+      shops_with_rl_connection: shopSummary.filter(s => s.has_rl_connection).length,
+      shops: shopSummary
+    });
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// Test route to verify database connection and model
+router.get("/debug/test-db", async (req, res) => {
+  try {
+    // Test creating a dummy shop record
+    const testShop = new ShopModel({
+      shop: 'test-' + Date.now() + '.myshopify.com',
+      access_token: 'shpat_test_token_12345'
+    });
+    
+    const saved = await testShop.save();
+    await ShopModel.deleteOne({ _id: saved._id }); // Clean up
+    
+    res.json({
+      database_connection: 'OK',
+      model_working: 'OK',
+      test_save_successful: 'OK',
+      message: 'Database and model are functioning correctly'
+    });
+  } catch (error) {
+    res.json({
+      database_connection: 'ERROR',
+      error: error.message,
+      stack: error.stack
+    });
   }
 });
 
@@ -366,6 +465,40 @@ router.get("/status", async (req, res) => {
   }
 });
 
+// Enhanced status check with token info
+router.get("/status/:shop", async (req, res) => {
+  const shop = req.params.shop;
+  
+  try {
+    const record = await ShopModel.findOne({ shop });
+
+    if (!record) {
+      return res.json({
+        ok: true,
+        found: false,
+        shop,
+        message: "Shop not found in database"
+      });
+    }
+
+    res.json({
+      ok: true,
+      found: true,
+      shop: record.shop,
+      has_shopify_access: !!record.access_token,
+      has_rabbitloader_connection: !!record.api_token,
+      script_injected: record.script_injected || false,
+      connected_at: record.connected_at,
+      did: record.short_id,
+      last_activity: record.history?.slice(-1)[0] || null
+    });
+    
+  } catch (err) {
+    console.error("Enhanced status error:", err);
+    res.status(500).json({ ok: false, error: "Failed to fetch status" });
+  }
+});
+
 // Disconnect
 router.post("/disconnect", async (req, res) => {
   const { shop } = req.body;
@@ -417,7 +550,15 @@ router.post("/inject-script", async (req, res) => {
     }
 
     if (!shopRecord.access_token) {
-      throw new Error("No access token found for shop");
+      return res.status(404).json({
+        ok: false,
+        error: "No Shopify access token found for shop. Please reinstall the app.",
+        debug: {
+          shop_found: !!shopRecord,
+          has_rl_connection: !!shopRecord.short_id,
+          has_shopify_access: !!shopRecord.access_token
+        }
+      });
     }
 
     const result = await injectScriptIntoTheme(shop, shopRecord.short_id, shopRecord.access_token);
@@ -445,7 +586,7 @@ router.post("/inject-script", async (req, res) => {
   }
 });
 
-// Get RabbitLoader dashboard data - ROBUST API handling
+// Get RabbitLoader dashboard data - NO MOCK DATA
 router.get("/dashboard-data", async (req, res) => {
   const { shop } = req.query;
   if (!shop) {
@@ -461,41 +602,39 @@ router.get("/dashboard-data", async (req, res) => {
       });
     }
 
-    // Always return mock data for now (you can add real API later)
+    // Return only actual data, no dummy values
     const dashboardData = {
-      did: shopRecord.short_id,
-      psi_scores: {
-        before: { mobile: 45, desktop: 72 },
-        after: { mobile: 95, desktop: 98 }
-      },
-      plan: {
-        name: "Bouncy (Trial)",
-        pageviews: "50,000",
-        price: "$0/month"
-      },
-      reports_url: `https://rabbitloader.com/dashboard/${shopRecord.short_id}`,
-      customize_url: `https://rabbitloader.com/customize/${shopRecord.short_id}`,
-      pageviews_this_month: "12,450"
+      did: shopRecord.short_id || "",
+      reports_url: shopRecord.short_id ? `https://rabbitloader.com/dashboard/${shopRecord.short_id}` : "",
+      customize_url: shopRecord.short_id ? `https://rabbitloader.com/customize/${shopRecord.short_id}` : ""
     };
 
+    // Only add fields if we have real data
+    if (shopRecord.plan_data) {
+      dashboardData.plan = shopRecord.plan_data;
+    }
+    
+    if (shopRecord.psi_scores) {
+      dashboardData.psi_scores = shopRecord.psi_scores;
+    }
+    
+    if (shopRecord.pageviews_data) {
+      dashboardData.pageviews_this_month = shopRecord.pageviews_data;
+    }
+
     console.log(`Dashboard data served for ${shop}:`, {
-      did: shopRecord.short_id,
-      connected: true
+      did: shopRecord.short_id || "none",
+      has_plan_data: !!shopRecord.plan_data,
+      has_psi_scores: !!shopRecord.psi_scores
     });
 
     res.json({ ok: true, data: dashboardData });
+    
   } catch (err) {
     console.error("Dashboard data error:", err);
-    res.json({ 
-      ok: true, 
-      data: {
-        did: 'unknown',
-        psi_scores: { before: { mobile: 50, desktop: 75 }, after: { mobile: 90, desktop: 95 } },
-        plan: { name: "Loading...", pageviews: "0", price: "$0/month" },
-        reports_url: "https://rabbitloader.com/dashboard/",
-        customize_url: "https://rabbitloader.com/customize/",
-        pageviews_this_month: "0"
-      }
+    res.status(500).json({ 
+      ok: false, 
+      error: "Failed to fetch dashboard data"
     });
   }
 });
@@ -557,7 +696,7 @@ router.get("/configure-defer", async (req, res) => {
       </head>
       <body>
         <div class="header">
-          <h1>🐰 RabbitLoader Script Defer Configuration</h1>
+          <h1>RabbitLoader Script Defer Configuration</h1>
           <p>Shop: <strong>${shop}</strong></p>
           <p>Manage which scripts to defer, delay, or block on your store</p>
         </div>
@@ -565,7 +704,7 @@ router.get("/configure-defer", async (req, res) => {
         <div id="statusBanner" class="status-banner"></div>
 
         <div class="config-section">
-          <h2>⚙️ Global Settings</h2>
+          <h2>Global Settings</h2>
           <div class="form-group">
             <label for="releaseTime">Script Release Time (milliseconds):</label>
             <input type="number" id="releaseTime" min="0" max="30000" step="100" value="2000">
@@ -579,20 +718,20 @@ router.get("/configure-defer", async (req, res) => {
         </div>
 
         <div class="config-section">
-          <h2>📋 Defer Rules</h2>
+          <h2>Defer Rules</h2>
           <p>Create rules to control specific scripts. Scripts matching these patterns will be deferred, delayed, or blocked.</p>
           <div id="rulesContainer">
             <p style="text-align: center; color: #666; padding: 40px;">No rules configured. Click "Add Rule" to get started.</p>
           </div>
           <div style="margin-top: 20px;">
             <button class="btn btn-primary" onclick="addNewRule()">+ Add Rule</button>
-            <button class="btn btn-success" onclick="saveConfiguration()">💾 Save Configuration</button>
-            <button class="btn" onclick="loadConfiguration()" style="background: #6c757d; color: white;">🔄 Reload</button>
+            <button class="btn btn-success" onclick="saveConfiguration()">Save Configuration</button>
+            <button class="btn" onclick="loadConfiguration()" style="background: #6c757d; color: white;">Reload</button>
           </div>
         </div>
 
         <div class="api-section">
-          <h2>🔗 JSON API Access</h2>
+          <h2>JSON API Access</h2>
           <p>Use these endpoints to programmatically manage defer configurations:</p>
           <div class="api-endpoints">
             <div class="endpoint">
@@ -605,8 +744,8 @@ router.get("/configure-defer", async (req, res) => {
               <span class="method">POST</span> /shopify/configure-defer/validate - Validate configuration without saving
             </div>
           </div>
-          <button class="btn btn-primary" onclick="exportConfiguration()">📤 Export as JSON</button>
-          <button class="btn btn-primary" onclick="showImportDialog()">📥 Import JSON</button>
+          <button class="btn btn-primary" onclick="exportConfiguration()">Export as JSON</button>
+          <button class="btn btn-primary" onclick="showImportDialog()">Import JSON</button>
         </div>
 
         <script>
@@ -624,7 +763,6 @@ router.get("/configure-defer", async (req, res) => {
                   updateUI();
                   showStatus('success', 'Configuration loaded successfully');
                 } else {
-                  // Use defaults if no config exists
                   updateUI();
                   showStatus('info', 'Using default configuration');
                 }
@@ -814,7 +952,6 @@ router.get("/configure-defer", async (req, res) => {
             }
           }
 
-          // Load configuration on page load
           document.addEventListener('DOMContentLoaded', loadConfiguration);
         </script>
       </body>
@@ -838,7 +975,6 @@ router.post("/configure-defer", async (req, res) => {
   }
 
   try {
-    // Verify shop exists and is connected
     const shopRecord = await ShopModel.findOne({ shop });
     if (!shopRecord || !shopRecord.api_token) {
       return res.status(404).json({ 
@@ -847,16 +983,14 @@ router.post("/configure-defer", async (req, res) => {
       });
     }
 
-    // Validate configuration data
     const config = {
       release_after_ms: parseInt(release_after_ms) || 2000,
-      enabled: enabled !== false, // default to true
+      enabled: enabled !== false,
       rules: Array.isArray(rules) ? rules : [],
       updated_at: new Date(),
       version: "1.0.0"
     };
 
-    // Validate rules
     const validatedRules = config.rules.map((rule, index) => {
       if (!rule.id || !rule.src_regex) {
         throw new Error(`Rule ${index + 1} missing required fields (id, src_regex)`);
@@ -866,7 +1000,6 @@ router.post("/configure-defer", async (req, res) => {
         throw new Error(`Rule ${index + 1} has invalid action: ${rule.action}`);
       }
 
-      // Validate regex
       try {
         new RegExp(rule.src_regex);
       } catch (e) {
@@ -884,7 +1017,6 @@ router.post("/configure-defer", async (req, res) => {
 
     config.rules = validatedRules;
 
-    // Save configuration to database
     await ShopModel.updateOne(
       { shop },
       { 
@@ -944,7 +1076,6 @@ router.get("/configure-defer/api", async (req, res) => {
       });
     }
 
-    // Return current configuration or defaults
     const config = shopRecord.deferConfig || {
       release_after_ms: 2000,
       enabled: true,
@@ -977,16 +1108,13 @@ router.post("/configure-defer/validate", async (req, res) => {
   }
 
   try {
-    // Validate configuration structure
     const errors = [];
     
-    // Validate release time
     const releaseTime = parseInt(release_after_ms);
     if (isNaN(releaseTime) || releaseTime < 0 || releaseTime > 30000) {
       errors.push("Release time must be between 0 and 30000 milliseconds");
     }
 
-    // Validate rules
     if (Array.isArray(rules)) {
       rules.forEach((rule, index) => {
         if (!rule.id || typeof rule.id !== 'string' || !rule.id.trim()) {
@@ -996,7 +1124,6 @@ router.post("/configure-defer/validate", async (req, res) => {
         if (!rule.src_regex || typeof rule.src_regex !== 'string' || !rule.src_regex.trim()) {
           errors.push(`Rule ${index + 1}: Source regex is required`);
         } else {
-          // Test if regex is valid
           try {
             new RegExp(rule.src_regex);
           } catch (e) {
@@ -1042,37 +1169,6 @@ router.post("/configure-defer/validate", async (req, res) => {
   }
 });
 
-// Debug routes
-router.get("/debug-shop", async (req, res) => {
-  const { shop } = req.query;
-  if (!shop) {
-    return res.status(400).json({ error: "Missing shop parameter" });
-  }
-
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord) {
-      return res.json({ found: false, shop });
-    }
-
-    res.json({
-      found: true,
-      shop: shopRecord.shop,
-      has_access_token: !!shopRecord.access_token,
-      has_api_token: !!shopRecord.api_token,
-      short_id: shopRecord.short_id,
-      connected_at: shopRecord.connected_at,
-      script_injected: shopRecord.script_injected || false,
-      script_injection_attempted: shopRecord.script_injection_attempted || false,
-      history: shopRecord.history,
-      defer_config: shopRecord.deferConfig || null
-    });
-  } catch (err) {
-    console.error("Debug shop error:", err);
-    res.status(500).json({ error: "Database error" });
-  }
-});
-
 // Get manual installation instructions - DEFER SCRIPT ONLY
 router.get("/manual-instructions", async (req, res) => {
   const { shop } = req.query;
@@ -1091,7 +1187,6 @@ router.get("/manual-instructions", async (req, res) => {
 
     const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
     
-    // Only provide the single defer script tag
     const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
   <script src="${deferLoaderUrl}"></script>`;
     
