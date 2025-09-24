@@ -56,6 +56,11 @@ const deferConfigSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
+  source: {
+    type: String,
+    enum: ['manual', 'lighthouse', 'auto'],
+    default: 'manual'
+  },
   // Performance tracking
   performance_metrics: {
     avg_load_time_improvement: Number,
@@ -68,7 +73,7 @@ const deferConfigSchema = new mongoose.Schema({
 const ShopSchema = new mongoose.Schema({
   shop: {
     type: String,
-    unique: true,   // ensures uniqueness and creates the index
+    unique: true,   // ensures uniqueness and creates the index automatically
     required: true
   },
   access_token: String,
@@ -125,7 +130,7 @@ const ShopSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Only add extra indexes where needed
+// Only add extra indexes where needed - NO shop index (unique: true already creates it)
 ShopSchema.index({ 'usage.last_request': 1 });
 
 // Methods
