@@ -1572,7 +1572,7 @@ app.use((req, res) => {
     });
   }
 });
-
+// ====== Start Server =====
 // ====== Start Server ======
 app.listen(PORT, () => {
   console.log(`RL-Shopify app running on port ${PORT}`);
