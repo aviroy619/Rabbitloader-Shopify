@@ -42,11 +42,22 @@ app.use(cookieParser());
 
 // ====== Session Support for OAuth ======
 const session = require('express-session');
+const MongoStore = require('connect-mongo');
+
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-session-secret',
+  secret: process.env.SESSION_SECRET,
   resave: false,
-  saveUninitialized: true,
-  cookie: { secure: false } // Set to true in production with HTTPS
+  saveUninitialized: false,
+  store: MongoStore.create({
+    mongoUrl: process.env.MONGO_URI,
+    touchAfter: 24 * 3600, // 24 hours
+    dbName: 'RLPlatforms'
+  }),
+  cookie: { 
+    secure: true, // HTTPS only in production
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
 }));
 
 // ====== Security: Enhanced CSP for Shopify Embedding ======
