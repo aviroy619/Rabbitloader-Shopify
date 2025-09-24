@@ -1,7 +1,7 @@
 // utils/psiAnalyzer.js - Enhanced PageSpeed Insights Analysis
 
 const axios = require('axios');
-const { categorizeShopifyJS, calculateDeferPriority } = require('/shopifyJSCategorizer');
+const { categorizeShopifyJS, calculateDeferPriority } = require('./shopifyJSCategorizer');
 
 /**
  * Main PSI analysis function for a single page
