@@ -176,4 +176,4 @@ ShopSchema.statics.findByShop = function(shopDomain) {
 };
 
 // Prevent OverwriteModelError (keeping your existing pattern)
-module.exports = mongoose.models.Shop || mongoose.model("Shop", ShopSchema);
+module.exports = mongoose.models.Shop || mongoose.model("Shop", ShopSchema);  
