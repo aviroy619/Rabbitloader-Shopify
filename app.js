@@ -19,7 +19,8 @@ requiredEnvVars.forEach(envVar => {
 });
 
 console.log(`Environment validation passed`);
-console.log(`MongoDB URI configured for: rabbitloader-shopify database`);
+const dbName = (process.env.MONGO_URI.match(/\/([^/?]+)(\?|$)/) || [])[1] || 'unknown';
+console.log(`MongoDB URI configured for: ${dbName} database`);
 
 const express = require("express");
 const axios = require("axios");
