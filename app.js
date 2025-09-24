@@ -30,6 +30,9 @@ const mongoose = require("mongoose");
 const path = require("path");
 const ShopModel = require("./models/Shop");
 
+// Import enhanced PSI analyzer
+const { analyzeSinglePage: analyzePageWithPSI } = require('./utils/psiAnalyzer');
+
 // Initialize express
 const app = express();
 app.use(compression());
@@ -232,6 +235,7 @@ app.post("/api/analyze-performance", async (req, res) => {
     });
   }
 });
+
 // API Route for shop status check
 app.get("/api/status", async (req, res) => {
   try {
@@ -696,13 +700,14 @@ app.get("/api/site-analysis", async (req, res) => {
     });
   }
 });
-// Add these routes to app.js after your existing API routes (around line 500)
+
+// ====== Enhanced PSI Analysis Section ======
 
 // Simple in-memory queue for PSI analysis
 const psiAnalysisQueue = [];
 let isProcessingPSI = false;
 
-// PSI Analysis Queue Processor
+// PSI Analysis Queue Processor - Updated to use new analyzer
 async function processPSIQueue() {
   if (isProcessingPSI || psiAnalysisQueue.length === 0) return;
   
@@ -713,109 +718,97 @@ async function processPSIQueue() {
     const task = psiAnalysisQueue.shift();
     try {
       console.log(`Analyzing ${task.url} for shop ${task.shop}`);
-      await analyzeSinglePage(task);
+      
+      // Use the new enhanced analyzer
+      const analysisResult = await analyzePageWithPSI(task);
+      
+      // Save comprehensive results to database
+      await saveAnalysisResults(analysisResult);
+      
       // Wait 2 seconds between requests to respect API limits
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (error) {
       console.error(`PSI analysis failed for ${task.url}:`, error.message);
+      
+      // Mark as failed in database
+      await markAnalysisAsFailed(task, error.message);
     }
   }
   
   isProcessingPSI = false;
 }
 
-// Single page PSI analysis function
-async function analyzeSinglePage(task) {
-  const { shop, template, url, page_count } = task;
+// Save analysis results to database
+async function saveAnalysisResults(analysisResult) {
+  const { shop, template, jsAnalysis, deferRecommendations, psiRawData, analysisSummary } = analysisResult;
   
-  // Build full URL
-  const fullUrl = url.startsWith('http') ? url : `https://${shop}${url}`;
-  
-  // Call PSI API
-  const psiResponse = await axios.get('https://www.googleapis.com/pagespeedonline/v5/runPagespeed', {
-    params: {
-      url: fullUrl,
-      key: process.env.PAGESPEED_API_KEY,
-      strategy: 'mobile', // Start with mobile, can add desktop later
-      category: ['performance', 'accessibility'],
-      locale: 'en'
-    },
-    timeout: 180000 // 3 minute timeout
-  });
-  
-  const psiData = psiResponse.data;
-  
-  // Extract JavaScript files from PSI data
-  const jsFiles = [];
-  const deferRecommendations = [];
-  
-  // Parse render-blocking resources
-  const renderBlockingAudit = psiData.lighthouseResult?.audits?.['render-blocking-resources'];
-  if (renderBlockingAudit?.details?.items) {
-    renderBlockingAudit.details.items.forEach(item => {
-      if (item.url && item.url.includes('.js')) {
-        jsFiles.push(item.url);
-        deferRecommendations.push({
-          file: item.url,
-          reason: 'render-blocking',
-          confidence: 9,
-          wastedMs: item.wastedMs || 0
-        });
-      }
-    });
-  }
-  
-  // Parse unused JavaScript
-  const unusedJSAudit = psiData.lighthouseResult?.audits?.['unused-javascript'];
-  if (unusedJSAudit?.details?.items) {
-    unusedJSAudit.details.items.forEach(item => {
-      if (item.url && !jsFiles.includes(item.url)) {
-        jsFiles.push(item.url);
-        deferRecommendations.push({
-          file: item.url,
-          reason: 'unused-code',
-          confidence: 7,
-          wastedBytes: item.wastedBytes || 0
-        });
-      }
-    });
-  }
-  
-  // Parse all network requests for additional JS files
-  const networkAudit = psiData.lighthouseResult?.audits?.['network-requests'];
-  if (networkAudit?.details?.items) {
-    networkAudit.details.items.forEach(item => {
-      if (item.url && item.url.includes('.js') && !jsFiles.includes(item.url)) {
-        jsFiles.push(item.url);
-      }
-    });
-  }
-  
-  console.log(`Found ${jsFiles.length} JS files for ${template}:`, jsFiles.slice(0, 5));
-  
-  // Save results to database
   await ShopModel.findOneAndUpdate(
     { shop },
     {
       $set: {
         [`site_structure.template_groups.${template}.psi_analyzed`]: true,
-        [`site_structure.template_groups.${template}.js_files`]: jsFiles,
+        [`site_structure.template_groups.${template}.js_files`]: jsAnalysis.allFiles.map(f => f.url),
+        [`site_structure.template_groups.${template}.js_analysis`]: {
+          total_files: jsAnalysis.totalFiles,
+          categories: Object.keys(jsAnalysis.categories).reduce((acc, cat) => {
+            acc[cat] = jsAnalysis.categories[cat].length;
+            return acc;
+          }, {}),
+          category_details: jsAnalysis.categories,
+          render_blocking: jsAnalysis.renderBlocking,
+          unused_js: jsAnalysis.unusedJs.map(u => ({
+            url: u.url,
+            wastedPercent: u.wastedPercent,
+            wastedKB: u.wastedKB,
+            category: u.category,
+            deferPriority: u.deferPriority
+          })),
+          total_waste_kb: jsAnalysis.totalWasteKB
+        },
         [`site_structure.template_groups.${template}.defer_recommendations`]: deferRecommendations,
         [`site_structure.template_groups.${template}.last_psi_analysis`]: new Date(),
-        // Store full PSI data for debugging (optional - can be large)
-        [`site_structure.template_groups.${template}.psi_raw_data`]: {
-          lighthouse_result: psiData.lighthouseResult,
+        [`site_structure.template_groups.${template}.analysis_summary`]: analysisSummary,
+        // Store compressed PSI data (optional - only key metrics)
+        [`site_structure.template_groups.${template}.psi_metrics`]: {
+          performance_score: psiRawData?.audits?.['performance']?.score * 100 || 0,
+          lcp_time: psiRawData?.audits?.['largest-contentful-paint']?.numericValue || 0,
+          fid_time: psiRawData?.audits?.['first-input-delay']?.numericValue || 0,
+          cls_score: psiRawData?.audits?.['cumulative-layout-shift']?.numericValue || 0,
           created_at: new Date(),
-          url_analyzed: fullUrl
+          url_analyzed: analysisResult.url
         }
       }
     }
   );
   
-  console.log(`PSI analysis completed for ${shop} template ${template} - found ${deferRecommendations.length} defer recommendations`);
+  console.log(`Enhanced PSI analysis saved for ${shop} template ${template}:`, {
+    jsFiles: jsAnalysis.totalFiles,
+    deferRecommendations: deferRecommendations.length,
+    totalWasteKB: jsAnalysis.totalWasteKB,
+    categories: Object.keys(jsAnalysis.categories).filter(cat => jsAnalysis.categories[cat].length > 0)
+  });
 }
 
-// API Route: Start PSI Analysis
+// Mark analysis as failed
+async function markAnalysisAsFailed(task, errorMessage) {
+  const { shop, template } = task;
+  
+  await ShopModel.findOneAndUpdate(
+    { shop },
+    {
+      $set: {
+        [`site_structure.template_groups.${template}.psi_analyzed`]: false,
+        [`site_structure.template_groups.${template}.psi_error`]: {
+          message: errorMessage,
+          timestamp: new Date(),
+          url_attempted: task.url
+        }
+      }
+    }
+  );
+}
+
+// API Route: Start PSI Analysis - Updated
 app.post("/api/start-psi-analysis", async (req, res) => {
   try {
     const shop = req.headers['x-shop'] || req.body.shop;
@@ -883,15 +876,21 @@ app.post("/api/start-psi-analysis", async (req, res) => {
 
     res.json({
       ok: true,
-      message: `PSI analysis queued for ${queuedPages.length} template types`,
+      message: `Enhanced PSI analysis queued for ${queuedPages.length} template types`,
       templates_to_analyze: queuedPages.map(p => p.template),
       queue_position: psiAnalysisQueue.length,
-      estimated_time_minutes: Math.ceil(queuedPages.length * 3), // 3 minutes per analysis
-      home_page_prioritized: homePageAdded
+      estimated_time_minutes: Math.ceil(queuedPages.length * 3),
+      home_page_prioritized: homePageAdded,
+      features: [
+        'Comprehensive JavaScript extraction',
+        'Shopify-specific categorization',
+        'Waste percentage analysis',
+        'Intelligent defer recommendations'
+      ]
     });
 
   } catch (error) {
-    console.error('Error starting PSI analysis:', error);
+    console.error('Error starting enhanced PSI analysis:', error);
     res.status(500).json({ 
       ok: false, 
       error: "Failed to start PSI analysis",
@@ -900,7 +899,7 @@ app.post("/api/start-psi-analysis", async (req, res) => {
   }
 });
 
-// API Route: Check PSI Analysis Status
+// API Route: Check PSI Analysis Status - Enhanced
 app.get("/api/psi-status", async (req, res) => {
   try {
     const shop = req.headers['x-shop'] || req.query.shop;
@@ -928,20 +927,31 @@ app.get("/api/psi-status", async (req, res) => {
     
     let totalTemplates = 0;
     let analyzedTemplates = 0;
+    let totalJSFiles = 0;
+    let totalWasteKB = 0;
     const templateStatus = {};
     
     templates.forEach(([template, group]) => {
       if (group.sample_page) {
         totalTemplates++;
+        
+        // Enhanced status with new analysis data
         templateStatus[template] = {
           analyzed: group.psi_analyzed || false,
           js_files_found: (group.js_files || []).length,
           recommendations_count: (group.defer_recommendations || []).length,
-          last_analysis: group.last_psi_analysis
+          last_analysis: group.last_psi_analysis,
+          // New enhanced data
+          js_analysis: group.js_analysis || null,
+          analysis_summary: group.analysis_summary || null,
+          psi_metrics: group.psi_metrics || null,
+          error: group.psi_error || null
         };
         
         if (group.psi_analyzed) {
           analyzedTemplates++;
+          totalJSFiles += (group.js_files || []).length;
+          totalWasteKB += (group.js_analysis?.total_waste_kb || 0);
         }
       }
     });
@@ -954,7 +964,14 @@ app.get("/api/psi-status", async (req, res) => {
       queue_remaining: psiAnalysisQueue.length,
       is_processing: isProcessingPSI,
       template_status: templateStatus,
-      last_analyzed: shopData.site_structure.last_analyzed
+      last_analyzed: shopData.site_structure.last_analyzed,
+      // Enhanced summary stats
+      summary_stats: {
+        total_js_files: totalJSFiles,
+        total_waste_kb: totalWasteKB,
+        avg_js_per_template: analyzedTemplates > 0 ? Math.round(totalJSFiles / analyzedTemplates) : 0,
+        avg_waste_per_template: analyzedTemplates > 0 ? Math.round(totalWasteKB / analyzedTemplates) : 0
+      }
     });
 
   } catch (error) {
@@ -966,7 +983,7 @@ app.get("/api/psi-status", async (req, res) => {
   }
 });
 
-// === ADD STEP 5 ROUTES HERE (after /api/psi-status route) ===
+// ====== Template Defer Configuration Routes ======
 
 // API Route: Get defer configuration for a specific template
 app.get("/api/defer-config/:template", async (req, res) => {
@@ -1011,7 +1028,10 @@ app.get("/api/defer-config/:template", async (req, res) => {
       auto_recommendations: templateData.defer_recommendations || [],
       user_config: templateData.user_defer_config || [],
       last_analysis: templateData.last_psi_analysis,
-      analysis_status: templateData.psi_analyzed ? 'completed' : 'pending'
+      analysis_status: templateData.psi_analyzed ? 'completed' : 'pending',
+      // Enhanced data
+      js_analysis: templateData.js_analysis || null,
+      psi_metrics: templateData.psi_metrics || null
     });
 
   } catch (error) {
@@ -1131,7 +1151,10 @@ app.get("/api/defer-overview", async (req, res) => {
       user_config_count: (group.user_defer_config || []).length,
       user_deferred_count: (group.user_defer_config || []).filter(c => c.defer).length,
       last_analysis: group.last_psi_analysis,
-      has_user_config: (group.user_defer_config || []).length > 0
+      has_user_config: (group.user_defer_config || []).length > 0,
+      // Enhanced data
+      total_waste_kb: group.js_analysis?.total_waste_kb || 0,
+      performance_score: group.psi_metrics?.performance_score || 0
     }));
 
     res.json({
@@ -1188,7 +1211,7 @@ app.get("/api/generate-defer-rules", async (req, res) => {
           if (config.defer) {
             // Generate regex pattern from file URL
             const urlPattern = config.file
-              .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // Escape regex special chars
+              .replace(/[.*+?^${}()|[\]\\]/g, '\\    let totalTemplates = 0;') // Escape regex special chars
               .replace(/https?:\/\/[^\/]+/, '.*'); // Make domain flexible
             
             generatedRules.push({
@@ -1227,8 +1250,6 @@ app.get("/api/generate-defer-rules", async (req, res) => {
   }
 });
 
-// === END STEP 5 ROUTES ===
-
 // Helper function to add pages to template categories
 function addToCategory(categories, template, pageData) {
   if (!categories[template]) {
@@ -1238,7 +1259,6 @@ function addToCategory(categories, template, pageData) {
 }
 
 // Defer config API route
-
 app.get("/defer-config/api", async (req, res) => {
   try {
     const shop = req.query.shop;
@@ -1261,7 +1281,6 @@ app.get("/defer-config/api", async (req, res) => {
       });
     }
     
-
     res.json({
       ok: true,
       has_config: !!shopData.deferConfig,
@@ -1452,7 +1471,7 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     app: 'rl-shopify',
     version: '2.0.0',
-    features: ['defer-script-only', 'auto-injection', 'static-html'],
+    features: ['defer-script-only', 'auto-injection', 'static-html', 'enhanced-psi-analysis'],
     environment: process.env.NODE_ENV || 'development'
   });
 });
@@ -1560,5 +1579,5 @@ app.listen(PORT, () => {
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`App URL: ${process.env.APP_URL}`);
   console.log(`Shopify API Key: ${process.env.SHOPIFY_API_KEY ? 'Set' : 'Missing'}`);
-  console.log(`Features: Static HTML, Defer script only, Auto-injection enabled`);
+  console.log(`Features: Static HTML, Defer script only, Auto-injection enabled, Enhanced PSI Analysis`);
 });
