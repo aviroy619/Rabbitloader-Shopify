@@ -1486,7 +1486,7 @@ app.get('/debug/headers', (req, res) => {
     embedded: req.query.embedded === '1'
   });
 });
-// ====== Test PSI Analysis Route (5 minute timeout) ======
+// ====== Test PSI Analysis Route ======
 app.post("/api/test-psi", async (req, res) => {
   try {
     const { url } = req.body;
@@ -1505,9 +1505,9 @@ app.post("/api/test-psi", async (req, res) => {
       });
     }
 
-    // Set longer timeout for this specific request
-    req.setTimeout(300000); // 5 minutes
-    res.setTimeout(300000); // 5 minutes
+    // Set 5-minute timeout
+    req.setTimeout(300000);
+    res.setTimeout(300000);
 
     const testTask = {
       shop: 'test-shop.com',
@@ -1516,18 +1516,9 @@ app.post("/api/test-psi", async (req, res) => {
       page_count: 1
     };
 
-    console.log(`Testing PSI analysis for: ${url} (5 min timeout)`);
+    console.log(`Testing PSI analysis for: ${url}`);
     
-    // Create a timeout promise
-    const timeoutPromise = new Promise((_, reject) => {
-      setTimeout(() => reject(new Error('Analysis timed out after 5 minutes')), 300000);
-    });
-    
-    // Race between analysis and timeout
-    const analysisResult = await Promise.race([
-      analyzePageWithPSI(testTask),
-      timeoutPromise
-    ]);
+    const analysisResult = await analyzePageWithPSI(testTask);
     
     res.json({
       ok: true,
@@ -1540,14 +1531,8 @@ app.post("/api/test-psi", async (req, res) => {
           return acc;
         }, {}),
         defer_recommendations: analysisResult.deferRecommendations.length,
-        top_recommendations: analysisResult.deferRecommendations.slice(0, 3),
-        sample_js_files: analysisResult.jsAnalysis.allFiles.slice(0, 5).map(f => ({
-          url: f.url,
-          category: f.category,
-          size: f.transferSize || 0
-        }))
-      },
-      processing_time: "Analysis completed within 5 minutes"
+        top_recommendations: analysisResult.deferRecommendations.slice(0, 3)
+      }
     });
 
   } catch (error) {
@@ -1555,8 +1540,7 @@ app.post("/api/test-psi", async (req, res) => {
     res.status(500).json({ 
       ok: false, 
       error: "PSI analysis failed",
-      details: error.message,
-      timeout_info: "Request has 5 minute timeout limit"
+      details: error.message 
     });
   }
 });
