@@ -272,6 +272,269 @@ app.get("/api/status", async (req, res) => {
   }
 });
 
+// ====== Additional Shopify API Proxy Routes ======
+
+// Debug shop - check if app has token saved
+app.get("/shopify/debug-shop", async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Shop parameter required" 
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData) {
+      return res.json({
+        ok: false,
+        found: false,
+        shop: shop,
+        message: "Shop not found in database"
+      });
+    }
+
+    res.json({
+      ok: true,
+      found: true,
+      shop: shop,
+      has_access_token: !!shopData.access_token,
+      connected_at: shopData.connected_at,
+      script_injected: shopData.script_injected,
+      access_token_preview: shopData.access_token ? `${shopData.access_token.substring(0, 15)}...` : null
+    });
+
+  } catch (error) {
+    console.error('Error in debug-shop:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "Internal server error" 
+    });
+  }
+});
+
+// List themes
+app.get("/api/themes", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Shop parameter required" 
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData || !shopData.access_token) {
+      return res.status(401).json({
+        ok: false,
+        error: "Shop not authenticated"
+      });
+    }
+
+    const response = await axios.get(`https://${shop}/admin/api/2025-01/themes.json`, {
+      headers: {
+        'X-Shopify-Access-Token': shopData.access_token
+      }
+    });
+
+    res.json({
+      ok: true,
+      themes: response.data.themes
+    });
+
+  } catch (error) {
+    console.error('Error fetching themes:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.response?.data?.errors || "Failed to fetch themes" 
+    });
+  }
+});
+
+// List products
+app.get("/api/products", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Shop parameter required" 
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData || !shopData.access_token) {
+      return res.status(401).json({
+        ok: false,
+        error: "Shop not authenticated"
+      });
+    }
+
+    const response = await axios.get(`https://${shop}/admin/api/2025-01/products.json`, {
+      headers: {
+        'X-Shopify-Access-Token': shopData.access_token
+      }
+    });
+
+    res.json({
+      ok: true,
+      products: response.data.products
+    });
+
+  } catch (error) {
+    console.error('Error fetching products:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.response?.data?.errors || "Failed to fetch products" 
+    });
+  }
+});
+
+// List script tags
+app.get("/api/script-tags", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Shop parameter required" 
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData || !shopData.access_token) {
+      return res.status(401).json({
+        ok: false,
+        error: "Shop not authenticated"
+      });
+    }
+
+    const response = await axios.get(`https://${shop}/admin/api/2025-01/script_tags.json`, {
+      headers: {
+        'X-Shopify-Access-Token': shopData.access_token
+      }
+    });
+
+    res.json({
+      ok: true,
+      script_tags: response.data.script_tags
+    });
+
+  } catch (error) {
+    console.error('Error fetching script tags:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.response?.data?.errors || "Failed to fetch script tags" 
+    });
+  }
+});
+
+// Add script tag
+app.post("/api/script-tags", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.body.shop;
+    const { src, event = "onload" } = req.body;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Shop parameter required" 
+      });
+    }
+
+    if (!src) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Script src parameter required" 
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData || !shopData.access_token) {
+      return res.status(401).json({
+        ok: false,
+        error: "Shop not authenticated"
+      });
+    }
+
+    const response = await axios.post(`https://${shop}/admin/api/2025-01/script_tags.json`, {
+      script_tag: {
+        event: event,
+        src: src
+      }
+    }, {
+      headers: {
+        'X-Shopify-Access-Token': shopData.access_token,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    res.json({
+      ok: true,
+      script_tag: response.data.script_tag,
+      message: "Script tag added successfully"
+    });
+
+  } catch (error) {
+    console.error('Error adding script tag:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.response?.data?.errors || "Failed to add script tag" 
+    });
+  }
+});
+
+// List pages
+app.get("/api/pages", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Shop parameter required" 
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData || !shopData.access_token) {
+      return res.status(401).json({
+        ok: false,
+        error: "Shop not authenticated"
+      });
+    }
+
+    const response = await axios.get(`https://${shop}/admin/api/2025-01/pages.json`, {
+      headers: {
+        'X-Shopify-Access-Token': shopData.access_token
+      }
+    });
+
+    res.json({
+      ok: true,
+      pages: response.data.pages
+    });
+
+  } catch (error) {
+    console.error('Error fetching pages:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.response?.data?.errors || "Failed to fetch pages" 
+    });
+  }
+});
 // Defer configuration routes - these need shop parameter validation but not OAuth
 app.use("/defer-config", deferConfigRoutes);
 
