@@ -535,6 +535,46 @@ app.get("/api/pages", async (req, res) => {
     });
   }
 });
+
+// Defer config API route
+app.get("/defer-config/api", async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Shop parameter required" 
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData) {
+      return res.json({
+        ok: true,
+        has_config: false,
+        shop: shop,
+        message: "Shop not found - no defer config"
+      });
+    }
+
+    res.json({
+      ok: true,
+      has_config: !!shopData.deferConfig,
+      shop: shop,
+      deferConfig: shopData.deferConfig || null
+    });
+
+  } catch (error) {
+    console.error('Error fetching defer config:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "Internal server error" 
+    });
+  }
+});
+
 // Defer configuration routes - these need shop parameter validation but not OAuth
 app.use("/defer-config", deferConfigRoutes);
 
