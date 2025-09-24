@@ -1,91 +1,74 @@
-const { analyzeSinglePage } = require('./utils/psiAnalyzer');
-require("dotenv").config();
-
-async function testPSI() {
-  console.log('Testing PSI analysis with a public website...');
-  console.log('API Key configured:', process.env.PAGESPEED_API_KEY ? 'Yes' : 'No');
-  
-  // Test with a popular public site that has lots of JavaScript
-  const testTask = {
-    shop: 'example-shop.myshopify.com', // Fake shop for testing
-    template: 'test',
-    url: 'https://www.shopify.com', // Public Shopify site
-    page_count: 1
-  };
-  
+// ====== Test PSI Analysis Route (5 minute timeout) ======
+app.post("/api/test-psi", async (req, res) => {
   try {
-    console.log(`\nAnalyzing: ${testTask.url}`);
-    console.log('This may take 30-60 seconds...\n');
+    const { url } = req.body;
     
-    const result = await analyzeSinglePage(testTask);
-    
-    console.log('=== PSI Analysis Results ===');
-    console.log('URL:', result.url);
-    console.log('Total JS files found:', result.jsAnalysis.totalFiles);
-    console.log('Total waste KB:', result.jsAnalysis.totalWasteKB);
-    console.log('Render blocking files:', result.jsAnalysis.renderBlocking.length);
-    console.log('Defer recommendations:', result.deferRecommendations.length);
-    
-    console.log('\n=== JS Categories ===');
-    Object.keys(result.jsAnalysis.categories).forEach(category => {
-      const count = result.jsAnalysis.categories[category].length;
-      if (count > 0) {
-        console.log(`${category}: ${count} files`);
-      }
-    });
-    
-    console.log('\n=== Sample JS Files ===');
-    result.jsAnalysis.allFiles.slice(0, 5).forEach((file, index) => {
-      console.log(`${index + 1}. ${file.url}`);
-      console.log(`   Category: ${file.category}`);
-      console.log(`   Size: ${file.transferSize || 0} bytes`);
-    });
-    
-    if (result.deferRecommendations.length > 0) {
-      console.log('\n=== Top Defer Recommendations ===');
-      result.deferRecommendations.slice(0, 3).forEach((rec, index) => {
-        console.log(`${index + 1}. ${rec.file}`);
-        console.log(`   Reason: ${rec.reason} (${rec.priority} priority)`);
-        console.log(`   Confidence: ${rec.confidence}/10`);
-        console.log(`   Details: ${rec.details}`);
+    if (!url) {
+      return res.status(400).json({
+        ok: false,
+        error: "URL parameter required"
       });
-    } else {
-      console.log('\n=== No Defer Recommendations ===');
-      console.log('This could mean:');
-      console.log('- Site has very optimized JavaScript');
-      console.log('- No render-blocking or high-waste JS detected');
-      console.log('- PSI analysis did not find significant issues');
     }
     
-    console.log('\n=== Raw Analysis Summary ===');
-    console.log(JSON.stringify(result.analysisSummary, null, 2));
-    
-  } catch (error) {
-    console.error('PSI analysis failed:', error.message);
-    
-    if (error.message.includes('API key') || error.message.includes('quota')) {
-      console.log('\n🔑 API Key Issues:');
-      console.log('1. Check PAGESPEED_API_KEY in .env file');
-      console.log('2. Verify API key is valid');
-      console.log('3. Ensure PageSpeed Insights API is enabled');
-      console.log('4. Check if quota is exceeded');
+    if (!process.env.PAGESPEED_API_KEY) {
+      return res.status(500).json({
+        ok: false,
+        error: "PageSpeed Insights API key not configured"
+      });
     }
-    
-    if (error.message.includes('timeout')) {
-      console.log('\n⏱️ Timeout Issues:');
-      console.log('1. PageSpeed API is slow (normal)');
-      console.log('2. Try again in a few minutes');
-    }
-    
-    console.log('\nFull error details:', error);
-  }
-}
 
-// Run the test
-testPSI().then(() => {
-  console.log('\nTest completed.');
-  process.exit(0);
-}).catch(err => {
-  console.error('Unexpected error:', err);
-  process.exit(1);
+    // Set longer timeout for this specific request
+    req.setTimeout(300000); // 5 minutes
+    res.setTimeout(300000); // 5 minutes
+
+    const testTask = {
+      shop: 'test-shop.com',
+      template: 'test',
+      url: url,
+      page_count: 1
+    };
+
+    console.log(`Testing PSI analysis for: ${url} (5 min timeout)`);
+    
+    // Create a timeout promise
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('Analysis timed out after 5 minutes')), 300000);
+    });
+    
+    // Race between analysis and timeout
+    const analysisResult = await Promise.race([
+      analyzePageWithPSI(testTask),
+      timeoutPromise
+    ]);
+    
+    res.json({
+      ok: true,
+      url: analysisResult.url,
+      analysis: {
+        total_js_files: analysisResult.jsAnalysis.totalFiles,
+        total_waste_kb: analysisResult.jsAnalysis.totalWasteKB,
+        categories: Object.keys(analysisResult.jsAnalysis.categories).reduce((acc, cat) => {
+          acc[cat] = analysisResult.jsAnalysis.categories[cat].length;
+          return acc;
+        }, {}),
+        defer_recommendations: analysisResult.deferRecommendations.length,
+        top_recommendations: analysisResult.deferRecommendations.slice(0, 3),
+        sample_js_files: analysisResult.jsAnalysis.allFiles.slice(0, 5).map(f => ({
+          url: f.url,
+          category: f.category,
+          size: f.transferSize || 0
+        }))
+      },
+      processing_time: "Analysis completed within 5 minutes"
+    });
+
+  } catch (error) {
+    console.error('PSI test analysis failed:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "PSI analysis failed",
+      details: error.message,
+      timeout_info: "Request has 5 minute timeout limit"
+    });
+  }
 });
