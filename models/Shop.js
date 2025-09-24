@@ -66,9 +66,9 @@ const deferConfigSchema = new mongoose.Schema({
 
 // Updated Shop Schema integrating with your existing structure
 const ShopSchema = new mongoose.Schema({
-  shop: { 
-    type: String, 
-    unique: true,
+  shop: {
+    type: String,
+    unique: true,   // ensures uniqueness and creates the index
     required: true
   },
   access_token: String,
@@ -125,7 +125,7 @@ const ShopSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Indexes for better performance
+// Only add extra indexes where needed
 ShopSchema.index({ 'usage.last_request': 1 });
 
 // Methods
