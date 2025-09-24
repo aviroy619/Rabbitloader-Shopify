@@ -96,7 +96,31 @@ const ShopSchema = new mongoose.Schema({
   
   // Defer configuration (NEW)
   deferConfig: deferConfigSchema,
-  
+  // Site structure and PSI analysis (ADD THIS NEW SECTION HERE)
+site_structure: {
+  last_analyzed: { type: Date },
+  active_theme: String,
+  template_groups: {
+    type: Map,
+    of: {
+      count: Number,
+      pages: [{
+        id: String,
+        url: String,
+        title: String,
+        handle: String
+      }],
+      sample_page: String, // URL of page to analyze with PSI
+      psi_analyzed: { type: Boolean, default: false },
+      js_files: [String], // All JS files found
+      defer_recommendations: [String], // Auto-recommended files to defer
+      user_defer_config: [String], // User's custom defer choices
+      last_psi_analysis: Date
+    }
+  }
+},
+
+
   // Usage tracking for API limits
   usage: {
     requests_this_month: {
