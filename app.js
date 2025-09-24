@@ -232,6 +232,45 @@ app.post("/api/analyze-performance", async (req, res) => {
     });
   }
 });
+// API Route for shop status check
+app.get("/api/status", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Shop parameter required in x-shop header or query" 
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData) {
+      return res.json({
+        ok: true,
+        connected: false,
+        shop: shop
+      });
+    }
+
+    res.json({
+      ok: true,
+      connected: !!shopData.short_id,
+      did: shopData.short_id,
+      script_injected: shopData.script_injected || false,
+      shop: shop,
+      connected_at: shopData.connected_at
+    });
+
+  } catch (error) {
+    console.error('Error checking shop status:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "Internal server error" 
+    });
+  }
+});
 
 // Defer configuration routes - these need shop parameter validation but not OAuth
 app.use("/defer-config", deferConfigRoutes);
