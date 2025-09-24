@@ -211,7 +211,7 @@ function getCategoryGuidance(category) {
       notes: 'Most third-party scripts are safe to defer'
     }
   };
-  
+  //Test
   return guidance[category] || {
     defaultAction: 'review',
     confidence: 5,
