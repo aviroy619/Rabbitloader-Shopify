@@ -536,6 +536,217 @@ app.get("/api/pages", async (req, res) => {
   }
 });
 
+// Complete site analysis - all pages and templates
+app.get("/api/site-analysis", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Shop parameter required" 
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData || !shopData.access_token) {
+      return res.status(401).json({
+        ok: false,
+        error: "Shop not authenticated"
+      });
+    }
+
+    const headers = {
+      'X-Shopify-Access-Token': shopData.access_token
+    };
+
+    // Parallel API calls for all content types
+    const [
+      pagesResponse,
+      productsResponse, 
+      collectionsResponse,
+      blogsResponse,
+      themesResponse
+    ] = await Promise.all([
+      axios.get(`https://${shop}/admin/api/2025-01/pages.json`, { headers }),
+      axios.get(`https://${shop}/admin/api/2025-01/products.json?limit=250`, { headers }),
+      axios.get(`https://${shop}/admin/api/2025-01/collections.json`, { headers }),
+      axios.get(`https://${shop}/admin/api/2025-01/blogs.json`, { headers }),
+      axios.get(`https://${shop}/admin/api/2025-01/themes.json`, { headers })
+    ]);
+
+    // Find active theme
+    const activeTheme = themesResponse.data.themes.find(theme => theme.role === 'main');
+    
+    // Get blog articles for all blogs
+    const blogArticles = [];
+    for (const blog of blogsResponse.data.blogs) {
+      try {
+        const articlesResponse = await axios.get(
+          `https://${shop}/admin/api/2025-01/blogs/${blog.id}/articles.json?limit=250`, 
+          { headers }
+        );
+        blogArticles.push(...articlesResponse.data.articles.map(article => ({
+          ...article,
+          blog_handle: blog.handle,
+          blog_title: blog.title
+        })));
+      } catch (error) {
+        console.log(`Could not fetch articles for blog ${blog.id}`);
+      }
+    }
+
+    // Categorize all pages by template/type
+    const allPages = [];
+    const templateCategories = {};
+
+    // 1. Content Pages (Admin created)
+    pagesResponse.data.pages.forEach(page => {
+      const template = page.template_suffix || 'page';
+      const pageData = {
+        id: `page_${page.id}`,
+        title: page.title,
+        handle: page.handle,
+        url: `/${page.handle}`,
+        type: 'content_page',
+        template: template,
+        published_at: page.published_at,
+        updated_at: page.updated_at
+      };
+      
+      allPages.push(pageData);
+      addToCategory(templateCategories, template, pageData);
+    });
+
+    // 2. Product Pages
+    productsResponse.data.products.forEach(product => {
+      const template = product.template_suffix || 'product';
+      const pageData = {
+        id: `product_${product.id}`,
+        title: product.title,
+        handle: product.handle,
+        url: `/products/${product.handle}`,
+        type: 'product_page',
+        template: template,
+        published_at: product.published_at,
+        updated_at: product.updated_at,
+        status: product.status
+      };
+      
+      allPages.push(pageData);
+      addToCategory(templateCategories, template, pageData);
+    });
+
+    // 3. Collection Pages
+    collectionsResponse.data.collections.forEach(collection => {
+      if (collection.handle === 'frontpage') return; // Skip frontpage collection
+      
+      const template = collection.template_suffix || 'collection';
+      const pageData = {
+        id: `collection_${collection.id}`,
+        title: collection.title,
+        handle: collection.handle,
+        url: `/collections/${collection.handle}`,
+        type: 'collection_page',
+        template: template,
+        published_at: collection.published_at,
+        updated_at: collection.updated_at
+      };
+      
+      allPages.push(pageData);
+      addToCategory(templateCategories, template, pageData);
+    });
+
+    // 4. Blog Article Pages
+    blogArticles.forEach(article => {
+      const template = article.template_suffix || 'article';
+      const pageData = {
+        id: `article_${article.id}`,
+        title: article.title,
+        handle: article.handle,
+        url: `/blogs/${article.blog_handle}/${article.handle}`,
+        type: 'blog_article',
+        template: template,
+        published_at: article.published_at,
+        updated_at: article.updated_at,
+        blog: article.blog_title,
+        status: article.status
+      };
+      
+      allPages.push(pageData);
+      addToCategory(templateCategories, template, pageData);
+    });
+
+    // 5. System/Theme Pages (common Shopify pages)
+    const systemPages = [
+      { handle: 'index', template: 'index', title: 'Home Page', type: 'system_page' },
+      { handle: 'cart', template: 'cart', title: 'Shopping Cart', type: 'system_page' },
+      { handle: 'search', template: 'search', title: 'Search Results', type: 'system_page' },
+      { handle: '404', template: '404', title: 'Page Not Found', type: 'system_page' }
+    ];
+
+    systemPages.forEach(page => {
+      const pageData = {
+        id: `system_${page.handle}`,
+        title: page.title,
+        handle: page.handle,
+        url: page.handle === 'index' ? '/' : `/${page.handle}`,
+        type: page.type,
+        template: page.template
+      };
+      
+      allPages.push(pageData);
+      addToCategory(templateCategories, page.template, pageData);
+    });
+
+    // Generate statistics
+    const stats = {
+      total_pages: allPages.length,
+      by_type: {},
+      by_template: {},
+      template_count: Object.keys(templateCategories).length
+    };
+
+    // Count by page type
+    allPages.forEach(page => {
+      stats.by_type[page.type] = (stats.by_type[page.type] || 0) + 1;
+    });
+
+    // Count by template
+    Object.keys(templateCategories).forEach(template => {
+      stats.by_template[template] = templateCategories[template].length;
+    });
+
+    res.json({
+      ok: true,
+      shop: shop,
+      active_theme: activeTheme ? activeTheme.name : 'Unknown',
+      statistics: stats,
+      templates: {
+        categories: templateCategories,
+        summary: stats.by_template
+      },
+      all_pages: allPages
+    });
+
+  } catch (error) {
+    console.error('Error analyzing complete site:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.response?.data?.errors || "Failed to analyze site" 
+    });
+  }
+});
+
+// Helper function to add pages to template categories
+function addToCategory(categories, template, pageData) {
+  if (!categories[template]) {
+    categories[template] = [];
+  }
+  categories[template].push(pageData);
+}
+
 // Defer config API route
 app.get("/defer-config/api", async (req, res) => {
   try {
