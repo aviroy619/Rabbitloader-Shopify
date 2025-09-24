@@ -126,7 +126,6 @@ const ShopSchema = new mongoose.Schema({
 });
 
 // Indexes for better performance
-ShopSchema.index({ shop: 1 });
 ShopSchema.index({ 'usage.last_request': 1 });
 
 // Methods
