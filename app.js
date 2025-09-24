@@ -1486,6 +1486,60 @@ app.get('/debug/headers', (req, res) => {
     embedded: req.query.embedded === '1'
   });
 });
+// ====== Test PSI Analysis Route ======
+app.post("/api/test-psi", async (req, res) => {
+  try {
+    const { url } = req.body;
+    
+    if (!url) {
+      return res.status(400).json({
+        ok: false,
+        error: "URL parameter required"
+      });
+    }
+    
+    if (!process.env.PAGESPEED_API_KEY) {
+      return res.status(500).json({
+        ok: false,
+        error: "PageSpeed Insights API key not configured"
+      });
+    }
+
+    const testTask = {
+      shop: 'test-shop.com',
+      template: 'test',
+      url: url,
+      page_count: 1
+    };
+
+    console.log(`Testing PSI analysis for: ${url}`);
+    
+    const analysisResult = await analyzePageWithPSI(testTask);
+    
+    res.json({
+      ok: true,
+      url: analysisResult.url,
+      analysis: {
+        total_js_files: analysisResult.jsAnalysis.totalFiles,
+        total_waste_kb: analysisResult.jsAnalysis.totalWasteKB,
+        categories: Object.keys(analysisResult.jsAnalysis.categories).reduce((acc, cat) => {
+          acc[cat] = analysisResult.jsAnalysis.categories[cat].length;
+          return acc;
+        }, {}),
+        defer_recommendations: analysisResult.deferRecommendations.length,
+        top_recommendations: analysisResult.deferRecommendations.slice(0, 3)
+      }
+    });
+
+  } catch (error) {
+    console.error('PSI test analysis failed:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "PSI analysis failed",
+      details: error.message 
+    });
+  }
+});
 
 // ====== Error Handling ======
 app.use((err, req, res, next) => {
