@@ -1,4 +1,4 @@
-// routes/deferConfig.js - Fixed with single working loader
+// routes/deferConfig.js - Template-aware defer configuration
 const express = require("express");
 const router = express.Router();
 const ShopModel = require("../models/Shop");
@@ -232,7 +232,7 @@ router.get("/all", async (req, res) => {
   }
 });
 
-// WORKING LOADER SCRIPT - Generates actual defer functionality
+// TEMPLATE-AWARE LOADER SCRIPT - Generates actual defer functionality
 router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
   try {
     const { shop, shopRecord } = req;
@@ -242,7 +242,6 @@ router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
       'Content-Type': 'application/javascript',
       'Cache-Control': 'public, max-age=3600',
       'Access-Control-Allow-Origin': `https://${shop}`
-      // Compression handled by Express middleware
     });
 
     // Get defer config
@@ -250,7 +249,7 @@ router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
       ? shopRecord.deferConfig.toObject() 
       : DEFAULT_CONFIG;
 
-    // Compress config for smaller script size
+    // Compress config for smaller script size - INCLUDE CONDITIONS
     const compressedConfig = {
       t: deferConfig.release_after_ms, // time
       e: deferConfig.enabled,          // enabled
@@ -258,30 +257,34 @@ router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
         i: rule.id,
         r: rule.src_regex,
         a: rule.action,
-        e: rule.enabled !== false
+        e: rule.enabled !== false,
+        c: rule.conditions || {} // conditions (page_types, device, etc)
       }))
     };
 
-    // Generate minified defer script with actual functionality
+    // Generate minified defer script with TEMPLATE-AWARE functionality
     const loaderScript = `(function(){
 if(!${compressedConfig.e})return;
-var q=[],c=${JSON.stringify(compressedConfig)},o,t;
+var q=[],c=${JSON.stringify(compressedConfig)},o,t,pt=null;
+function gpt(){if(pt)return pt;try{if(window.Shopify&&window.Shopify.theme){var m=document.body.className.match(/template-([\\w-]+)/);pt=m?m[1]:(window.location.pathname==='/'?'index':'page')}else{pt='page'}}catch(e){pt='page'}return pt}
 function m(s,r){try{return new RegExp(r.r,'i').test(s)}catch(e){return false}}
-function f(s){for(var i=0;i<c.r.length;i++)if(c.r[i].e&&m(s,c.r[i]))return c.r[i]}
+function cm(r){if(!r.c||!r.c.page_types||r.c.page_types.length===0)return true;var p=gpt();return r.c.page_types.indexOf(p)!==-1}
+function f(s){for(var i=0;i<c.r.length;i++){var rule=c.r[i];if(rule.e&&cm(rule)&&m(s,rule))return rule}return null}
 function h(s){var src=s.src;if(!src)return;var r=f(src);if(!r)return;
-console.log('[RL Defer] Processing:',src,'Action:',r.a);
+console.log('[RL Defer] Processing:',src,'Rule:',r.i,'Action:',r.a,'Template:',gpt());
 if(r.a==='defer'){q.push({s:src,e:s});s.type='text/deferred';s.removeAttribute('src')}
 else if(r.a==='block'){s.remove();console.log('[RL Defer] Blocked:',src)}}
-function rel(){console.log('[RL Defer] Releasing',q.length,'scripts');
+function rel(){console.log('[RL Defer] Releasing',q.length,'scripts for template:',gpt());
 q.forEach(function(item,i){setTimeout(function(){
 var ns=document.createElement('script');ns.src=item.s;ns.async=true;
 document.head.appendChild(ns);console.log('[RL Defer] Released:',item.s)},i*50)})}
-function init(){document.querySelectorAll('script').forEach(h);
+function init(){console.log('[RL Defer] Init - Template:',gpt(),'Rules:',c.r.length);
+document.querySelectorAll('script').forEach(h);
 o=new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes.forEach(function(n){
 if(n.tagName==='SCRIPT')h(n);else if(n.querySelectorAll)n.querySelectorAll('script').forEach(h)})})});
 o.observe(document.documentElement,{childList:true,subtree:true});
 t=setTimeout(function(){rel();o&&o.disconnect()},c.t);
-console.log('[RL Defer] Initialized with',c.r.length,'rules, release in',c.t+'ms')}
+console.log('[RL Defer] Initialized with',c.r.filter(function(r){return cm(r)}).length,'applicable rules, release in',c.t+'ms')}
 document.readyState==='loading'?document.addEventListener('DOMContentLoaded',init):init()})();`;
 
     res.send(loaderScript);

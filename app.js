@@ -738,7 +738,7 @@ async function processPSIQueue() {
   isProcessingPSI = false;
 }
 
-// Save analysis results to database
+// Save analysis results to database AND apply defer rules
 async function saveAnalysisResults(analysisResult) {
   const { shop, template, jsAnalysis, deferRecommendations, psiRawData, analysisSummary } = analysisResult;
   
@@ -787,6 +787,79 @@ async function saveAnalysisResults(analysisResult) {
     totalWasteKB: jsAnalysis.totalWasteKB,
     categories: Object.keys(jsAnalysis.categories).filter(cat => jsAnalysis.categories[cat].length > 0)
   });
+  
+  // NEW: Auto-apply defer rules to pages
+  await applyTemplateRulesToPages(shop, template, deferRecommendations);
+}
+
+// NEW FUNCTION: Apply template rules to pages
+async function applyTemplateRulesToPages(shop, template, deferRecommendations) {
+  try {
+    // Filter for high/medium priority recommendations only
+    const rules = deferRecommendations
+      .filter(rec => rec.priority === 'high' || rec.priority === 'medium')
+      .map((rec, idx) => {
+        // Escape regex special characters in the file URL
+        const escapedUrl = rec.file
+          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // FIXED: Correct escape pattern
+          .replace(/https?:\/\/[^\/]+/, '.*'); // Make domain flexible
+        
+        return {
+          id: `${template}-rule-${idx}`,
+          src_regex: escapedUrl,
+          action: 'defer',
+          priority: rec.priority === 'high' ? 8 : 5,
+          enabled: true,
+          conditions: {
+            page_types: [template]
+          },
+          generated_from: {
+            template: template,
+            original_file: rec.file,
+            reason: rec.reason,
+            confidence: rec.confidence
+          }
+        };
+      });
+    
+    if (rules.length === 0) {
+      console.log(`No rules to apply for template ${template}`);
+      return;
+    }
+
+    // Get existing defer config or create new one
+    const shopData = await ShopModel.findOne({ shop });
+    const existingRules = shopData?.deferConfig?.rules || [];
+    
+    // Remove old rules for this template to avoid duplicates
+    const filteredRules = existingRules.filter(rule => 
+      !rule.id?.startsWith(`${template}-rule-`)
+    );
+    
+    // Add new rules
+    const updatedRules = [...filteredRules, ...rules];
+    
+    // Update defer config in database
+    await ShopModel.findOneAndUpdate(
+      { shop },
+      {
+        $set: {
+          'deferConfig.rules': updatedRules,
+          'deferConfig.enabled': true,
+          'deferConfig.updated_at': new Date(),
+          'deferConfig.source': 'auto',
+          'deferConfig.release_after_ms': 2000
+        }
+      },
+      { upsert: true }
+    );
+    
+    console.log(`Applied ${rules.length} defer rules for template ${template} on shop ${shop}`);
+    
+  } catch (error) {
+    console.error(`Error applying template rules for ${template}:`, error);
+    throw error;
+  }
 }
 
 // Mark analysis as failed
@@ -885,7 +958,8 @@ app.post("/api/start-psi-analysis", async (req, res) => {
         'Comprehensive JavaScript extraction',
         'Shopify-specific categorization',
         'Waste percentage analysis',
-        'Intelligent defer recommendations'
+        'Intelligent defer recommendations',
+        'Auto-apply defer rules to pages'
       ]
     });
 
@@ -1209,9 +1283,9 @@ app.get("/api/generate-defer-rules", async (req, res) => {
       if (group.user_defer_config && group.user_defer_config.length > 0) {
         group.user_defer_config.forEach(config => {
           if (config.defer) {
-            // Generate regex pattern from file URL
+            // Generate regex pattern from file URL - FIXED
             const urlPattern = config.file
-              .replace(/[.*+?^${}()|[\]\\]/g, '\\    let totalTemplates = 0;') // Escape regex special chars
+              .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // FIXED: Correct escape pattern
               .replace(/https?:\/\/[^\/]+/, '.*'); // Make domain flexible
             
             generatedRules.push({
@@ -1246,6 +1320,91 @@ app.get("/api/generate-defer-rules", async (req, res) => {
     res.status(500).json({ 
       ok: false, 
       error: "Internal server error" 
+    });
+  }
+});
+// ====== Critical CSS Integration ======
+
+// API Route: Trigger Critical CSS generation for all templates
+app.post("/api/trigger-css-generation", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.body.shop;
+    
+    if (!shop) {
+      return res.status(400).json({
+        ok: false,
+        error: "Shop parameter required"
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    if (!shopData?.site_structure?.template_groups) {
+      return res.status(400).json({
+        ok: false,
+        error: "Run site analysis first"
+      });
+    }
+
+    // Call Critical CSS microservice
+    const criticalCssServiceUrl = process.env.CRITICAL_CSS_SERVICE_URL || 'http://localhost:3010';
+    
+    console.log(`Triggering Critical CSS generation for ${shop}`);
+    
+    const response = await axios.post(
+      `${criticalCssServiceUrl}/api/shopify/generate-all-css`,
+      { shop },
+      {
+        timeout: 300000 // 5 minute timeout
+      }
+    );
+
+    if (!response.data.ok) {
+      throw new Error(response.data.error || 'CSS generation failed');
+    }
+
+    console.log(`Critical CSS generation completed for ${shop}:`, response.data.summary);
+
+    res.json({
+      ok: true,
+      message: 'Critical CSS generation completed',
+      results: response.data.results,
+      summary: response.data.summary
+    });
+
+  } catch (error) {
+    console.error('Error triggering CSS generation:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message || "Failed to trigger CSS generation"
+    });
+  }
+});
+
+// API Route: Get Critical CSS status for templates
+app.get("/api/css-status", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({
+        ok: false,
+        error: "Shop parameter required"
+      });
+    }
+
+    const criticalCssServiceUrl = process.env.CRITICAL_CSS_SERVICE_URL || 'http://localhost:3010';
+    
+    const response = await axios.get(
+      `${criticalCssServiceUrl}/api/shopify/${shop}/templates`
+    );
+
+    res.json(response.data);
+
+  } catch (error) {
+    console.error('Error fetching CSS status:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message || "Failed to fetch CSS status"
     });
   }
 });
@@ -1383,9 +1542,9 @@ app.use((req, res, next) => {
     '/shopify/auth', 
     '/shopify/auth/callback', 
     '/',
-    '/api/env',  // NEW: Allow API env route
-    '/rl/rl-callback',  // RabbitLoader callback route
-    '/health'   // Health check
+    '/api/env',
+    '/rl/rl-callback',
+    '/health'
   ];
   
   const isStaticFile = req.path.startsWith('/assets/') || 
@@ -1396,26 +1555,16 @@ app.use((req, res, next) => {
                       req.path.endsWith('.ico') ||
                       req.path.endsWith('.html');
   
-  // Skip auth for defer-config routes (they have their own validation)
   const isDeferConfigRoute = req.path.startsWith('/defer-config');
-  
-  // Skip auth for webhooks
   const isWebhook = req.path.startsWith('/webhooks/');
-  
-  // Skip auth for debug routes
   const isDebugRoute = req.path.startsWith('/debug/');
-  
-  // Skip auth for RL routes
   const isRlRoute = req.path.startsWith('/rl/');
-  
-  // Skip auth for API routes
   const isApiRoute = req.path.startsWith('/api/');
   
   if (publicRoutes.includes(req.path) || isStaticFile || isDeferConfigRoute || isWebhook || isDebugRoute || isRlRoute || isApiRoute) {
     return next();
   }
   
-  // For shopify routes, ensure shop parameter exists
   const shop = (req.query && req.query.shop) || (req.body && req.body.shop);
   if (!shop && req.path.startsWith('/shopify/')) {
     console.log(`Blocking shopify route ${req.path} - missing shop parameter`);
@@ -1471,7 +1620,7 @@ app.get('/health', (req, res) => {
     timestamp: new Date().toISOString(),
     app: 'rl-shopify',
     version: '2.0.0',
-    features: ['defer-script-only', 'auto-injection', 'static-html', 'enhanced-psi-analysis'],
+    features: ['defer-script-only', 'auto-injection', 'static-html', 'enhanced-psi-analysis', 'auto-apply-defer-rules'],
     environment: process.env.NODE_ENV || 'development'
   });
 });
@@ -1486,6 +1635,7 @@ app.get('/debug/headers', (req, res) => {
     embedded: req.query.embedded === '1'
   });
 });
+
 // ====== Test PSI Analysis Route ======
 app.post("/api/test-psi", async (req, res) => {
   try {
@@ -1505,7 +1655,6 @@ app.post("/api/test-psi", async (req, res) => {
       });
     }
 
-    // Set 5-minute timeout
     req.setTimeout(300000);
     res.setTimeout(300000);
 
@@ -1572,7 +1721,6 @@ app.use((req, res) => {
     userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none'
   });
   
-  // For embedded requests, return proper HTML with shop context
   if (req.query.embedded === '1') {
     const shop = req.query.shop;
     res.status(404).send(`
@@ -1630,12 +1778,12 @@ app.use((req, res) => {
     });
   }
 });
-// ====== Start Server =====
+
 // ====== Start Server ======
 app.listen(PORT, () => {
   console.log(`RL-Shopify app running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
   console.log(`App URL: ${process.env.APP_URL}`);
   console.log(`Shopify API Key: ${process.env.SHOPIFY_API_KEY ? 'Set' : 'Missing'}`);
-  console.log(`Features: Static HTML, Defer script only, Auto-injection enabled, Enhanced PSI Analysis`);
+  console.log(`Features: Static HTML, Defer script only, Auto-injection enabled, Enhanced PSI Analysis, Auto-apply defer rules`);
 });
