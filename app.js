@@ -1444,16 +1444,37 @@ app.post("/api/trigger-css-generation", async (req, res) => {
   // Fetch and inline CSS immediately (blocking)
   var xhr = new XMLHttpRequest();
   xhr.open('GET', cssUrl, false); // Synchronous request
+  xhr.setRequestHeader('Accept', 'text/css');
+  
   try {
-    xhr.send();
-    if (xhr.status === 200) {
+    xhr.send(null);
+    if (xhr.status === 200 && xhr.responseText) {
+      // SUCCESS: Inline the CSS immediately
       var style = document.createElement('style');
+      style.id = 'rl-critical-css';
+      style.setAttribute('data-template', template);
       style.innerHTML = xhr.responseText;
-      document.head.insertBefore(style, document.head.firstChild);
-      console.log('Critical CSS inlined:', template);
+      
+      // Insert as FIRST child of <head>
+      var head = document.head || document.getElementsByTagName('head')[0];
+      if (head.firstChild) {
+        head.insertBefore(style, head.firstChild);
+      } else {
+        head.appendChild(style);
+      }
+      
+      console.log('[RL Critical CSS] Inlined:', template, xhr.responseText.length, 'bytes');
+    } else {
+      throw new Error('HTTP ' + xhr.status);
     }
   } catch(e) {
-    console.warn('Critical CSS fetch failed:', template);
+    // FALLBACK: Load async if sync fails
+    console.warn('[RL Critical CSS] Inline failed, loading async:', e.message);
+    var link = document.createElement('link');
+    link.rel = 'stylesheet';
+    link.href = cssUrl;
+    link.onload = function() { console.log('[RL Critical CSS] Loaded async:', template); };
+    document.head.insertBefore(link, document.head.firstChild);
   }
 })();
 </script>

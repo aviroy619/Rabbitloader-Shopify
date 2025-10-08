@@ -276,7 +276,7 @@ if(r.a==='defer'){q.push({s:src,e:s});s.type='text/deferred';s.removeAttribute('
 else if(r.a==='block'){s.remove();console.log('[RL Defer] Blocked:',src)}}
 function rel(){console.log('[RL Defer] Releasing',q.length,'scripts for template:',gpt());
 q.forEach(function(item,i){setTimeout(function(){
-var ns=document.createElement('script');ns.src=item.s;ns.async=true;
+var ns=document.createElement('script');ns.src=item.s;ns.async=true;if(item.s.includes('portable-wallets')||item.s.includes('.mjs'))ns.type='module';
 document.head.appendChild(ns);console.log('[RL Defer] Released:',item.s)},i*50)})}
 function init(){console.log('[RL Defer] Init - Template:',gpt(),'Rules:',c.r.length);
 document.querySelectorAll('script').forEach(h);
