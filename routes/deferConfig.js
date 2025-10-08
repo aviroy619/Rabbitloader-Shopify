@@ -262,11 +262,11 @@ router.get("/loader.js", validateShopAndUpdateUsage, async (req, res) => {
       }))
     };
 
-    // Generate minified defer script with TEMPLATE-AWARE functionality
+// Generate minified defer script with FIXED TEMPLATE DETECTION
     const loaderScript = `(function(){
 if(!${compressedConfig.e})return;
 var q=[],c=${JSON.stringify(compressedConfig)},o,t,pt=null;
-function gpt(){if(pt)return pt;try{if(window.Shopify&&window.Shopify.theme){var m=document.body.className.match(/template-([\\w-]+)/);pt=m?m[1]:(window.location.pathname==='/'?'index':'page')}else{pt='page'}}catch(e){pt='page'}return pt}
+function gpt(){if(pt)return pt;try{var p=window.location.pathname;if(p==='/'||p==='/index')pt='index';else if(p.startsWith('/products/'))pt='product';else if(p.startsWith('/collections/'))pt='collection';else if(p.startsWith('/pages/'))pt=p==='/pages/contact'?'contact':'page';else if(p.startsWith('/blogs/')||p.match(/\\/\\d{4}\\/\\d{2}\\//))pt='article';else if(p.startsWith('/cart'))pt='cart';else pt='page';console.log('[RL Defer] Detected:',pt,'from:',p)}catch(e){console.error('[RL Defer] Error:',e);pt='page'}return pt}
 function m(s,r){try{return new RegExp(r.r,'i').test(s)}catch(e){return false}}
 function cm(r){if(!r.c||!r.c.page_types||r.c.page_types.length===0)return true;var p=gpt();return r.c.page_types.indexOf(p)!==-1}
 function f(s){for(var i=0;i<c.r.length;i++){var rule=c.r[i];if(rule.e&&cm(rule)&&m(s,rule))return rule}return null}
