@@ -1325,61 +1325,6 @@ app.get("/api/generate-defer-rules", async (req, res) => {
 });
 // ====== Critical CSS Integration ======
 
-// API Route: Trigger Critical CSS generation for all templates
-app.post("/api/trigger-css-generation", async (req, res) => {
-  try {
-    const shop = req.headers['x-shop'] || req.body.shop;
-    
-    if (!shop) {
-      return res.status(400).json({
-        ok: false,
-        error: "Shop parameter required"
-      });
-    }
-
-    const shopData = await ShopModel.findOne({ shop });
-    if (!shopData?.site_structure?.template_groups) {
-      return res.status(400).json({
-        ok: false,
-        error: "Run site analysis first"
-      });
-    }
-
-    // Call Critical CSS microservice
-    const criticalCssServiceUrl = process.env.CRITICAL_CSS_SERVICE_URL || 'http://localhost:3010';
-    
-    console.log(`Triggering Critical CSS generation for ${shop}`);
-    
-    const response = await axios.post(
-      `${criticalCssServiceUrl}/api/shopify/generate-all-css`,
-      { shop },
-      {
-        timeout: 300000 // 5 minute timeout
-      }
-    );
-
-    if (!response.data.ok) {
-      throw new Error(response.data.error || 'CSS generation failed');
-    }
-
-    console.log(`Critical CSS generation completed for ${shop}:`, response.data.summary);
-
-    res.json({
-      ok: true,
-      message: 'Critical CSS generation completed',
-      results: response.data.results,
-      summary: response.data.summary
-    });
-
-  } catch (error) {
-    console.error('Error triggering CSS generation:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message || "Failed to trigger CSS generation"
-    });
-  }
-});
-
 // API Route: Get Critical CSS status for templates
 app.get("/api/css-status", async (req, res) => {
   try {
