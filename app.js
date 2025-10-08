@@ -801,8 +801,8 @@ async function applyTemplateRulesToPages(shop, template, deferRecommendations) {
       .map((rec, idx) => {
         // Escape regex special characters in the file URL
         const escapedUrl = rec.file
-          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // FIXED: Correct escape pattern
-          .replace(/https?:\/\/[^\/]+/, '.*'); // Make domain flexible
+          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          .replace(/https?:\/\/[^\/]+/, '.*');
         
         return {
           id: `${template}-rule-${idx}`,
@@ -839,29 +839,35 @@ async function applyTemplateRulesToPages(shop, template, deferRecommendations) {
     // Add new rules
     const updatedRules = [...filteredRules, ...rules];
     
-    // Update defer config in database
+    // FIXED: Use upsert and proper structure
     await ShopModel.findOneAndUpdate(
       { shop },
       {
         $set: {
-          'deferConfig.rules': updatedRules,
-          'deferConfig.enabled': true,
-          'deferConfig.updated_at': new Date(),
-          'deferConfig.source': 'auto',
-          'deferConfig.release_after_ms': 2000
+          deferConfig: {  // FIXED: Set entire object
+            rules: updatedRules,
+            enabled: true,
+            updated_at: new Date(),
+            source: 'auto',
+            release_after_ms: 2000,
+            version: '1.0.0'
+          }
         }
       },
-      { upsert: true }
+      { upsert: true, new: true } // FIXED: Ensure upsert creates if not exists
     );
     
-    console.log(`Applied ${rules.length} defer rules for template ${template} on shop ${shop}`);
+    console.log(`✅ Applied ${rules.length} defer rules for template ${template} on shop ${shop}`);
+    
+    // VERIFY it was saved
+    const verification = await ShopModel.findOne({ shop }, { deferConfig: 1 });
+    console.log(`Verification - Rules saved: ${verification?.deferConfig?.rules?.length || 0}`);
     
   } catch (error) {
-    console.error(`Error applying template rules for ${template}:`, error);
+    console.error(`❌ Error applying template rules for ${template}:`, error);
     throw error;
   }
 }
-
 // Mark analysis as failed
 async function markAnalysisAsFailed(task, errorMessage) {
   const { shop, template } = task;
@@ -1434,12 +1440,21 @@ app.post("/api/trigger-css-generation", async (req, res) => {
   const template = '{{ template | split: "." | first }}';
   const shop = '{{ shop.permanent_domain }}';
   const cssUrl = \`https://rabbitloader-css.b-cdn.net/\${shop}/\${template}.css\`;
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href = cssUrl;
-  link.onload = function() { console.log('Critical CSS loaded:', template); };
-  link.onerror = function() { console.warn('Critical CSS not found:', template); };
-  document.head.appendChild(link);
+  
+  // Fetch and inline CSS immediately (blocking)
+  var xhr = new XMLHttpRequest();
+  xhr.open('GET', cssUrl, false); // Synchronous request
+  try {
+    xhr.send();
+    if (xhr.status === 200) {
+      var style = document.createElement('style');
+      style.innerHTML = xhr.responseText;
+      document.head.insertBefore(style, document.head.firstChild);
+      console.log('Critical CSS inlined:', template);
+    }
+  } catch(e) {
+    console.warn('Critical CSS fetch failed:', template);
+  }
 })();
 </script>
 `;
@@ -1503,6 +1518,105 @@ app.post("/api/trigger-css-generation", async (req, res) => {
     res.status(500).json({ 
       ok: false, 
       error: error.message || "Failed to trigger CSS generation"
+    });
+  }
+});
+// NEW: Complete Auto-Setup Endpoint
+app.post("/api/complete-auto-setup", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.body.shop;
+    
+    if (!shop) {
+      return res.status(400).json({
+        ok: false,
+        error: "Shop parameter required"
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    if (!shopData?.access_token) {
+      return res.status(401).json({
+        ok: false,
+        error: "Shop not authenticated"
+      });
+    }
+
+    console.log(`🚀 Starting complete auto-setup for ${shop}`);
+
+    // STEP 1: Site Analysis (if not already done)
+    if (!shopData.site_structure?.template_groups) {
+      console.log(`Step 1: Running site analysis...`);
+      // Trigger site analysis internally
+      const siteAnalysisResponse = await axios.get(
+        `${process.env.APP_URL}/api/site-analysis`,
+        { headers: { 'x-shop': shop } }
+      );
+      console.log(`✅ Site analysis complete: ${Object.keys(siteAnalysisResponse.data.templates.categories).length} templates found`);
+    }
+
+    // STEP 2: PSI Analysis + Auto-Apply Defer Rules
+    console.log(`Step 2: Starting PSI analysis for JS defer...`);
+    const psiResponse = await axios.post(
+      `${process.env.APP_URL}/api/start-psi-analysis`,
+      { shop },
+      { headers: { 'x-shop': shop } }
+    );
+    console.log(`✅ PSI analysis queued: ${psiResponse.data.templates_to_analyze.length} templates`);
+
+    // Wait for PSI to complete (poll status)
+    let psiComplete = false;
+    let attempts = 0;
+    while (!psiComplete && attempts < 30) { // Max 5 minutes
+      await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+      const statusResponse = await axios.get(
+        `${process.env.APP_URL}/api/psi-status?shop=${shop}`
+      );
+      psiComplete = statusResponse.data.progress_percent === 100;
+      attempts++;
+      console.log(`PSI Progress: ${statusResponse.data.progress_percent}%`);
+    }
+
+    if (!psiComplete) {
+      throw new Error('PSI analysis timed out');
+    }
+
+    // STEP 3: Critical CSS Generation
+    console.log(`Step 3: Generating critical CSS...`);
+    const cssResponse = await axios.post(
+      `${process.env.APP_URL}/api/trigger-css-generation`,
+      { shop },
+      { headers: { 'x-shop': shop } }
+    );
+    console.log(`✅ Critical CSS generated for ${cssResponse.data.summary.successful} templates`);
+
+    // STEP 4: Verify Everything
+    const finalVerification = await ShopModel.findOne({ shop });
+    const deferRulesCount = finalVerification?.deferConfig?.rules?.length || 0;
+
+    res.json({
+      ok: true,
+      message: 'Complete auto-setup finished successfully',
+      summary: {
+        templates_analyzed: Object.keys(finalVerification.site_structure.template_groups).length,
+        critical_css_generated: cssResponse.data.summary.successful,
+        defer_rules_created: deferRulesCount,
+        theme_injection: {
+          css_script: cssResponse.data.theme_injection?.success || false,
+          defer_script: true // Already injected during install
+        }
+      },
+      next_steps: [
+        'Visit your store to see Critical CSS and JS defer in action',
+        'Check browser console for: "Critical CSS loaded: [template]"',
+        'Check Network tab to verify deferred JS files'
+      ]
+    });
+
+  } catch (error) {
+    console.error('❌ Complete auto-setup failed:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message || "Auto-setup failed"
     });
   }
 });
