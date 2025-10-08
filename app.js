@@ -1324,7 +1324,7 @@ app.get("/api/generate-defer-rules", async (req, res) => {
   }
 });
 // ====== Critical CSS Integration ======
-
+//
 // API Route: Get Critical CSS status for templates
 app.get("/api/css-status", async (req, res) => {
   try {
