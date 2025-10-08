@@ -316,5 +316,87 @@ router.get("/config.json", validateShopAndUpdateUsage, async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+// Serve critical CSS for a shop
+router.get("/critical.css", async (req, res) => {
+  const shop = req.query.shop;
+  
+  if (!shop) {
+    res.setHeader('Content-Type', 'text/css');
+    return res.status(400).send('/* Error: Missing shop parameter */');
+  }
 
+  try {
+    // Verify shop exists
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    res.setHeader('Content-Type', 'text/css');
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    
+    // Check if Critical CSS service is configured
+    const criticalCssServiceUrl = process.env.CRITICAL_CSS_SERVICE_URL || 'http://localhost:3010';
+    
+    // Try to fetch from Critical CSS microservice
+    try {
+      const axios = require('axios');
+      
+      // Detect template from referrer
+      const referrer = req.headers.referer || req.headers.referrer || '';
+      let template = 'index';
+      
+      if (referrer) {
+        const url = new URL(referrer);
+        const path = url.pathname;
+        
+        if (path === '/' || path === '/index') template = 'index';
+        else if (path.startsWith('/products/')) template = 'product';
+        else if (path.startsWith('/collections/')) template = 'collection';
+        else if (path.startsWith('/pages/')) template = 'page';
+        else if (path.startsWith('/blogs/') || path.match(/\/\d{4}\/\d{2}\//)) template = 'article';
+        else if (path.startsWith('/cart')) template = 'cart';
+      }
+      
+      console.log(`Fetching critical CSS for ${shop}, template: ${template}`);
+      
+      const response = await axios.get(
+        `${criticalCssServiceUrl}/api/shopify/${shop}/${template}/css`,
+        { timeout: 5000 }
+      );
+      
+      if (response.data && response.status === 200) {
+        console.log(`Served generated critical CSS for ${shop}/${template}`);
+        return res.send(response.data);
+      }
+    } catch (fetchError) {
+      console.warn(`Failed to fetch from Critical CSS service: ${fetchError.message}`);
+    }
+    
+    // Fallback: return minimal critical CSS
+    const criticalCSS = `
+/* RabbitLoader Critical CSS for ${shop} */
+/* Generated at ${new Date().toISOString()} */
+/* Fallback CSS - Critical CSS service not available */
+
+/* Reset & Base Styles */
+* { box-sizing: border-box; }
+body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+
+/* Above-the-fold content */
+.shopify-section { display: block; }
+.header { display: block; }
+.main-content { display: block; }
+
+/* Basic responsive */
+img { max-width: 100%; height: auto; }
+    `.trim();
+    
+    console.log(`Served fallback critical CSS for ${shop}`);
+    res.send(criticalCSS);
+    
+  } catch (err) {
+    console.error("Critical CSS error:", err);
+    res.setHeader('Content-Type', 'text/css');
+    res.status(500).send('/* Error generating critical CSS */');
+  }
+});
 module.exports = router;
