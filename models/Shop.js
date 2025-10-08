@@ -1,67 +1,33 @@
-// models/Shop.js (Updated version integrating with your existing model)
+// models/Shop.js
 const mongoose = require("mongoose");
 
 // Schema for defer configuration rules
 const deferRuleSchema = new mongoose.Schema({
-  id: {
-    type: String,
-    required: true
-  },
-  src_regex: {
-    type: String,
-    required: true
-  },
-  action: {
-    type: String,
-    enum: ['defer', 'delay', 'block'],
-    default: 'defer'
-  },
-  priority: {
-    type: Number,
-    default: 0
-  },
+  id: { type: String, required: true },
+  src_regex: { type: String, required: true },
+  action: { type: String, enum: ['defer', 'delay', 'block'], default: 'defer' },
+  priority: { type: Number, default: 0 },
   conditions: {
-    device: {
-      type: [String],
-      enum: ['mobile', 'tablet', 'desktop']
-    },
-    page_types: {
-      type: [String]
-    }
+    device: { type: [String], enum: ['mobile', 'tablet', 'desktop'] },
+    page_types: { type: [String] }
   },
-  enabled: {
-    type: Boolean,
-    default: true
+  enabled: { type: Boolean, default: true },
+  generated_from: {
+    template: String,
+    original_file: String,
+    reason: String,
+    confidence: Number
   }
 }, { _id: false });
 
 // Schema for defer configuration
 const deferConfigSchema = new mongoose.Schema({
-  release_after_ms: {
-    type: Number,
-    default: 2000,
-    min: 0,
-    max: 30000
-  },
+  release_after_ms: { type: Number, default: 2000, min: 0, max: 30000 },
   rules: [deferRuleSchema],
-  enabled: {
-    type: Boolean,
-    default: true
-  },
-  version: {
-    type: String,
-    default: "1.0.0"
-  },
-  updated_at: {
-    type: Date,
-    default: Date.now
-  },
-  source: {
-    type: String,
-    enum: ['manual', 'lighthouse', 'auto'],
-    default: 'manual'
-  },
-  // Performance tracking
+  enabled: { type: Boolean, default: true },
+  version: { type: String, default: "1.0.0" },
+  updated_at: { type: Date, default: Date.now },
+  source: { type: String, enum: ['manual', 'lighthouse', 'auto'], default: 'manual' },
   performance_metrics: {
     avg_load_time_improvement: Number,
     script_defer_count: Number,
@@ -69,79 +35,93 @@ const deferConfigSchema = new mongoose.Schema({
   }
 }, { _id: false });
 
-// Updated Shop Schema integrating with your existing structure
+// Shop Schema
 const ShopSchema = new mongoose.Schema({
-  shop: {
-    type: String,
-    unique: true,   // ensures uniqueness and creates the index automatically
-    required: true
-  },
+  shop: { type: String, unique: true, required: true },
   access_token: String,
-  
-  // RabbitLoader integration (your existing fields)
-  short_id: String,    // RabbitLoader DID
-  api_token: String,   // RL API token
+  short_id: String,
+  api_token: String,
   connected_at: Date,
   history: Array,
-  
-  // Additional fields for enhanced functionality
-  script_injected: {
-    type: Boolean,
-    default: false
-  },
-  script_injection_attempted: {
-    type: Boolean,
-    default: false
-  },
-  
-  // Defer configuration
+  script_injected: { type: Boolean, default: false },
+  script_injection_attempted: { type: Boolean, default: false },
   deferConfig: deferConfigSchema,
 
-  // Site structure and PSI analysis
+  // Site structure with FIXED defer_recommendations
   site_structure: {
-    last_analyzed: { type: Date },
+    last_analyzed: Date,
     active_theme: String,
     template_groups: {
       type: Map,
       of: {
         count: Number,
-        pages: [{
-          id: String,
-          url: String,
-          title: String,
-          handle: String
-        }],
-        sample_page: String, // URL of page to analyze with PSI
+        pages: [{ id: String, url: String, title: String, handle: String }],
+        sample_page: String,
         psi_analyzed: { type: Boolean, default: false },
-        js_files: [String], // All JS files found
-        defer_recommendations: [String], // Auto-recommended files to defer
-        user_defer_config: [String], // User's custom defer choices
-        last_psi_analysis: Date
+        js_files: [String],
+        
+        // FIXED: Complex objects instead of strings
+        defer_recommendations: [{
+          file: String,
+          reason: String,
+          priority: String,
+          category: String,
+          action: String,
+          confidence: Number,
+          wastedBytes: Number,
+          wastedPercent: Number,
+          details: String,
+          wastedMs: Number,
+          duration: Number,
+          source: String
+        }],
+        
+        user_defer_config: [{
+          file: String,
+          defer: Boolean,
+          reason: String
+        }],
+        
+        last_psi_analysis: Date,
+        user_config_updated: Date,
+        
+        js_analysis: {
+          total_files: Number,
+          categories: mongoose.Schema.Types.Mixed,
+          category_details: mongoose.Schema.Types.Mixed,
+          render_blocking: [String],
+          unused_js: [mongoose.Schema.Types.Mixed],
+          total_waste_kb: Number
+        },
+        
+        analysis_summary: mongoose.Schema.Types.Mixed,
+        
+        psi_metrics: {
+          performance_score: Number,
+          lcp_time: Number,
+          fid_time: Number,
+          cls_score: Number,
+          created_at: Date,
+          url_analyzed: String
+        },
+        
+        psi_error: {
+          message: String,
+          timestamp: Date,
+          url_attempted: String
+        }
       }
     }
   },
 
-  // Usage tracking for API limits
   usage: {
-    requests_this_month: {
-      type: Number,
-      default: 0
-    },
+    requests_this_month: { type: Number, default: 0 },
     last_request: Date,
-    total_requests: {
-      type: Number,
-      default: 0
-    }
+    total_requests: { type: Number, default: 0 }
   },
   
-  // Plan information
-  plan: {
-    type: String,
-    enum: ['free', 'basic', 'premium'],
-    default: 'free'
-  },
+  plan: { type: String, enum: ['free', 'basic', 'premium'], default: 'free' },
   
-  // Shop metadata (can be populated from Shopify API)
   shopInfo: {
     name: String,
     domain: String,
@@ -151,13 +131,12 @@ const ShopSchema = new mongoose.Schema({
     plan_name: String
   }
 }, {
-  timestamps: true
+  timestamps: true,
+  strict: false
 });
 
-// Only add extra indexes where needed - NO shop index (unique: true already creates it)
 ShopSchema.index({ 'usage.last_request': 1 });
 
-// Methods
 ShopSchema.methods.updateUsage = function() {
   this.usage.total_requests += 1;
   this.usage.requests_this_month += 1;
@@ -170,10 +149,8 @@ ShopSchema.methods.resetMonthlyUsage = function() {
   return this.save();
 };
 
-// Static methods
 ShopSchema.statics.findByShop = function(shopDomain) {
   return this.findOne({ shop: shopDomain });
 };
 
-// Prevent OverwriteModelError (keeping your existing pattern)
-module.exports = mongoose.models.Shop || mongoose.model("Shop", ShopSchema);  
+module.exports = mongoose.models.Shop || mongoose.model("Shop", ShopSchema);
