@@ -5,9 +5,9 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 
-// Helper function to inject ONLY defer script into theme
-async function injectScriptIntoTheme(shop, did, accessToken) {
-  console.log(`Attempting theme injection for ${shop} with DID: ${did}`);
+// Helper function to inject Critical CSS into theme
+async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
+  console.log(`Attempting Critical CSS injection for ${shop} with DID: ${did}`);
 
   // Step 1: Get active theme
   const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
@@ -45,19 +45,19 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
   const assetData = await assetResponse.json();
   let themeContent = assetData.asset.value;
 
-  // Step 3: Check if defer script already exists
-  const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
+  // Step 3: Check if critical CSS already exists
+  const criticalCssUrl = `${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}`;
   
-  if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
-      themeContent.includes(deferLoaderUrl) ||
-      themeContent.includes('RabbitLoader Defer Configuration')) {
-    console.log(`RabbitLoader defer script already exists in theme for ${shop}`);
-    return { success: true, message: "Defer script already exists in theme", scriptType: "existing" };
+  if (themeContent.includes(`defer-config/critical.css?shop=${shop}`) || 
+      themeContent.includes(criticalCssUrl) ||
+      themeContent.includes('RabbitLoader Critical CSS')) {
+    console.log(`RabbitLoader Critical CSS already exists in theme for ${shop}`);
+    return { success: true, message: "Critical CSS already exists in theme", scriptType: "existing" };
   }
 
-  // Step 4: Inject defer loader script as THE FIRST SCRIPT
-  const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>`;
+  // Step 4: Inject Critical CSS as THE FIRST STYLESHEET
+  const cssTag = `  <!-- RabbitLoader Critical CSS -->
+  <link rel="stylesheet" href="${criticalCssUrl}" media="all">`;
   
   const headOpenTag = '<head>';
   
@@ -65,27 +65,21 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
     throw new Error("Could not find <head> tag in theme.liquid");
   }
 
-  // Strategy: Inject as the absolute first script in head
-  // Look for existing RabbitLoader scripts or any other scripts and inject BEFORE them
-  const existingRLScript = themeContent.match(/<script[^>]*src[^>]*(?:rabbitloader|cfw\.rabbitloader)[^>]*><\/script>/i);
-  const firstScript = themeContent.match(/<script[^>]*>/i);
+  // Strategy: Inject BEFORE the first stylesheet link
+  const firstCSS = themeContent.match(/<link[^>]*rel=["']stylesheet["'][^>]*>/i);
   
-  if (existingRLScript) {
-    // If RabbitLoader script exists, inject defer script BEFORE it
-    themeContent = themeContent.replace(existingRLScript[0], `${scriptTag}\n  ${existingRLScript[0]}`);
-    console.log(`Injected defer script BEFORE existing RabbitLoader script for ${shop}`);
-  } else if (firstScript) {
-    // If any script exists, inject defer script BEFORE the first one
-    themeContent = themeContent.replace(firstScript[0], `${scriptTag}\n  ${firstScript[0]}`);
-    console.log(`Injected defer script BEFORE first script tag for ${shop}`);
+  if (firstCSS) {
+    // Inject BEFORE first CSS link
+    themeContent = themeContent.replace(firstCSS[0], `${cssTag}\n  ${firstCSS[0]}`);
+    console.log(`Injected Critical CSS BEFORE first stylesheet for ${shop}`);
   } else {
-    // Fallback: inject immediately after <head> if no scripts found
-    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
-    console.log(`Injected defer script immediately after <head> tag for ${shop}`);
+    // Fallback: inject immediately after <head> if no stylesheets found
+    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${cssTag}`);
+    console.log(`Injected Critical CSS immediately after <head> tag for ${shop}`);
   }
 
-  console.log(`Injecting defer script with priority loading for ${shop}:`, {
-    deferLoader: deferLoaderUrl
+  console.log(`Injecting Critical CSS with priority loading for ${shop}:`, {
+    criticalCssUrl
   });
 
   // Step 5: Update the theme file
@@ -109,17 +103,16 @@ async function injectScriptIntoTheme(shop, did, accessToken) {
     throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
   }
 
-  console.log(`RabbitLoader defer script injected successfully for ${shop}`);
+  console.log(`RabbitLoader Critical CSS injected successfully for ${shop}`);
   
   return { 
     success: true, 
-    message: "Defer script injected successfully", 
-    deferLoaderUrl,
+    message: "Critical CSS injected successfully", 
+    criticalCssUrl,
     themeId: activeTheme.id,
     themeName: activeTheme.name
   };
 }
-
 // ====== SHOPIFY OAUTH FLOW ======
 
 // Start Shopify OAuth
@@ -442,7 +435,50 @@ router.post("/inject-script", async (req, res) => {
     });
   }
 });
+// Manual Critical CSS injection route
+router.post("/inject-critical-css", async (req, res) => {
+  const { shop } = req.body;
+  if (!shop) {
+    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
+  }
 
+  try {
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord || !shopRecord.short_id) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not connected to RabbitLoader" 
+      });
+    }
+
+    if (!shopRecord.access_token) {
+      throw new Error("No access token found for shop");
+    }
+
+    const result = await injectCriticalCSSIntoTheme(shop, shopRecord.short_id, shopRecord.access_token);
+    
+    // Update database to mark as injected
+    await ShopModel.updateOne(
+      { shop }, 
+      { 
+        $set: { 
+          critical_css_injected: true,
+          critical_css_injection_attempted: true 
+        } 
+      }
+    );
+    
+    res.json({ ok: true, ...result });
+
+  } catch (err) {
+    console.error("Manual Critical CSS injection error:", err);
+    res.status(500).json({ 
+      ok: false, 
+      error: err.message,
+      details: "Check server logs for more information" 
+    });
+  }
+});
 // Get RabbitLoader dashboard data - ROBUST API handling
 router.get("/dashboard-data", async (req, res) => {
   const { shop } = req.query;
@@ -828,3 +864,4 @@ router.get("/manual-instructions", async (req, res) => {
 });
 
 module.exports = router;
+module.exports.injectCriticalCSSIntoTheme = injectCriticalCSSIntoTheme;

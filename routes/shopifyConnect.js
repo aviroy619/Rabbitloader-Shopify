@@ -172,68 +172,125 @@ router.get("/rl-callback", async (req, res) => {
       hasApiToken: !!decoded.api_token
     });
 
-    // AUTO-INJECT DEFER SCRIPT AFTER SUCCESSFUL CONNECTION
-    let injectionResult = null;
-    if (updatedShop.access_token && !updatedShop.script_injected) {
-      try {
-        console.log(`Attempting automatic defer script injection for ${shop}`);
-        
-        injectionResult = await injectDeferScript(
-          shop, 
-          updatedShop.short_id, 
-          updatedShop.access_token
-        );
-        
-        if (injectionResult.success) {
-          // Update database to mark as injected
+    // AUTO-INJECT BOTH CRITICAL CSS AND DEFER SCRIPT AFTER SUCCESSFUL CONNECTION
+    let cssInjectionResult = null;
+    let jsInjectionResult = null;
+    
+    if (updatedShop.access_token) {
+      // First, inject Critical CSS if not already done
+      if (!updatedShop.critical_css_injected) {
+        try {
+          console.log(`Attempting automatic Critical CSS injection for ${shop}`);
+          
+          const { injectCriticalCSSIntoTheme } = require("./shopify");
+          cssInjectionResult = await injectCriticalCSSIntoTheme(
+            shop, 
+            updatedShop.short_id, 
+            updatedShop.access_token
+          );
+          
+          if (cssInjectionResult.success) {
+            await ShopModel.updateOne(
+              { shop }, 
+              { 
+                $set: { 
+                  critical_css_injected: true,
+                  critical_css_injection_attempted: true 
+                },
+                $push: {
+                  history: {
+                    event: "auto_critical_css_inject",
+                    timestamp: new Date(),
+                    details: { 
+                      success: true, 
+                      message: cssInjectionResult.message,
+                      already_exists: cssInjectionResult.already_exists || false
+                    }
+                  }
+                }
+              }
+            );
+            
+            console.log(`Critical CSS automatically injected for ${shop}`);
+          }
+        } catch (cssInjectionError) {
+          console.warn(`Automatic Critical CSS injection failed for ${shop}:`, cssInjectionError.message);
+          
           await ShopModel.updateOne(
             { shop }, 
             { 
-              $set: { 
-                script_injected: true,
-                script_injection_attempted: true 
-              },
+              $set: { critical_css_injection_attempted: true },
               $push: {
                 history: {
-                  event: "auto_script_inject",
+                  event: "auto_critical_css_inject",
                   timestamp: new Date(),
                   details: { 
-                    success: true, 
-                    message: injectionResult.message,
-                    already_exists: injectionResult.already_exists || false
+                    success: false, 
+                    error: cssInjectionError.message 
                   }
                 }
               }
             }
           );
-          
-          console.log(`Defer script automatically injected for ${shop}`);
         }
-      } catch (injectionError) {
-        console.warn(`Automatic script injection failed for ${shop}:`, injectionError.message);
-        
-        // Log the attempt but continue - user can inject manually
-        await ShopModel.updateOne(
-          { shop }, 
-          { 
-            $set: { script_injection_attempted: true },
-            $push: {
-              history: {
-                event: "auto_script_inject",
-                timestamp: new Date(),
-                details: { 
-                  success: false, 
-                  error: injectionError.message 
+      }
+      
+      // Then, inject Defer Script if not already done
+      if (!updatedShop.script_injected) {
+        try {
+          console.log(`Attempting automatic defer script injection for ${shop}`);
+          
+          jsInjectionResult = await injectDeferScript(
+            shop, 
+            updatedShop.short_id, 
+            updatedShop.access_token
+          );
+          
+          if (jsInjectionResult.success) {
+            await ShopModel.updateOne(
+              { shop }, 
+              { 
+                $set: { 
+                  script_injected: true,
+                  script_injection_attempted: true 
+                },
+                $push: {
+                  history: {
+                    event: "auto_script_inject",
+                    timestamp: new Date(),
+                    details: { 
+                      success: true, 
+                      message: jsInjectionResult.message,
+                      already_exists: jsInjectionResult.already_exists || false
+                    }
+                  }
+                }
+              }
+            );
+            
+            console.log(`Defer script automatically injected for ${shop}`);
+          }
+        } catch (jsInjectionError) {
+          console.warn(`Automatic script injection failed for ${shop}:`, jsInjectionError.message);
+          
+          await ShopModel.updateOne(
+            { shop }, 
+            { 
+              $set: { script_injection_attempted: true },
+              $push: {
+                history: {
+                  event: "auto_script_inject",
+                  timestamp: new Date(),
+                  details: { 
+                    success: false, 
+                    error: jsInjectionError.message 
+                  }
                 }
               }
             }
-          }
-        );
+          );
+        }
       }
-    } else if (updatedShop.script_injected) {
-      console.log(`Script already injected for ${shop}, skipping auto-injection`);
-    } else if (!updatedShop.access_token) {
-      console.log(`No Shopify access token for ${shop}, skipping auto-injection`);
     }
 
     // Redirect back to Shopify admin with success parameters
@@ -242,10 +299,12 @@ router.get("/rl-callback", async (req, res) => {
     
     // Add injection status to redirect URL
     let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1`;
-    if (injectionResult && injectionResult.success) {
+    if (cssInjectionResult && cssInjectionResult.success) {
+      redirectUrl += '&critical_css_injected=1';
+    }
+    if (jsInjectionResult && jsInjectionResult.success) {
       redirectUrl += '&script_injected=1';
     }
-    
     console.log("Redirecting back to Shopify admin:", redirectUrl);
     res.redirect(redirectUrl);
 
