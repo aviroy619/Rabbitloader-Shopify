@@ -1408,7 +1408,159 @@ app.get("/api/css-status", async (req, res) => {
     });
   }
 });
+// ====== Critical CSS Integration ======
 
+// API Route: Trigger Critical CSS generation for all templates
+app.post("/api/trigger-css-generation", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.body.shop;
+    
+    if (!shop) {
+      return res.status(400).json({
+        ok: false,
+        error: "Shop parameter required"
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    if (!shopData?.site_structure?.template_groups) {
+      return res.status(400).json({
+        ok: false,
+        error: "Run site analysis first"
+      });
+    }
+
+    // Call Critical CSS microservice
+    const criticalCssServiceUrl = process.env.CRITICAL_CSS_SERVICE_URL || 'http://localhost:3010';
+    
+    console.log(`Triggering Critical CSS generation for ${shop}`);
+    
+    const response = await axios.post(
+      `${criticalCssServiceUrl}/api/shopify/generate-all-css`,
+      { shop },
+      {
+        timeout: 300000 // 5 minute timeout
+      }
+    );
+
+    if (!response.data.ok) {
+      throw new Error(response.data.error || 'CSS generation failed');
+    }
+
+    console.log(`Critical CSS generation completed for ${shop}:`, response.data.summary);
+
+    // AUTO-INJECT: If CSS generation was successful, inject into theme
+    if (response.data.summary.successful > 0) {
+      console.log(`Auto-injecting Critical CSS script into theme for ${shop}`);
+      
+      try {
+        // Get active theme
+        const themesResponse = await axios.get(
+          `https://${shop}/admin/api/2025-01/themes.json`,
+          {
+            headers: {
+              'X-Shopify-Access-Token': shopData.access_token
+            }
+          }
+        );
+
+        const activeTheme = themesResponse.data.themes.find(t => t.role === 'main');
+        
+        if (activeTheme) {
+          // Get theme.liquid asset
+          const assetResponse = await axios.get(
+            `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`,
+            {
+              headers: {
+                'X-Shopify-Access-Token': shopData.access_token
+              }
+            }
+          );
+
+          let themeContent = assetResponse.data.asset.value;
+
+          // Check if already injected
+          if (!themeContent.includes('rabbitloader-css.b-cdn.net')) {
+            // Inject script before </head>
+            const criticalCssScript = `
+<!-- Critical CSS Injection by RabbitLoader -->
+<script>
+(function() {
+  const template = '{{ template | split: "." | first }}';
+  const shop = '{{ shop.permanent_domain }}';
+  const cssUrl = \`https://rabbitloader-css.b-cdn.net/\${shop}/\${template}.css\`;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = cssUrl;
+  link.onload = function() { console.log('Critical CSS loaded:', template); };
+  link.onerror = function() { console.warn('Critical CSS not found:', template); };
+  document.head.appendChild(link);
+})();
+</script>
+`;
+
+            themeContent = themeContent.replace('</head>', criticalCssScript + '\n</head>');
+
+            // Update theme.liquid
+            await axios.put(
+              `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`,
+              {
+                asset: {
+                  key: 'layout/theme.liquid',
+                  value: themeContent
+                }
+              },
+              {
+                headers: {
+                  'X-Shopify-Access-Token': shopData.access_token,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+
+            console.log(`✅ Critical CSS script auto-injected into theme for ${shop}`);
+            
+            res.json({
+              ok: true,
+              message: 'Critical CSS generated and injected into theme',
+              results: response.data.results,
+              summary: response.data.summary,
+              theme_injection: {
+                success: true,
+                theme_name: activeTheme.name,
+                message: 'Script automatically injected into theme.liquid'
+              }
+            });
+            return;
+          } else {
+            console.log(`Critical CSS script already exists in theme for ${shop}`);
+          }
+        }
+      } catch (injectionError) {
+        console.error('Auto-injection failed (non-fatal):', injectionError.message);
+        // Continue anyway - CSS was still generated
+      }
+    }
+
+    res.json({
+      ok: true,
+      message: 'Critical CSS generation completed',
+      results: response.data.results,
+      summary: response.data.summary,
+      theme_injection: {
+        success: false,
+        message: 'CSS generated but theme injection skipped (already exists or failed)'
+      }
+    });
+
+  } catch (error) {
+    console.error('Error triggering CSS generation:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message || "Failed to trigger CSS generation"
+    });
+  }
+});
 // Helper function to add pages to template categories
 function addToCategory(categories, template, pageData) {
   if (!categories[template]) {
