@@ -304,9 +304,12 @@ router.post("/inject-script", async (req, res) => {
       throw new Error("No access token found for shop");
     }
 
-    // Import injection functions
-    const { injectDeferScript } = require('./shopifyConnect');
+    // Import injection functions from shopifyConnect (both are there)
+    const shopifyConnectModule = require('./shopifyConnect');
     const { injectCriticalCSSIntoTheme } = require('../app');
+    
+    // Get the injectDeferScript function
+    const injectDeferScript = shopifyConnectModule.injectDeferScript;
     
     // Inject both scripts
     const deferResult = await injectDeferScript(shop, shopRecord.short_id, shopRecord.access_token);
@@ -724,8 +727,4 @@ router.get("/manual-instructions", async (req, res) => {
   }
 });
 
-// Export both router and helper function
-module.exports = {
-  router,
-  injectDeferScript
-};
+module.exports = router;
