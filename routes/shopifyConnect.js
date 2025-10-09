@@ -174,6 +174,7 @@ router.get("/rl-callback", async (req, res) => {
 
     // AUTO-INJECT CRITICAL CSS AFTER SUCCESSFUL CONNECTION
     let cssInjectionResult = null;
+    let jsInjectionResult = null;
 
     if (updatedShop.access_token) {
       // Check if Critical CSS is already injected
@@ -251,8 +252,7 @@ router.get("/rl-callback", async (req, res) => {
       }
       
       // AUTO-INJECT DEFER SCRIPT (if not already done)
-      let jsInjectionResult = null;
-      
+            
       if (!updatedShop.script_injected) {
         try {
           console.log(`[RL] 🚀 Attempting automatic defer script injection for ${shop}`);
