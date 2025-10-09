@@ -5,258 +5,7 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 
-// Helper function to inject Critical CSS into theme
-async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
-  console.log(`Attempting Critical CSS injection for ${shop} with DID: ${did}`);
 
-  // Step 1: Get active theme
-  const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
-    headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!themesResponse.ok) {
-    throw new Error(`Failed to fetch themes: ${themesResponse.status} ${themesResponse.statusText}`);
-  }
-
-  const themesData = await themesResponse.json();
-  const activeTheme = themesData.themes.find(theme => theme.role === 'main');
-  
-  if (!activeTheme) {
-    throw new Error("No active theme found");
-  }
-
-  console.log(`Found active theme: ${activeTheme.name} (ID: ${activeTheme.id})`);
-
-  // Step 2: Get theme.liquid file
-  const assetResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-    headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!assetResponse.ok) {
-    throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status} ${assetResponse.statusText}`);
-  }
-
-  const assetData = await assetResponse.json();
-  let themeContent = assetData.asset.value;
-
-  // Step 3: Check if critical CSS already exists
-  const criticalCssUrl = `${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}`;
-  
-  if (themeContent.includes(`defer-config/critical.css?shop=${shop}`) || 
-      themeContent.includes(criticalCssUrl) ||
-      themeContent.includes('RabbitLoader Critical CSS')) {
-    console.log(`RabbitLoader Critical CSS already exists in theme for ${shop}`);
-    return { success: true, message: "Critical CSS already exists in theme", scriptType: "existing" };
-  }
-
-  // Step 4: Inject Critical CSS as THE FIRST STYLESHEET
-  const cssTag = `  <!-- RabbitLoader Critical CSS -->
-  <link rel="stylesheet" href="${criticalCssUrl}" media="all">`;
-  
-  const headOpenTag = '<head>';
-  
-  if (!themeContent.includes(headOpenTag)) {
-    throw new Error("Could not find <head> tag in theme.liquid");
-  }
-
-  // Strategy 1: Find first <link> tag (any link, not just stylesheets)
-  const firstLinkTag = themeContent.match(/<link[^>]*>/i);
-  
-  // Strategy 2: Find first <style> tag
-  const firstStyleTag = themeContent.match(/<style[^>]*>/i);
-  
-  // Strategy 3: Find first <script> tag
-  const firstScriptTag = themeContent.match(/<script[^>]*>/i);
-  
-  // Determine the earliest tag to inject before
-  let injectPosition = themeContent.indexOf(headOpenTag) + headOpenTag.length;
-  let injectMethod = 'after <head>';
-  
-  // Find the earliest tag after <head>
-  if (firstLinkTag && firstLinkTag.index > injectPosition) {
-    injectPosition = firstLinkTag.index;
-    injectMethod = 'before first <link>';
-  }
-  
-  if (firstStyleTag && firstStyleTag.index < injectPosition && firstStyleTag.index > themeContent.indexOf(headOpenTag)) {
-    injectPosition = firstStyleTag.index;
-    injectMethod = 'before first <style>';
-  }
-  
-  if (firstScriptTag && firstScriptTag.index < injectPosition && firstScriptTag.index > themeContent.indexOf(headOpenTag)) {
-    injectPosition = firstScriptTag.index;
-    injectMethod = 'before first <script>';
-  }
-  
-  // Insert CSS at the determined position
-  if (injectPosition > themeContent.indexOf(headOpenTag)) {
-    const beforeContent = themeContent.substring(0, injectPosition);
-    const afterContent = themeContent.substring(injectPosition);
-    themeContent = beforeContent + '\n' + cssTag + '\n' + afterContent;
-    console.log(`Injected Critical CSS ${injectMethod} for ${shop}`);
-  } else {
-    // Fallback: inject right after <head>
-    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${cssTag}`);
-    console.log(`Injected Critical CSS immediately after <head> tag for ${shop}`);
-  }
-
-  console.log(`Injecting Critical CSS with priority loading for ${shop}:`, {
-    criticalCssUrl,
-    method: injectMethod
-  });
-
-  // Step 5: Update the theme file
-  const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
-    method: 'PUT',
-    headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      asset: {
-        key: 'layout/theme.liquid',
-        value: themeContent
-      }
-    })
-  });
-
-  if (!updateResponse.ok) {
-    const errorData = await updateResponse.json();
-    console.error(`Theme update failed:`, errorData);
-    throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
-  }
-
-  console.log(`RabbitLoader Critical CSS injected successfully for ${shop}`);
-  
-  return { 
-    success: true, 
-    message: "Critical CSS injected successfully", 
-    criticalCssUrl,
-    themeId: activeTheme.id,
-    themeName: activeTheme.name
-  };
-}
-
-// Helper function to inject ONLY defer script into theme
-async function injectScriptIntoTheme(shop, did, accessToken) {
-  console.log(`Attempting theme injection for ${shop} with DID: ${did}`);
-
-  // Step 1: Get active theme
-  const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
-    headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!themesResponse.ok) {
-    throw new Error(`Failed to fetch themes: ${themesResponse.status} ${themesResponse.statusText}`);
-  }
-
-  const themesData = await themesResponse.json();
-  const activeTheme = themesData.themes.find(theme => theme.role === 'main');
-  
-  if (!activeTheme) {
-    throw new Error("No active theme found");
-  }
-
-  console.log(`Found active theme: ${activeTheme.name} (ID: ${activeTheme.id})`);
-
-  // Step 2: Get theme.liquid file
-  const assetResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-    headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    }
-  });
-
-  if (!assetResponse.ok) {
-    throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status} ${assetResponse.statusText}`);
-  }
-
-  const assetData = await assetResponse.json();
-  let themeContent = assetData.asset.value;
-
-  // Step 3: Check if defer script already exists
-  const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
-  
-  if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
-      themeContent.includes(deferLoaderUrl) ||
-      themeContent.includes('RabbitLoader Defer Configuration')) {
-    console.log(`RabbitLoader defer script already exists in theme for ${shop}`);
-    return { success: true, message: "Defer script already exists in theme", scriptType: "existing" };
-  }
-
-  // Step 4: Inject defer loader script as THE FIRST SCRIPT
-  const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>`;
-  
-  const headOpenTag = '<head>';
-  
-  if (!themeContent.includes(headOpenTag)) {
-    throw new Error("Could not find <head> tag in theme.liquid");
-  }
-
-  // Strategy: Inject as the absolute first script in head
-  // Look for existing RabbitLoader scripts or any other scripts and inject BEFORE them
-  const existingRLScript = themeContent.match(/<script[^>]*src[^>]*(?:rabbitloader|cfw\.rabbitloader)[^>]*><\/script>/i);
-  const firstScript = themeContent.match(/<script[^>]*>/i);
-  
-  if (existingRLScript) {
-    // If RabbitLoader script exists, inject defer script BEFORE it
-    themeContent = themeContent.replace(existingRLScript[0], `${scriptTag}\n  ${existingRLScript[0]}`);
-    console.log(`Injected defer script BEFORE existing RabbitLoader script for ${shop}`);
-  } else if (firstScript) {
-    // If any script exists, inject defer script BEFORE the first one
-    themeContent = themeContent.replace(firstScript[0], `${scriptTag}\n  ${firstScript[0]}`);
-    console.log(`Injected defer script BEFORE first script tag for ${shop}`);
-  } else {
-    // Fallback: inject immediately after <head> if no scripts found
-    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
-    console.log(`Injected defer script immediately after <head> tag for ${shop}`);
-  }
-
-  console.log(`Injecting defer script with priority loading for ${shop}:`, {
-    deferLoader: deferLoaderUrl
-  });
-
-  // Step 5: Update the theme file
-  const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
-    method: 'PUT',
-    headers: {
-      'X-Shopify-Access-Token': accessToken,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      asset: {
-        key: 'layout/theme.liquid',
-        value: themeContent
-      }
-    })
-  });
-
-  if (!updateResponse.ok) {
-    const errorData = await updateResponse.json();
-    console.error(`Theme update failed:`, errorData);
-    throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
-  }
-
-  console.log(`RabbitLoader defer script injected successfully for ${shop}`);
-  
-  return { 
-    success: true, 
-    message: "Defer script injected successfully", 
-    deferLoaderUrl,
-    themeId: activeTheme.id,
-    themeName: activeTheme.name
-  };
-}
 // ====== SHOPIFY OAUTH FLOW ======
 
 // Start Shopify OAuth
@@ -535,7 +284,7 @@ router.post("/disconnect", async (req, res) => {
   }
 });
 
-// Manual theme injection route
+// Manual theme injection route - FIXED
 router.post("/inject-script", async (req, res) => {
   const { shop } = req.body;
   if (!shop) {
@@ -555,20 +304,32 @@ router.post("/inject-script", async (req, res) => {
       throw new Error("No access token found for shop");
     }
 
-    const result = await injectScriptIntoTheme(shop, shopRecord.short_id, shopRecord.access_token);
+    // Import injection functions
+    const { injectDeferScript } = require('./shopifyConnect');
+    const { injectCriticalCSSIntoTheme } = require('../app');
     
-    // Update database to mark as injected
+    // Inject both scripts
+    const deferResult = await injectDeferScript(shop, shopRecord.short_id, shopRecord.access_token);
+    const cssResult = await injectCriticalCSSIntoTheme(shop, shopRecord.short_id, shopRecord.access_token);
+    
+    // Update database
     await ShopModel.updateOne(
       { shop }, 
       { 
         $set: { 
-          script_injected: true,
-          script_injection_attempted: true 
+          script_injected: deferResult.success,
+          script_injection_attempted: true,
+          critical_css_injected: cssResult.success,
+          critical_css_injection_attempted: true
         } 
       }
     );
     
-    res.json({ ok: true, ...result });
+    res.json({ 
+      ok: true, 
+      defer_script: deferResult,
+      critical_css: cssResult
+    });
 
   } catch (err) {
     console.error("Manual script injection error:", err);
@@ -577,128 +338,6 @@ router.post("/inject-script", async (req, res) => {
       error: err.message,
       details: "Check server logs for more information" 
     });
-  }
-});
-// Manual Critical CSS injection route
-router.post("/inject-critical-css", async (req, res) => {
-  const { shop } = req.body;
-  if (!shop) {
-    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
-  }
-
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop not connected to RabbitLoader" 
-      });
-    }
-
-    if (!shopRecord.access_token) {
-      throw new Error("No access token found for shop");
-    }
-
-    const result = await injectCriticalCSSIntoTheme(shop, shopRecord.short_id, shopRecord.access_token);
-    
-    // Update database to mark as injected
-    await ShopModel.updateOne(
-      { shop }, 
-      { 
-        $set: { 
-          critical_css_injected: true,
-          critical_css_injection_attempted: true 
-        } 
-      }
-    );
-    
-    res.json({ ok: true, ...result });
-
-  } catch (err) {
-    console.error("Manual Critical CSS injection error:", err);
-    res.status(500).json({ 
-      ok: false, 
-      error: err.message,
-      details: "Check server logs for more information" 
-    });
-  }
-});
-// Cleanup duplicate injections
-router.post("/cleanup-duplicates", async (req, res) => {
-  const { shop } = req.body;
-  if (!shop) {
-    return res.status(400).json({ ok: false, error: "Missing shop parameter" });
-  }
-
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord || !shopRecord.access_token) {
-      return res.status(404).json({ ok: false, error: "Shop not found" });
-    }
-
-    // Get theme
-    const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const themesData = await themesResponse.json();
-    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
-
-    // Get theme.liquid
-    const assetResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const assetData = await assetResponse.json();
-    let themeContent = assetData.asset.value;
-
-    // Remove ALL RabbitLoader CSS injections
-    const cssPattern = /\s*<!-- RabbitLoader Critical CSS -->\s*\n\s*<link[^>]*defer-config\/critical\.css[^>]*>\s*/gi;
-    const matches = themeContent.match(cssPattern);
-    
-    if (!matches || matches.length === 0) {
-      return res.json({ ok: true, message: "No duplicates found" });
-    }
-
-    // Remove all occurrences
-    themeContent = themeContent.replace(cssPattern, '');
-
-    // Update theme
-    await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
-      method: 'PUT',
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        asset: {
-          key: 'layout/theme.liquid',
-          value: themeContent
-        }
-      })
-    });
-
-    // Reset database flags
-    await ShopModel.updateOne(
-      { shop },
-      { $set: { critical_css_injected: false, critical_css_injection_attempted: false } }
-    );
-
-    res.json({ 
-      ok: true, 
-      message: `Removed ${matches.length} duplicate(s)`,
-      count: matches.length 
-    });
-
-  } catch (err) {
-    console.error("Cleanup error:", err);
-    res.status(500).json({ ok: false, error: err.message });
   }
 });
 // Get RabbitLoader dashboard data - ROBUST API handling
@@ -1085,6 +724,8 @@ router.get("/manual-instructions", async (req, res) => {
   }
 });
 
-module.exports = router;
-module.exports.injectCriticalCSSIntoTheme = injectCriticalCSSIntoTheme;
-module.exports.injectScriptIntoTheme = injectScriptIntoTheme;
+// Export both router and helper function
+module.exports = {
+  router,
+  injectDeferScript
+};

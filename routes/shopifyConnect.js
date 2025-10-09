@@ -1,13 +1,13 @@
 const express = require("express");
 const router = express.Router();
 
-// Helper function to inject defer script (import from shopify.js)
+// Helper function to inject defer script
 async function injectDeferScript(shop, did, accessToken) {
-  console.log(`Attempting auto defer script injection for ${shop} with DID: ${did}`);
+  console.log(`[RL] Attempting auto defer script injection for ${shop} with DID: ${did}`);
 
   try {
     // Get active theme
-    const themesResponse = await fetch(`https://${shop}/admin/api/2023-10/themes.json`, {
+    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
       headers: {
         'X-Shopify-Access-Token': accessToken,
         'Content-Type': 'application/json'
@@ -26,7 +26,7 @@ async function injectDeferScript(shop, did, accessToken) {
     }
 
     // Get theme.liquid file
-    const assetResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
       headers: {
         'X-Shopify-Access-Token': accessToken,
         'Content-Type': 'application/json'
@@ -46,7 +46,7 @@ async function injectDeferScript(shop, did, accessToken) {
     if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
         themeContent.includes(deferLoaderUrl) ||
         themeContent.includes('RabbitLoader Defer Configuration')) {
-      console.log(`Defer script already exists in theme for ${shop}`);
+      console.log(`[RL] Defer script already exists in theme for ${shop}`);
       return { success: true, message: "Defer script already exists", already_exists: true };
     }
 
@@ -63,7 +63,7 @@ async function injectDeferScript(shop, did, accessToken) {
     themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
 
     // Update theme file
-    const updateResponse = await fetch(`https://${shop}/admin/api/2023-10/themes/${activeTheme.id}/assets.json`, {
+    const updateResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
       method: 'PUT',
       headers: {
         'X-Shopify-Access-Token': accessToken,
@@ -82,7 +82,7 @@ async function injectDeferScript(shop, did, accessToken) {
       throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
     }
 
-    console.log(`Defer script auto-injected successfully for ${shop}`);
+    console.log(`[RL] ✅ Defer script auto-injected successfully for ${shop}`);
     return { 
       success: true, 
       message: "Defer script injected successfully",
@@ -91,7 +91,7 @@ async function injectDeferScript(shop, did, accessToken) {
     };
 
   } catch (error) {
-    console.error(`Auto-injection failed for ${shop}:`, error);
+    console.error(`[RL] ❌ Auto-injection failed for ${shop}:`, error);
     throw error;
   }
 }
@@ -100,7 +100,7 @@ async function injectDeferScript(shop, did, accessToken) {
 router.get("/rl-callback", async (req, res) => {
   const { shop, "rl-token": rlToken } = req.query;
 
-  console.log("RabbitLoader callback received:", {
+  console.log("[RL] Callback received:", {
     hasRlToken: !!rlToken,
     shop,
     allParams: Object.keys(req.query),
@@ -108,7 +108,7 @@ router.get("/rl-callback", async (req, res) => {
   });
 
   if (!rlToken || !shop) {
-    console.error("Missing rl-token or shop parameter in callback");
+    console.error("[RL] Missing rl-token or shop parameter in callback");
     return res.status(400).send(`
       <!DOCTYPE html>
       <html>
@@ -128,7 +128,7 @@ router.get("/rl-callback", async (req, res) => {
   try {
     // Decode the RabbitLoader token
     const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
-    console.log("Decoded RL token:", {
+    console.log("[RL] Decoded token:", {
       hasDid: !!(decoded.did || decoded.short_id),
       hasApiToken: !!decoded.api_token,
       platform: decoded.platform,
@@ -167,22 +167,23 @@ router.get("/rl-callback", async (req, res) => {
       { upsert: true, new: true }
     );
 
-    console.log(`RabbitLoader connection saved for shop: ${shop}`, {
+    console.log(`[RL] Connection saved for shop: ${shop}`, {
       did: decoded.did || decoded.short_id,
       hasApiToken: !!decoded.api_token
     });
 
-    // AUTO-INJECT BOTH CRITICAL CSS AND DEFER SCRIPT AFTER SUCCESSFUL CONNECTION
+    // AUTO-INJECT CRITICAL CSS AFTER SUCCESSFUL CONNECTION
     let cssInjectionResult = null;
-    let jsInjectionResult = null;
-    
+
     if (updatedShop.access_token) {
-      // First, inject Critical CSS if not already done
+      // Check if Critical CSS is already injected
       if (!updatedShop.critical_css_injected) {
         try {
-          console.log(`Attempting automatic Critical CSS injection for ${shop}`);
+          console.log(`[RL] 🚀 Attempting automatic Critical CSS injection for ${shop}`);
           
-          const { injectCriticalCSSIntoTheme } = require("./shopify");
+          // Import the injection function from app.js
+          const { injectCriticalCSSIntoTheme } = require("../app");
+          
           cssInjectionResult = await injectCriticalCSSIntoTheme(
             shop, 
             updatedShop.short_id, 
@@ -190,12 +191,18 @@ router.get("/rl-callback", async (req, res) => {
           );
           
           if (cssInjectionResult.success) {
+            console.log(`[RL] ✅ Critical CSS auto-injected successfully for ${shop}`);
+            console.log(`[RL] Position: ${cssInjectionResult.position}`);
+            console.log(`[RL] Theme: ${cssInjectionResult.themeName}`);
+            
+            // Update database to mark as injected
             await ShopModel.updateOne(
               { shop }, 
               { 
                 $set: { 
                   critical_css_injected: true,
-                  critical_css_injection_attempted: true 
+                  critical_css_injection_attempted: true,
+                  critical_css_injection_date: new Date()
                 },
                 $push: {
                   history: {
@@ -204,22 +211,28 @@ router.get("/rl-callback", async (req, res) => {
                     details: { 
                       success: true, 
                       message: cssInjectionResult.message,
-                      already_exists: cssInjectionResult.already_exists || false
+                      position: cssInjectionResult.position,
+                      theme: cssInjectionResult.themeName,
+                      already_exists: cssInjectionResult.scriptType === 'existing'
                     }
                   }
                 }
               }
             );
             
-            console.log(`Critical CSS automatically injected for ${shop}`);
+            console.log(`[RL] ✅ Database updated - Critical CSS injection recorded`);
           }
         } catch (cssInjectionError) {
-          console.warn(`Automatic Critical CSS injection failed for ${shop}:`, cssInjectionError.message);
+          console.error(`[RL] ❌ Automatic Critical CSS injection failed for ${shop}:`, cssInjectionError.message);
           
+          // Record failure in database
           await ShopModel.updateOne(
             { shop }, 
             { 
-              $set: { critical_css_injection_attempted: true },
+              $set: { 
+                critical_css_injection_attempted: true,
+                critical_css_injection_error: cssInjectionError.message
+              },
               $push: {
                 history: {
                   event: "auto_critical_css_inject",
@@ -233,12 +246,16 @@ router.get("/rl-callback", async (req, res) => {
             }
           );
         }
+      } else {
+        console.log(`[RL] ℹ️ Critical CSS already injected for ${shop}, skipping`);
       }
       
-      // Then, inject Defer Script if not already done
+      // AUTO-INJECT DEFER SCRIPT (if not already done)
+      let jsInjectionResult = null;
+      
       if (!updatedShop.script_injected) {
         try {
-          console.log(`Attempting automatic defer script injection for ${shop}`);
+          console.log(`[RL] 🚀 Attempting automatic defer script injection for ${shop}`);
           
           jsInjectionResult = await injectDeferScript(
             shop, 
@@ -268,10 +285,10 @@ router.get("/rl-callback", async (req, res) => {
               }
             );
             
-            console.log(`Defer script automatically injected for ${shop}`);
+            console.log(`[RL] ✅ Defer script automatically injected for ${shop}`);
           }
         } catch (jsInjectionError) {
-          console.warn(`Automatic script injection failed for ${shop}:`, jsInjectionError.message);
+          console.warn(`[RL] ⚠️ Automatic defer script injection failed for ${shop}:`, jsInjectionError.message);
           
           await ShopModel.updateOne(
             { shop }, 
@@ -290,6 +307,8 @@ router.get("/rl-callback", async (req, res) => {
             }
           );
         }
+      } else {
+        console.log(`[RL] ℹ️ Defer script already injected for ${shop}, skipping`);
       }
     }
 
@@ -305,11 +324,11 @@ router.get("/rl-callback", async (req, res) => {
     if (jsInjectionResult && jsInjectionResult.success) {
       redirectUrl += '&script_injected=1';
     }
-    console.log("Redirecting back to Shopify admin:", redirectUrl);
+    console.log("[RL] Redirecting back to Shopify admin:", redirectUrl);
     res.redirect(redirectUrl);
 
   } catch (error) {
-    console.error("RabbitLoader callback processing error:", error);
+    console.error("[RL] Callback processing error:", error);
     
     res.status(500).send(`
       <!DOCTYPE html>
@@ -336,7 +355,7 @@ router.get("/health", (req, res) => {
     service: "rabbitloader-connect",
     timestamp: new Date().toISOString(),
     routes: ["rl-callback"],
-    features: ["auto-script-injection"]
+    features: ["auto-critical-css-injection", "auto-defer-script-injection"]
   });
 });
 
@@ -357,6 +376,7 @@ router.get("/debug/:shop", async (req, res) => {
       shop: shopRecord.shop,
       connected: !!shopRecord.api_token,
       script_injected: shopRecord.script_injected || false,
+      critical_css_injected: shopRecord.critical_css_injected || false,
       injection_attempted: shopRecord.script_injection_attempted || false,
       connected_at: shopRecord.connected_at,
       did: shopRecord.short_id,
@@ -367,4 +387,8 @@ router.get("/debug/:shop", async (req, res) => {
   }
 });
 
-module.exports = router;
+// Export both router and helper function
+module.exports = {
+  router,
+  injectDeferScript
+};

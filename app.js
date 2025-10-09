@@ -115,7 +115,214 @@ app.use(express.static(path.join(__dirname, "public")));
 // ====== Route Imports ======
 const shopifyRoutes = require("./routes/shopify");
 const deferConfigRoutes = require("./routes/deferConfig");
-const shopifyConnectRoutes = require("./routes/shopifyConnect");
+const shopifyConnect = require("./routes/shopifyConnect");
+
+// Helper function to inject Critical CSS into theme - OPTION A (First Position)
+async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
+  console.log(`[RL] Starting Critical CSS injection for ${shop} with DID: ${did}`);
+
+  try {
+    // Step 1: Get active theme
+    console.log(`[RL] Fetching themes for ${shop}...`);
+    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!themesResponse.ok) {
+      throw new Error(`Failed to fetch themes: ${themesResponse.status} ${themesResponse.statusText}`);
+    }
+
+    const themesData = await themesResponse.json();
+    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
+    
+    if (!activeTheme) {
+      throw new Error("No active theme found");
+    }
+
+    console.log(`[RL] ✅ Found active theme: ${activeTheme.name} (ID: ${activeTheme.id})`);
+
+    // Step 2: Get theme.liquid file
+    console.log(`[RL] Fetching theme.liquid...`);
+    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!assetResponse.ok) {
+      throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status} ${assetResponse.statusText}`);
+    }
+
+    const assetData = await assetResponse.json();
+    let themeContent = assetData.asset.value;
+
+    // Step 3: Check if critical CSS already exists
+    if (themeContent.includes('rl-critical-css') || 
+        themeContent.includes('RabbitLoader Critical CSS')) {
+      console.log(`[RL] ⚠️ Critical CSS already exists in theme for ${shop}, skipping injection`);
+      return { success: true, message: "Critical CSS already exists in theme", scriptType: "existing" };
+    }
+
+    // Step 4: Create Critical CSS injection code - OPTION A (FIRST POSITION)
+    const criticalCssScript = `
+  <!-- RabbitLoader Critical CSS - FIRST PRIORITY (OPTION A) -->
+  <link 
+    id="rl-critical-css" 
+    rel="stylesheet" 
+    href="https://rabbitloader-css.b-cdn.net/{{ shop.permanent_domain }}/{{ template | split: '.' | first }}.css"
+  >
+  
+  <!-- Lazy Fallback: Only loads if CDN fails -->
+  <script>
+  (function() {
+    var template = '{{ template | split: "." | first }}';
+    var shop = '{{ shop.permanent_domain }}';
+    
+    console.log('[RL] Critical CSS loading for template:', template);
+    
+    // Check if CDN CSS loaded successfully after 2 seconds
+    setTimeout(function() {
+      var cssLink = document.getElementById('rl-critical-css');
+      var cssLoaded = false;
+      
+      try {
+        // Check if stylesheet is accessible and has rules
+        if (cssLink && cssLink.sheet && cssLink.sheet.cssRules.length > 0) {
+          cssLoaded = true;
+          console.log('[RL] ✅ CDN critical CSS loaded successfully:', template, 
+                      '(' + cssLink.sheet.cssRules.length + ' rules)');
+        }
+      } catch (e) {
+        // Cross-origin or failed to load
+        console.warn('[RL] ⚠️ Cannot access CSS rules (might be cross-origin or failed)');
+      }
+      
+      // If CSS didn't load, inject fallback
+      if (!cssLoaded) {
+        console.warn('[RL] ❌ CDN CSS failed, loading fallback from app server');
+        var fallback = document.createElement('link');
+        fallback.rel = 'stylesheet';
+        fallback.href = 'https://shopify.rb8.in/defer-config/critical.css?shop=' + shop;
+        fallback.id = 'rl-critical-fallback';
+        fallback.onload = function() {
+          console.log('[RL] ✅ Fallback CSS loaded successfully');
+        };
+        fallback.onerror = function() {
+          console.error('[RL] ❌ Fallback CSS also failed to load');
+        };
+        document.head.appendChild(fallback);
+      }
+    }, 2000);
+  })();
+  </script>
+`;
+
+    // Step 5: Find <head> tag and inject IMMEDIATELY AFTER IT (FIRST POSITION)
+    const headOpenTag = '<head>';
+    
+    if (!themeContent.includes(headOpenTag)) {
+      throw new Error("Could not find <head> tag in theme.liquid");
+    }
+
+    // Count existing CSS files for logging
+    const existingCssCount = (themeContent.match(/<link[^>]*rel=["']stylesheet["']/g) || []).length;
+    console.log(`[RL] Found ${existingCssCount} existing CSS files in theme`);
+
+    // Inject IMMEDIATELY after <head> opening tag (FIRST POSITION)
+    themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${criticalCssScript}`);
+    
+    console.log(`[RL] ✅ Critical CSS code prepared for injection at FIRST position`);
+
+    // Step 6: Update the theme file
+    console.log(`[RL] Updating theme.liquid...`);
+    const updateResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
+      method: 'PUT',
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        asset: {
+          key: 'layout/theme.liquid',
+          value: themeContent
+        }
+      })
+    });
+
+    if (!updateResponse.ok) {
+      const errorData = await updateResponse.json();
+      console.error(`[RL] ❌ Theme update failed:`, errorData);
+      throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
+    }
+
+    console.log(`[RL] ✅✅✅ Critical CSS injected successfully for ${shop}`);
+    console.log(`[RL] Theme: ${activeTheme.name}`);
+    console.log(`[RL] Position: FIRST (before all other CSS)`);
+    console.log(`[RL] CDN URL: https://rabbitloader-css.b-cdn.net/${shop}/[template].css`);
+    console.log(`[RL] Fallback URL: https://shopify.rb8.in/defer-config/critical.css?shop=${shop}`);
+    
+    return { 
+      success: true, 
+      message: "Critical CSS injected at first position (Option A)", 
+      themeId: activeTheme.id,
+      themeName: activeTheme.name,
+      position: "first",
+      cdnUrl: `https://rabbitloader-css.b-cdn.net/${shop}/`,
+      fallbackUrl: `https://shopify.rb8.in/defer-config/critical.css?shop=${shop}`
+    };
+
+  } catch (error) {
+    console.error(`[RL] ❌ Critical CSS injection failed for ${shop}:`, error);
+    throw error;
+  }
+}
+
+// Helper function for Shopify API pagination with rate limiting
+async function fetchAllShopifyResources(shop, endpoint, headers, resourceKey) {
+  const allItems = [];
+  let url = `https://${shop}${endpoint}`;
+  let pageCount = 0;
+  const maxPages = 20; // Safety limit to prevent infinite loops
+  
+  while (url && pageCount < maxPages) {
+    try {
+      const response = await axios.get(url, { headers });
+      const items = response.data[resourceKey] || [];
+      allItems.push(...items);
+      
+      console.log(`Fetched page ${pageCount + 1} of ${resourceKey}: ${items.length} items (total so far: ${allItems.length})`);
+      
+      // Check for next page in Link header
+      const linkHeader = response.headers.link;
+      if (linkHeader && linkHeader.includes('rel="next"')) {
+        const nextMatch = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+        url = nextMatch ? nextMatch[1] : null;
+        
+        // Rate limiting: wait 100ms between requests
+        if (url) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      } else {
+        url = null;
+      }
+      
+      pageCount++;
+    } catch (error) {
+      console.error(`Error fetching ${resourceKey} page ${pageCount + 1}:`, error.message);
+      break;
+    }
+  }
+  
+  if (pageCount >= maxPages) {
+    console.warn(`Reached maximum page limit (${maxPages}) for ${resourceKey}`);
+  }
+  
+  return allItems;
+}
 
 // ====== Public Routes (BEFORE auth middleware) ======
 // These need to be mounted before the auth middleware to avoid shop parameter requirements
@@ -564,35 +771,67 @@ app.get("/api/site-analysis", async (req, res) => {
     const headers = { 'X-Shopify-Access-Token': shopData.access_token };
     const allPages = [];
     const templateCategories = {};
+    
+    console.log(`Starting comprehensive site analysis for ${shop}...`);
 
-    // 1. Get Pages and Themes (we know these work)
-    const [pagesResponse, themesResponse] = await Promise.all([
-      axios.get(`https://${shop}/admin/api/2025-01/pages.json`, { headers }),
-      axios.get(`https://${shop}/admin/api/2025-01/themes.json`, { headers })
-    ]);
-
+    // 1. Get active theme first
+    const themesResponse = await axios.get(`https://${shop}/admin/api/2025-01/themes.json`, { headers });
     const activeTheme = themesResponse.data.themes.find(theme => theme.role === 'main');
+    console.log(`Active theme: ${activeTheme ? activeTheme.name : 'Unknown'}`);
 
-    // Process pages
-    pagesResponse.data.pages.forEach(page => {
-      const template = page.template_suffix || 'page';
-      const pageData = {
-        id: `page_${page.id}`,
-        title: page.title,
-        handle: page.handle,
-        url: `/${page.handle}`,
-        type: 'content_page',
-        template: template
-      };
-      allPages.push(pageData);
-      addToCategory(templateCategories, template, pageData);
-    });
+    // 2. EXPLICITLY ADD HOMEPAGE
+    const homepageData = {
+      id: 'homepage_index',
+      title: 'Homepage',
+      handle: 'index',
+      url: '/',
+      type: 'homepage',
+      template: 'index'
+    };
+    allPages.push(homepageData);
+    addToCategory(templateCategories, 'index', homepageData);
+    console.log(`✅ Added homepage to analysis`);
 
-    // 2. Try to get Products (handle failure gracefully)
+    // 3. Fetch ALL Pages (with pagination)
     try {
-      const productsResponse = await axios.get(`https://${shop}/admin/api/2025-01/products.json?limit=50`, { headers });
+      console.log(`Fetching pages...`);
+      const pages = await fetchAllShopifyResources(
+        shop,
+        '/admin/api/2025-01/pages.json?limit=250',
+        headers,
+        'pages'
+      );
       
-      productsResponse.data.products.forEach(product => {
+      pages.forEach(page => {
+        const template = page.template_suffix || 'page';
+        const pageData = {
+          id: `page_${page.id}`,
+          title: page.title,
+          handle: page.handle,
+          url: `/pages/${page.handle}`,
+          type: 'content_page',
+          template: template
+        };
+        allPages.push(pageData);
+        addToCategory(templateCategories, template, pageData);
+      });
+      
+      console.log(`✅ Fetched ${pages.length} pages`);
+    } catch (error) {
+      console.error('Pages API failed:', error.response?.status, error.message);
+    }
+
+    // 4. Fetch ALL Products (with pagination - THIS IS THE FIX!)
+    try {
+      console.log(`Fetching products...`);
+      const products = await fetchAllShopifyResources(
+        shop,
+        '/admin/api/2025-01/products.json?limit=250',
+        headers,
+        'products'
+      );
+      
+      products.forEach(product => {
         const template = product.template_suffix || 'product';
         const pageData = {
           id: `product_${product.id}`,
@@ -605,15 +844,23 @@ app.get("/api/site-analysis", async (req, res) => {
         allPages.push(pageData);
         addToCategory(templateCategories, template, pageData);
       });
+      
+      console.log(`✅ Fetched ${products.length} products`);
     } catch (error) {
-      console.log('Products API failed:', error.response?.status);
+      console.error('Products API failed:', error.response?.status, error.message);
     }
 
-    // 3. Try to get Collections (handle failure gracefully)  
+    // 5. Fetch BOTH Collection Types (Custom + Smart)
     try {
-      const collectionsResponse = await axios.get(`https://${shop}/admin/api/2025-01/collections.json`, { headers });
+      console.log(`Fetching custom collections...`);
+      const customCollections = await fetchAllShopifyResources(
+        shop,
+        '/admin/api/2025-01/custom_collections.json?limit=250',
+        headers,
+        'custom_collections'
+      );
       
-      collectionsResponse.data.collections.forEach(collection => {
+      customCollections.forEach(collection => {
         if (collection.handle === 'frontpage') return;
         
         const template = collection.template_suffix || 'collection';
@@ -623,13 +870,134 @@ app.get("/api/site-analysis", async (req, res) => {
           handle: collection.handle,
           url: `/collections/${collection.handle}`,
           type: 'collection_page',
-          template: template
+          template: template,
+          collection_type: 'custom'
         };
         allPages.push(pageData);
         addToCategory(templateCategories, template, pageData);
       });
+      
+      console.log(`✅ Fetched ${customCollections.length} custom collections`);
     } catch (error) {
-      console.log('Collections API failed:', error.response?.status);
+      console.error('Custom Collections API failed:', error.response?.status, error.message);
+    }
+
+    try {
+      console.log(`Fetching smart collections...`);
+      const smartCollections = await fetchAllShopifyResources(
+        shop,
+        '/admin/api/2025-01/smart_collections.json?limit=250',
+        headers,
+        'smart_collections'
+      );
+      
+      smartCollections.forEach(collection => {
+        if (collection.handle === 'frontpage') return;
+        
+        const template = collection.template_suffix || 'collection';
+        const pageData = {
+          id: `collection_smart_${collection.id}`,
+          title: collection.title,
+          handle: collection.handle,
+          url: `/collections/${collection.handle}`,
+          type: 'collection_page',
+          template: template,
+          collection_type: 'smart'
+        };
+        allPages.push(pageData);
+        addToCategory(templateCategories, template, pageData);
+      });
+      
+      console.log(`✅ Fetched ${smartCollections.length} smart collections`);
+    } catch (error) {
+      console.error('Smart Collections API failed:', error.response?.status, error.message);
+    }
+
+    // 6. Fetch Blogs
+    try {
+      console.log(`Fetching blogs...`);
+      const blogs = await fetchAllShopifyResources(
+        shop,
+        '/admin/api/2025-01/blogs.json?limit=250',
+        headers,
+        'blogs'
+      );
+      
+      for (const blog of blogs) {
+        // Add blog index page
+        const blogIndexData = {
+          id: `blog_${blog.id}`,
+          title: `${blog.title} (Blog Index)`,
+          handle: blog.handle,
+          url: `/blogs/${blog.handle}`,
+          type: 'blog_page',
+          template: 'blog'
+        };
+        allPages.push(blogIndexData);
+        addToCategory(templateCategories, 'blog', blogIndexData);
+        
+        // Fetch articles for this blog
+        try {
+          const articles = await fetchAllShopifyResources(
+            shop,
+            `/admin/api/2025-01/blogs/${blog.id}/articles.json?limit=250`,
+            headers,
+            'articles'
+          );
+          
+          articles.forEach(article => {
+            const template = article.template_suffix || 'article';
+            const pageData = {
+              id: `article_${article.id}`,
+              title: article.title,
+              handle: article.handle,
+              url: `/blogs/${blog.handle}/${article.handle}`,
+              type: 'article_page',
+              template: template,
+              blog_handle: blog.handle
+            };
+            allPages.push(pageData);
+            addToCategory(templateCategories, template, pageData);
+          });
+          
+          console.log(`  ✅ Fetched ${articles.length} articles from blog: ${blog.title}`);
+        } catch (error) {
+          console.error(`Articles API failed for blog ${blog.handle}:`, error.message);
+        }
+      }
+      
+      console.log(`✅ Fetched ${blogs.length} blogs`);
+    } catch (error) {
+      console.error('Blogs API failed:', error.response?.status, error.message);
+    }
+
+    // 7. Fetch Policies
+    try {
+      console.log(`Fetching policies...`);
+      const policiesResponse = await axios.get(
+        `https://${shop}/admin/api/2025-01/policies.json`,
+        { headers }
+      );
+      
+      const policies = policiesResponse.data.policies || [];
+      policies.forEach(policy => {
+        if (!policy.url) return; // Skip if no URL
+        
+        const pageData = {
+          id: `policy_${policy.handle || policy.title.toLowerCase().replace(/\s+/g, '-')}`,
+          title: policy.title,
+          handle: policy.handle || policy.title.toLowerCase().replace(/\s+/g, '-'),
+          url: policy.url.replace(`https://${shop}`, ''), // Remove domain
+          type: 'policy_page',
+          template: 'policy'
+        };
+        allPages.push(pageData);
+        addToCategory(templateCategories, 'policy', pageData);
+      });
+      
+      console.log(`✅ Fetched ${policies.length} policies`);
+    } catch (error) {
+      console.error('Policies API failed:', error.response?.status, error.message);
     }
 
     // Generate statistics
@@ -648,7 +1016,6 @@ app.get("/api/site-analysis", async (req, res) => {
       stats.by_template[template] = templateCategories[template].length;
     });
 
-    // === ADD STEP 2 CODE HERE ===
     // Save site structure to database
     const templateGroups = new Map();
 
@@ -656,7 +1023,7 @@ app.get("/api/site-analysis", async (req, res) => {
       templateGroups.set(template, {
         count: templateCategories[template].length,
         pages: templateCategories[template],
-        sample_page: templateCategories[template][0]?.url, // First page as sample
+        sample_page: templateCategories[template][0]?.url,
         psi_analyzed: false,
         js_files: [],
         defer_recommendations: [],
@@ -664,7 +1031,6 @@ app.get("/api/site-analysis", async (req, res) => {
       });
     });
 
-    // Save to database
     await ShopModel.findOneAndUpdate(
       { shop },
       {
@@ -677,8 +1043,12 @@ app.get("/api/site-analysis", async (req, res) => {
       { upsert: true }
     );
 
-    console.log(`Site structure saved for ${shop} - ${Object.keys(templateCategories).length} template groups found`);
-    // === END STEP 2 CODE ===
+    console.log(`✅ Site analysis complete for ${shop}:`);
+    console.log(`   - Template groups: ${Object.keys(templateCategories).length}`);
+    console.log(`   - Total pages: ${allPages.length}`);
+    console.log(`   - Products: ${stats.by_type.product_page || 0}`);
+    console.log(`   - Collections: ${stats.by_type.collection_page || 0}`);
+    console.log(`   - Articles: ${stats.by_type.article_page || 0}`);
 
     res.json({
       ok: true,
@@ -1692,7 +2062,7 @@ app.get("/defer-config/api", async (req, res) => {
 app.use("/defer-config", deferConfigRoutes);
 
 // RabbitLoader Connect Routes - FIXED: Mount on specific path to avoid conflicts
-app.use("/rl", shopifyConnectRoutes);
+app.use("/rl", shopifyConnect.router);
 
 // ====== Root Route (BEFORE auth middleware) - UPDATED FOR STATIC HTML ======
 app.get("/", (req, res) => {
@@ -2011,7 +2381,6 @@ app.use((req, res) => {
   }
 });
 
-// ====== Start Server ======
 app.listen(PORT, () => {
   console.log(`RL-Shopify app running on port ${PORT}`);
   console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
@@ -2019,3 +2388,9 @@ app.listen(PORT, () => {
   console.log(`Shopify API Key: ${process.env.SHOPIFY_API_KEY ? 'Set' : 'Missing'}`);
   console.log(`Features: Static HTML, Defer script only, Auto-injection enabled, Enhanced PSI Analysis, Auto-apply defer rules`);
 });
+
+// Export for use in other modules
+module.exports = {
+  app,
+  injectCriticalCSSIntoTheme
+};
