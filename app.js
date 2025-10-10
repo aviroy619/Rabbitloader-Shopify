@@ -112,13 +112,16 @@ mongoose.connection.on("error", (err) => {
 
 // ====== Static Files ======
 app.use(express.static(path.join(__dirname, "public")));
-app.use("/shopify", shopifyRoutes);
-app.use("/defer-config", deferConfigRoutes);
-app.use("/rl", shopifyConnectRouter);
+
 // ====== Route Imports ======
 const shopifyRoutes = require("./routes/shopify");
 const deferConfigRoutes = require("./routes/deferConfig");
 const shopifyConnectRouter = require("./routes/shopifyConnect");
+
+// ====== Mount Routes ======
+app.use("/shopify", shopifyRoutes);
+app.use("/defer-config", deferConfigRoutes);
+app.use("/rl", shopifyConnectRouter);
 
 
 // Helper function to inject Critical CSS into theme - OPTION A (First Position)
