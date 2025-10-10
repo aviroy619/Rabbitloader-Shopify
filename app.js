@@ -115,7 +115,7 @@ app.use(express.static(path.join(__dirname, "public")));
 // ====== Route Imports ======
 const shopifyRoutes = require("./routes/shopify");
 const deferConfigRoutes = require("./routes/deferConfig");
-const shopifyConnect = require("./routes/shopifyConnect");
+const shopifyConnectRouter = require("./routes/shopifyConnect");
 
 // Helper function to inject Critical CSS into theme - OPTION A (First Position)
 async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
@@ -124,7 +124,7 @@ async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
   try {
     // Step 1: Get active theme
     console.log(`[RL] Fetching themes for ${shop}...`);
-    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
+    const themesResponse = await fetch(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes.json`, {
       headers: {
         'X-Shopify-Access-Token': accessToken,
         'Content-Type': 'application/json'
@@ -146,7 +146,7 @@ async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
 
     // Step 2: Get theme.liquid file
     console.log(`[RL] Fetching theme.liquid...`);
-    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+    const assetResponse = await fetch(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
       headers: {
         'X-Shopify-Access-Token': accessToken,
         'Content-Type': 'application/json'
@@ -239,7 +239,7 @@ async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
 
     // Step 6: Update the theme file
     console.log(`[RL] Updating theme.liquid...`);
-    const updateResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
+    const updateResponse = await fetch(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json`, {
       method: 'PUT',
       headers: {
         'X-Shopify-Access-Token': accessToken,
@@ -443,46 +443,6 @@ app.post("/api/analyze-performance", async (req, res) => {
   }
 });
 
-// API Route for shop status check
-app.get("/api/status", async (req, res) => {
-  try {
-    const shop = req.headers['x-shop'] || req.query.shop;
-    
-    if (!shop) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: "Shop parameter required in x-shop header or query" 
-      });
-    }
-
-    const shopData = await ShopModel.findOne({ shop });
-    
-    if (!shopData) {
-      return res.json({
-        ok: true,
-        connected: false,
-        shop: shop
-      });
-    }
-
-    res.json({
-      ok: true,
-      connected: !!shopData.short_id,
-      did: shopData.short_id,
-      script_injected: shopData.script_injected || false,
-      shop: shop,
-      connected_at: shopData.connected_at
-    });
-
-  } catch (error) {
-    console.error('Error checking shop status:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: "Internal server error" 
-    });
-  }
-});
-
 // ====== Additional Shopify API Proxy Routes ======
 
 // Debug shop - check if app has token saved
@@ -548,7 +508,7 @@ app.get("/api/themes", async (req, res) => {
       });
     }
 
-    const response = await axios.get(`https://${shop}/admin/api/2025-01/themes.json`, {
+    const response = await axios.get(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes.json`, {
       headers: {
         'X-Shopify-Access-Token': shopData.access_token
       }
@@ -589,7 +549,7 @@ app.get("/api/products", async (req, res) => {
       });
     }
 
-    const response = await axios.get(`https://${shop}/admin/api/2025-01/products.json`, {
+    const response = await axios.get(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/products.json`, {
       headers: {
         'X-Shopify-Access-Token': shopData.access_token
       }
@@ -630,7 +590,7 @@ app.get("/api/script-tags", async (req, res) => {
       });
     }
 
-    const response = await axios.get(`https://${shop}/admin/api/2025-01/script_tags.json`, {
+    const response = await axios.get(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/script_tags.json`, {
       headers: {
         'X-Shopify-Access-Token': shopData.access_token
       }
@@ -679,7 +639,7 @@ app.post("/api/script-tags", async (req, res) => {
       });
     }
 
-    const response = await axios.post(`https://${shop}/admin/api/2025-01/script_tags.json`, {
+    const response = await axios.post(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/script_tags.json`, {
       script_tag: {
         event: event,
         src: src
@@ -727,7 +687,7 @@ app.get("/api/pages", async (req, res) => {
       });
     }
 
-    const response = await axios.get(`https://${shop}/admin/api/2025-01/pages.json`, {
+    const response = await axios.get(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/pages.json`, {
       headers: {
         'X-Shopify-Access-Token': shopData.access_token
       }
@@ -775,7 +735,7 @@ app.get("/api/site-analysis", async (req, res) => {
     console.log(`Starting comprehensive site analysis for ${shop}...`);
 
     // 1. Get active theme first
-    const themesResponse = await axios.get(`https://${shop}/admin/api/2025-01/themes.json`, { headers });
+    const themesResponse = await axios.get(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes.json`, { headers });
     const activeTheme = themesResponse.data.themes.find(theme => theme.role === 'main');
     console.log(`Active theme: ${activeTheme ? activeTheme.name : 'Unknown'}`);
 
@@ -797,7 +757,7 @@ app.get("/api/site-analysis", async (req, res) => {
       console.log(`Fetching pages...`);
       const pages = await fetchAllShopifyResources(
         shop,
-        '/admin/api/2025-01/pages.json?limit=250',
+        `/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/pages.json?limit=250`,
         headers,
         'pages'
       );
@@ -826,7 +786,7 @@ app.get("/api/site-analysis", async (req, res) => {
       console.log(`Fetching products...`);
       const products = await fetchAllShopifyResources(
         shop,
-        '/admin/api/2025-01/products.json?limit=250',
+        `/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/products.json?limit=250`,
         headers,
         'products'
       );
@@ -855,7 +815,7 @@ app.get("/api/site-analysis", async (req, res) => {
       console.log(`Fetching custom collections...`);
       const customCollections = await fetchAllShopifyResources(
         shop,
-        '/admin/api/2025-01/custom_collections.json?limit=250',
+        `/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/custom_collections.json?limit=250`,
         headers,
         'custom_collections'
       );
@@ -886,7 +846,7 @@ app.get("/api/site-analysis", async (req, res) => {
       console.log(`Fetching smart collections...`);
       const smartCollections = await fetchAllShopifyResources(
         shop,
-        '/admin/api/2025-01/smart_collections.json?limit=250',
+        `/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/smart_collections.json?limit=250`,
         headers,
         'smart_collections'
       );
@@ -918,7 +878,7 @@ app.get("/api/site-analysis", async (req, res) => {
       console.log(`Fetching blogs...`);
       const blogs = await fetchAllShopifyResources(
         shop,
-        '/admin/api/2025-01/blogs.json?limit=250',
+        `/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/blogs.json?limit=250`,
         headers,
         'blogs'
       );
@@ -940,7 +900,7 @@ app.get("/api/site-analysis", async (req, res) => {
         try {
           const articles = await fetchAllShopifyResources(
             shop,
-            `/admin/api/2025-01/blogs/${blog.id}/articles.json?limit=250`,
+            `/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/blogs/${blog.id}/articles.json?limit=250`,
             headers,
             'articles'
           );
@@ -975,7 +935,7 @@ app.get("/api/site-analysis", async (req, res) => {
     try {
       console.log(`Fetching policies...`);
       const policiesResponse = await axios.get(
-        `https://${shop}/admin/api/2025-01/policies.json`,
+        `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/policies.json`,
         { headers }
       );
       
@@ -1721,9 +1681,9 @@ app.get("/api/generate-defer-rules", async (req, res) => {
         group.user_defer_config.forEach(config => {
           if (config.defer) {
             // Generate regex pattern from file URL - FIXED
-            const urlPattern = config.file
-              .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // FIXED: Correct escape pattern
-              .replace(/https?:\/\/[^\/]+/, '.*'); // Make domain flexible
+const urlPattern = config.file
+  .replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // Escape regex special chars
+  .replace(/https?:\/\/[^\/]+/, '.*'); // Make domain flexible
             
             generatedRules.push({
               id: `auto-rule-${ruleId++}`,
@@ -1838,7 +1798,7 @@ app.post("/api/trigger-css-generation", async (req, res) => {
       try {
         // Get active theme
         const themesResponse = await axios.get(
-          `https://${shop}/admin/api/2025-01/themes.json`,
+          `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes.json`,
           {
             headers: {
               'X-Shopify-Access-Token': shopData.access_token
@@ -1851,7 +1811,7 @@ app.post("/api/trigger-css-generation", async (req, res) => {
         if (activeTheme) {
           // Get theme.liquid asset
           const assetResponse = await axios.get(
-            `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`,
+            `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`,
             {
               headers: {
                 'X-Shopify-Access-Token': shopData.access_token
@@ -1915,7 +1875,7 @@ app.post("/api/trigger-css-generation", async (req, res) => {
 
             // Update theme.liquid
             await axios.put(
-              `https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`,
+              `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json`,
               {
                 asset: {
                   key: 'layout/theme.liquid',
@@ -2247,6 +2207,13 @@ function addToCategory(categories, template, pageData) {
   }
   categories[template].push(pageData);
 }
+//// ====== Mount Routes with Proper Prefixes (CRITICAL FIX) ======
+// Defer configuration routes
+app.use("/defer-config", deferConfigRoutes);
+
+// RabbitLoader Connect Routes - MUST be mounted on /rl prefix
+app.use("/rl", shopifyConnectRouter);
+
 
 // Defer config API route
 app.get("/defer-config/api", async (req, res) => {
@@ -2287,11 +2254,7 @@ app.get("/defer-config/api", async (req, res) => {
   }
 });
 
-// Defer configuration routes - these need shop parameter validation but not OAuth
-app.use("/defer-config", deferConfigRoutes);
 
-// RabbitLoader Connect Routes - FIXED: Mount on specific path to avoid conflicts
-app.use("/rl", shopifyConnect.router);
 
 // ====== Root Route (BEFORE auth middleware) - UPDATED FOR STATIC HTML ======
 app.get("/", (req, res) => {

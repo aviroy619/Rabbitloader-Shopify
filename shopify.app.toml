@@ -15,7 +15,7 @@ automatically_update_urls_on_dev = true
 use_legacy_install_flow = false
 
 [webhooks]
-api_version = "2024-01"
+api_version = "2025-01"
 
 # App lifecycle webhooks
 [[webhooks.subscriptions]]
@@ -61,9 +61,8 @@ uri = "/webhooks/articles/create"
 [auth]
 redirect_urls = [
   "https://shopify.rb8.in/shopify/auth/callback",
-  "https://shopify.rb8.in/auth/callback"
+  "https://shopify.rb8.in/rl/rl-callback"
 ]
-
 [pos]
 embedded = false
 

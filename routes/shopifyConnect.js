@@ -7,7 +7,7 @@ async function injectDeferScript(shop, did, accessToken) {
 
   try {
     // Get active theme
-    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
+    const themesResponse = await fetch(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes.json`, {
       headers: {
         'X-Shopify-Access-Token': accessToken,
         'Content-Type': 'application/json'
@@ -26,7 +26,7 @@ async function injectDeferScript(shop, did, accessToken) {
     }
 
     // Get theme.liquid file
-    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+    const assetResponse = await fetch(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
       headers: {
         'X-Shopify-Access-Token': accessToken,
         'Content-Type': 'application/json'
@@ -73,7 +73,7 @@ async function injectDeferScript(shop, did, accessToken) {
     }
 
     // Update theme file
-    const updateResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
+    const updateResponse = await fetch(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json`, {
       method: 'PUT',
       headers: {
         'X-Shopify-Access-Token': accessToken,
@@ -350,8 +350,6 @@ router.get("/debug/:shop", async (req, res) => {
   }
 });
 
-// Export both router and helper function
-module.exports = {
-  router,
-  injectDeferScript
-};
+// Export router as default, attach helper function as property
+module.exports = router;
+module.exports.injectDeferScript = injectDeferScript;
