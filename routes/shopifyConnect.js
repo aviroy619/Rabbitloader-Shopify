@@ -220,6 +220,58 @@ router.get("/rl-callback", async (req, res) => {
     `);
   }
 });
+// Disconnect from RabbitLoader - GET route
+router.get("/rl-disconnect", async (req, res) => {
+  const { shop } = req.query;
+  
+  console.log(`[RL] Disconnect request for: ${shop}`);
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $unset: { 
+          api_token: "", 
+          short_id: "",
+          script_injected: "",
+          script_injection_attempted: "",
+          critical_css_injected: ""
+        },
+        $set: { connected_at: null },
+        $push: {
+          history: {
+            event: "disconnect",
+            timestamp: new Date(),
+            details: { via: "manual-rl-disconnect" }
+          }
+        }
+      }
+    );
+
+    console.log(`[RL] ✅ Disconnected shop: ${shop}`);
+    
+    res.json({ 
+      ok: true, 
+      message: "Disconnected from RabbitLoader successfully" 
+    });
+    
+  } catch (error) {
+    console.error(`[RL] ❌ Disconnect error:`, error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "Failed to disconnect" 
+    });
+  }
+});
 
 // Health check for RabbitLoader routes
 router.get("/health", (req, res) => {
