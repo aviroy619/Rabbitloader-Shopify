@@ -2295,7 +2295,7 @@ app.use("/rl", shopifyConnect.router);
 
 // ====== Root Route (BEFORE auth middleware) - UPDATED FOR STATIC HTML ======
 app.get("/", (req, res) => {
-  const { shop, host, embedded, connected, script_injected } = req.query;
+  const { shop, host, embedded, connected, script_injected, hmac, timestamp } = req.query;
   
   console.log(`Root route accessed:`, {
     shop: shop || 'none',
@@ -2303,9 +2303,27 @@ app.get("/", (req, res) => {
     embedded: embedded || 'none',
     connected: connected || 'none',
     script_injected: script_injected || 'none',
+    hmac: hmac ? 'present' : 'none',
+    timestamp: timestamp || 'none',
     userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none',
     referer: req.headers.referer || 'none'
   });
+
+  // AUTO-DETECT: If we have shop + host + (hmac OR timestamp), this is from Shopify OAuth
+  const isFromShopifyOAuth = shop && host && (hmac || timestamp);
+  
+  if (isFromShopifyOAuth && embedded !== '1') {
+    console.log(`⚠️ Detected Shopify OAuth callback WITHOUT embedded=1 - auto-fixing`);
+    
+    // Redirect to same URL but with embedded=1
+    const params = new URLSearchParams(req.query);
+    params.set('embedded', '1');
+    
+    const redirectUrl = `/?${params.toString()}`;
+    console.log(`Redirecting to: ${redirectUrl}`);
+    
+    return res.redirect(redirectUrl);
+  }
 
   // For embedded apps, shop parameter is REQUIRED
   if (embedded === '1' && !shop) {

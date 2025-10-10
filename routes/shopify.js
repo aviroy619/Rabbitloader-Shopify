@@ -44,16 +44,27 @@ router.get("/auth/callback", async (req, res) => {
   const { code, hmac, shop, state, timestamp } = req.query;
   const { "rl-token": rlToken } = req.query;
 
-  console.log("Callback received:", {
-    hasCode: !!code,
-    hasRlToken: !!rlToken,
-    shop,
-    hmac: hmac ? hmac.substring(0, 10) + "..." : "none"
-  });
+  console.log("=================================================");
+  console.log("📥 OAuth Callback received:");
+  console.log("=================================================");
+  console.log("Shop:", shop);
+  console.log("Has code:", !!code);
+  console.log("Has hmac:", !!hmac);
+  console.log("Has RL token:", !!rlToken);
+  console.log("Timestamp:", timestamp);
+  console.log("State:", state);
+  console.log("Full query params:", JSON.stringify(req.query, null, 2));
+  console.log("Referer:", req.headers.referer || 'none');
+  console.log("=================================================");
 
   // Handle RabbitLoader callback (when coming back from RL)
-  if (rlToken && shop) {
-    console.log(`Processing RabbitLoader callback for ${shop}`);
+ if (rlToken && shop) {
+    console.log("=================================================");
+    console.log("🐰 RabbitLoader Callback Processing");
+    console.log("=================================================");
+    console.log("Shop:", shop);
+    console.log("RL Token present:", !!rlToken);
+    console.log("Host param:", req.query.host || 'none');
     try {
       const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
       
@@ -89,8 +100,15 @@ router.get("/auth/callback", async (req, res) => {
       // Redirect back to embedded app with proper host parameter
       const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1`;
       
-      console.log("Redirecting to embedded app:", redirectUrl);
-      console.log("Generated host parameter:", hostParam);
+      console.log("=================================================");
+      console.log("🔀 REDIRECTING AFTER RL CONNECTION:");
+      console.log("=================================================");
+      console.log("Shop:", shop);
+      console.log("Host param:", hostParam);
+      console.log("Full redirect URL:", redirectUrl);
+      console.log("Full URL with domain:", `${process.env.APP_URL}${redirectUrl}`);
+      console.log("=================================================");
+      
       return res.redirect(redirectUrl);
       
     } catch (err) {
@@ -179,25 +197,32 @@ if (isReinstall) {
   console.log(`Shopify OAuth completed for ${shop}`);
 }
 
-    console.log(`Shopify OAuth completed for ${shop}`);
+   console.log(`✅ Shopify OAuth completed for ${shop}`);
 
     // Generate proper host parameter for Shopify OAuth redirect
-const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
-const hostParam = req.query.host || shopBase64;
+    const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
+    const hostParam = req.query.host || shopBase64;
 
-// Build redirect URL - add trigger_setup for reinstalls
-let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&shopify_auth=1`;
+    // Build redirect URL - add trigger_setup for reinstalls
+    let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&shopify_auth=1`;
 
-// If this is a reinstall, trigger the complete setup flow
-if (isReinstall) {
-  redirectUrl += '&trigger_setup=1';
-  console.log("Shopify OAuth redirect (REINSTALL - triggering setup):", redirectUrl);
-} else {
-  console.log("Shopify OAuth redirect:", redirectUrl);
-}
+    // If this is a reinstall, trigger the complete setup flow
+    if (isReinstall) {
+      redirectUrl += '&trigger_setup=1';
+      console.log("🔄 REINSTALL DETECTED - Triggering complete setup");
+    }
 
-console.log("Generated host parameter:", hostParam);
-res.redirect(redirectUrl);
+    console.log("=================================================");
+    console.log("🔀 REDIRECTING AFTER OAUTH:");
+    console.log("=================================================");
+    console.log("Shop:", shop);
+    console.log("Host param (base64):", hostParam);
+    console.log("Is reinstall:", isReinstall || false);
+    console.log("Full redirect URL:", redirectUrl);
+    console.log("Full URL with domain:", `${process.env.APP_URL}${redirectUrl}`);
+    console.log("=================================================");
+    
+    res.redirect(redirectUrl);
 
   } catch (err) {
     console.error("OAuth callback error:", err);
