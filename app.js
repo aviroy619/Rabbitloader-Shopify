@@ -52,10 +52,9 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   store: MongoStore.create({
-    mongoUrl: process.env.MONGO_URI,
-    touchAfter: 24 * 3600, // 24 hours
-    dbName: 'RLPlatforms'
-  }),
+  mongoUrl: process.env.MONGO_URI,
+  touchAfter: 24 * 3600 // 24 hours
+}),
   cookie: { 
     secure: true, // HTTPS only in production
     httpOnly: true,
@@ -82,7 +81,9 @@ app.use((req, res, next) => {
     // Allow embedding in Shopify admin
     res.removeHeader("X-Frame-Options");
     
-    console.log(`Setting embedded app CSP headers for ${req.path}`);
+    if (process.env.NODE_ENV !== 'production') {
+  console.log(`Setting embedded app CSP headers for ${req.path}`);
+}
   } else {
     // Standalone app - standard CSP
     res.setHeader(
@@ -111,11 +112,14 @@ mongoose.connection.on("error", (err) => {
 
 // ====== Static Files ======
 app.use(express.static(path.join(__dirname, "public")));
-
+app.use("/shopify", shopifyRoutes);
+app.use("/defer-config", deferConfigRoutes);
+app.use("/rl", shopifyConnectRouter);
 // ====== Route Imports ======
 const shopifyRoutes = require("./routes/shopify");
 const deferConfigRoutes = require("./routes/deferConfig");
 const shopifyConnectRouter = require("./routes/shopifyConnect");
+
 
 // Helper function to inject Critical CSS into theme - OPTION A (First Position)
 async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
@@ -2207,54 +2211,6 @@ function addToCategory(categories, template, pageData) {
   }
   categories[template].push(pageData);
 }
-//// ====== Mount Routes with Proper Prefixes (CRITICAL FIX) ======
-// Defer configuration routes
-app.use("/defer-config", deferConfigRoutes);
-
-// RabbitLoader Connect Routes - MUST be mounted on /rl prefix
-app.use("/rl", shopifyConnectRouter);
-
-
-// Defer config API route
-app.get("/defer-config/api", async (req, res) => {
-  try {
-    const shop = req.query.shop;
-    
-    if (!shop) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: "Shop parameter required" 
-      });
-    }
-
-    const shopData = await ShopModel.findOne({ shop });
-    
-    if (!shopData) {
-      return res.json({
-        ok: true,
-        has_config: false,
-        shop: shop,
-        message: "Shop not found - no defer config"
-      });
-    }
-    
-    res.json({
-      ok: true,
-      has_config: !!shopData.deferConfig,
-      shop: shop,
-      deferConfig: shopData.deferConfig || null
-    });
-
-  } catch (error) {
-    console.error('Error fetching defer config:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: "Internal server error" 
-    });
-  }
-});
-
-
 
 // ====== Root Route (BEFORE auth middleware) - UPDATED FOR STATIC HTML ======
 app.get("/", (req, res) => {
@@ -2386,8 +2342,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ====== Shopify Routes (AFTER auth middleware) ======
-app.use("/shopify", shopifyRoutes);
 // ====== Webhook Handler ======
 app.post("/webhooks/app/uninstalled", express.raw({ type: 'application/json' }), async (req, res) => {
   try {
@@ -3028,15 +2982,9 @@ app.use((err, req, res, next) => {
   });
 });
 
-// ====== Enhanced 404 Handler for Embedded Apps ======
+// ====== 404 Handler ======
 app.use((req, res) => {
-  console.log(`404 - Route not found:`, {
-    method: req.method,
-    path: req.path,
-    query: req.query,
-    embedded: req.query.embedded === '1',
-    userAgent: req.headers['user-agent'] ? req.headers['user-agent'].substring(0, 50) + '...' : 'none'
-  });
+  console.warn(`404 - Route not found: ${req.method} ${req.originalUrl}`);
   
   if (req.query.embedded === '1') {
     const shop = req.query.shop;
@@ -3080,7 +3028,6 @@ app.use((req, res) => {
           <h1>404 - Page Not Found</h1>
           <p>The requested page could not be found.</p>
           <p><strong>Path:</strong> ${req.path}</p>
-          <p><strong>Method:</strong> ${req.method}</p>
           ${shop ? `<a href="/?shop=${encodeURIComponent(shop)}&embedded=1" class="btn">Go to App Home</a>` : ''}
         </div>
       </body>
@@ -3090,18 +3037,17 @@ app.use((req, res) => {
     res.status(404).json({ 
       ok: false, 
       error: 'Route not found',
-      path: req.path,
+      path: req.originalUrl,
       method: req.method
     });
   }
 });
-
 app.listen(PORT, () => {
-  console.log(`RL-Shopify app running on port ${PORT}`);
-  console.log(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`App URL: ${process.env.APP_URL}`);
-  console.log(`Shopify API Key: ${process.env.SHOPIFY_API_KEY ? 'Set' : 'Missing'}`);
-  console.log(`Features: Static HTML, Defer script only, Auto-injection enabled, Enhanced PSI Analysis, Auto-apply defer rules`);
+  console.log(`✅ RL-Shopify app running on port ${PORT}`);
+  console.log(`🌐 App URL: ${process.env.APP_URL}`);
+  console.log(`🔧 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🔑 Shopify API Key: ${process.env.SHOPIFY_API_KEY ? 'Configured' : 'MISSING'}`);
+  console.log(`📦 Features: defer-js, auto-injection, psi-analysis, critical-css`);
 });
 
 // Export for use in other modules
