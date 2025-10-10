@@ -107,7 +107,7 @@ async function injectDeferScript(shop, did, accessToken) {
   }
 }
 
-// Handle RabbitLoader callbacks - SIMPLIFIED (no auto-injection)
+// Handle RabbitLoader callbacks
 router.get("/rl-callback", async (req, res) => {
   const { shop, "rl-token": rlToken } = req.query;
 
@@ -137,7 +137,6 @@ router.get("/rl-callback", async (req, res) => {
   }
 
   try {
-    // Decode the RabbitLoader token
     const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
     console.log("[RL] Decoded token:", {
       hasDid: !!(decoded.did || decoded.short_id),
@@ -146,7 +145,6 @@ router.get("/rl-callback", async (req, res) => {
       accountId: decoded.account_id
     });
     
-    // Store the connection data in database
     const ShopModel = require("../models/Shop");
     
     const updateData = {
@@ -154,7 +152,7 @@ router.get("/rl-callback", async (req, res) => {
         short_id: decoded.did || decoded.short_id,
         api_token: decoded.api_token,
         connected_at: new Date(),
-        needs_setup: true  // ← NEW: Mark that setup is needed
+        needs_setup: true
       },
       $push: {
         history: {
@@ -168,7 +166,6 @@ router.get("/rl-callback", async (req, res) => {
       }
     };
 
-    // Add account_id if provided
     if (decoded.account_id) {
       updateData.$set.account_id = decoded.account_id;
     }
@@ -185,16 +182,11 @@ router.get("/rl-callback", async (req, res) => {
       needsSetup: true
     });
 
-    // ✅ NO AUTO-INJECTION HERE ANYMORE!
-    // Setup will be triggered from frontend when dashboard loads
-    
     console.log(`[RL] Skipping auto-injection - will be triggered by complete setup flow`);
 
-    // Redirect back to Shopify admin with trigger_setup flag
     const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
     const hostParam = req.query.host || shopBase64;
     
-    // Add trigger_setup flag to start complete setup flow
     let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1&trigger_setup=1`;
     
     console.log("[RL] Redirecting to dashboard with trigger_setup flag:", redirectUrl);
@@ -220,7 +212,51 @@ router.get("/rl-callback", async (req, res) => {
     `);
   }
 });
-// Disconnect from RabbitLoader - GET route
+
+// Connect to RabbitLoader
+router.get("/rl-connect", async (req, res) => {
+  const { shop, host } = req.query;
+  
+  console.log(`[RL] Connect request for: ${shop}`);
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  try {
+    const connectUrl = new URL('https://rabbitloader.com/account/');
+    connectUrl.searchParams.set('source', 'shopify');
+    connectUrl.searchParams.set('action', 'connect');
+    connectUrl.searchParams.set('site_url', `https://${shop}`);
+    
+    const redirectUrl = new URL('/rl/rl-callback', process.env.APP_URL);
+    redirectUrl.searchParams.set('shop', shop);
+    if (host) {
+      redirectUrl.searchParams.set('host', host);
+    }
+    
+    connectUrl.searchParams.set('redirect_url', redirectUrl.toString());
+    connectUrl.searchParams.set('cms_v', 'shopify');
+    connectUrl.searchParams.set('plugin_v', '1.0.0');
+
+    const finalUrl = connectUrl.toString();
+    console.log(`[RL] Redirecting to RabbitLoader: ${finalUrl}`);
+
+    res.redirect(finalUrl);
+    
+  } catch (error) {
+    console.error(`[RL] ❌ Connect error:`, error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "Failed to initiate connection" 
+    });
+  }
+});
+
+// Disconnect from RabbitLoader
 router.get("/rl-disconnect", async (req, res) => {
   const { shop } = req.query;
   
@@ -273,18 +309,18 @@ router.get("/rl-disconnect", async (req, res) => {
   }
 });
 
-// Health check for RabbitLoader routes
+// Health check
 router.get("/health", (req, res) => {
   res.json({
     ok: true,
     service: "rabbitloader-connect",
     timestamp: new Date().toISOString(),
-    routes: ["rl-callback"],
+    routes: ["rl-callback", "rl-connect", "rl-disconnect", "health", "debug"],
     features: ["connection-only", "setup-via-frontend"]
   });
 });
 
-// Debug route to check connection status
+// Debug route
 router.get("/debug/:shop", async (req, res) => {
   const { shop } = req.params;
   
