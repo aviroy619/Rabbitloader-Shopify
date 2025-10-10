@@ -63,9 +63,13 @@ class RabbitLoaderDashboard {
       setTimeout(() => this.checkStatus(), 1000);
     }
 
-    if (urlParams.get('shopify_auth') === '1') {
-      this.showSuccess('Shopify authentication completed!');
-    }
+  // Handle trigger_setup flag (for fresh installs and reinstalls)
+  if (urlParams.get('trigger_setup') === '1') {
+    console.log('Setup trigger detected - starting complete setup flow');
+    this.showInfo('Setting up your store optimization... This may take a few minutes.');
+    // Trigger setup after a brief delay to ensure page is ready
+    setTimeout(() => this.triggerCompleteSetup(), 2000);
+  }
   }
 
   async checkStatus() {
@@ -445,7 +449,136 @@ class RabbitLoaderDashboard {
       this.showError('Failed to disconnect');
     }
   }
+async triggerCompleteSetup() {
+  if (!this.shop) {
+    this.showError('Shop parameter is required for setup');
+    return;
+  }
 
+  console.log(`Triggering complete setup for shop: ${this.shop}`);
+
+  try {
+    // Show loading message
+    this.showInfo('Optimizing your store... This may take up to 10 minutes. Please keep this page open.');
+
+    const response = await fetch('/api/complete-auto-setup', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ shop: this.shop })
+    });
+
+    const data = await response.json();
+
+    if (data.ok) {
+      console.log('Complete setup result:', data);
+      
+      // Build success message based on what worked
+      let successMessage = 'Store optimization complete! ';
+      const results = [];
+      
+      if (data.site_analysis_completed) results.push('Site analyzed');
+      if (data.css_generated) results.push('Critical CSS generated');
+      if (data.psi_completed) results.push('Performance analysis done');
+      if (data.defer_script_injected) results.push('Defer script injected');
+      if (data.critical_css_injected) results.push('Critical CSS injected');
+      
+      if (results.length > 0) {
+        successMessage += results.join(', ') + '.';
+      }
+      
+      this.showSuccess(successMessage);
+      
+      // Show warnings if any partial failures
+      if (data.warnings && data.warnings.length > 0) {
+        data.warnings.forEach(warning => {
+          this.showInfo(warning);
+        });
+      }
+      
+      // Refresh status and UI
+      setTimeout(() => {
+        this.checkStatus();
+        this.updateUI();
+      }, 2000);
+    } else {
+      console.error('Complete setup failed:', data);
+      this.showError(`Setup failed: ${data.error || 'Unknown error'}`);
+      
+      // If setup failed, trigger retry logic
+      if (data.retry_possible) {
+        setTimeout(() => this.retrySetup(), 5000);
+      }
+    }
+  } catch (error) {
+    console.error('Complete setup error:', error);
+    this.showError('Setup failed. Retrying...');
+    
+    // Auto-retry on error
+    setTimeout(() => this.retrySetup(), 5000);
+  }
+}
+async retrySetup(attemptNumber = 1) {
+  const maxAttempts = 2;
+  
+  if (attemptNumber > maxAttempts) {
+    console.log('Max retry attempts reached, showing manual instructions');
+    this.showError('Automatic setup failed after ' + maxAttempts + ' attempts. Please try manual setup.');
+    
+    // Show manual instructions
+    setTimeout(() => {
+      this.showScriptInstructions();
+    }, 2000);
+    return;
+  }
+
+  console.log(`Retrying setup (attempt ${attemptNumber} of ${maxAttempts})...`);
+  this.showInfo(`Retrying setup... (Attempt ${attemptNumber} of ${maxAttempts})`);
+
+  try {
+    const response = await fetch('/api/complete-auto-setup', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        shop: this.shop,
+        retry_attempt: attemptNumber
+      })
+    });
+
+    const data = await response.json();
+
+    if (data.ok) {
+      this.showSuccess('Setup completed successfully on retry!');
+      
+      // Refresh status
+      setTimeout(() => {
+        this.checkStatus();
+        this.updateUI();
+      }, 2000);
+    } else {
+      // Try again if we haven't hit max attempts
+      if (attemptNumber < maxAttempts) {
+        setTimeout(() => this.retrySetup(attemptNumber + 1), 5000);
+      } else {
+        this.showError('Setup failed after all retry attempts. Please use manual setup.');
+        setTimeout(() => this.showScriptInstructions(), 2000);
+      }
+    }
+  } catch (error) {
+    console.error(`Retry attempt ${attemptNumber} failed:`, error);
+    
+    // Try again if we haven't hit max attempts
+    if (attemptNumber < maxAttempts) {
+      setTimeout(() => this.retrySetup(attemptNumber + 1), 5000);
+    } else {
+      this.showError('Setup failed after all retry attempts. Please use manual setup.');
+      setTimeout(() => this.showScriptInstructions(), 2000);
+    }
+  }
+}
   initiateRabbitLoaderConnection() {
     if (!this.shop) {
       this.showError('Shop parameter is required for connection');

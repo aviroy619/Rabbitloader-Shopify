@@ -5,7 +5,7 @@ application_url = "https://shopify.rb8.in/"
 embedded = true
 
 # Scopes - Add the permissions your app needs
-scopes = "read_themes,write_themes,read_script_tags,write_script_tags,read_content,read_products"
+scopes = "read_themes,write_themes,read_script_tags,write_script_tags,read_content,read_products,read_orders"
 
 [build]
 automatically_update_urls_on_dev = true
@@ -17,9 +17,46 @@ use_legacy_install_flow = false
 [webhooks]
 api_version = "2024-01"
 
+# App lifecycle webhooks
 [[webhooks.subscriptions]]
 topics = ["app/uninstalled"]
 uri = "/webhooks/app/uninstalled"
+
+[[webhooks.subscriptions]]
+topics = ["app/installed"]
+uri = "/webhooks/app/installed"
+
+# Product webhooks (detect new products and template changes)
+[[webhooks.subscriptions]]
+topics = ["products/create"]
+uri = "/webhooks/products/create"
+
+[[webhooks.subscriptions]]
+topics = ["products/update"]
+uri = "/webhooks/products/update"
+
+# Page webhooks (detect new pages and template changes)
+[[webhooks.subscriptions]]
+topics = ["pages/create"]
+uri = "/webhooks/pages/create"
+
+[[webhooks.subscriptions]]
+topics = ["pages/update"]
+uri = "/webhooks/pages/update"
+
+# Collection webhooks (detect new collections)
+[[webhooks.subscriptions]]
+topics = ["collections/create"]
+uri = "/webhooks/collections/create"
+
+[[webhooks.subscriptions]]
+topics = ["collections/update"]
+uri = "/webhooks/collections/update"
+
+# Blog/Article webhooks (detect new blog posts)
+[[webhooks.subscriptions]]
+topics = ["articles/create"]
+uri = "/webhooks/articles/create"
 
 [auth]
 redirect_urls = [

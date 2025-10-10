@@ -1432,7 +1432,68 @@ app.get("/api/psi-status", async (req, res) => {
     });
   }
 });
+// NEW: API Route to analyze a single template (for new templates from webhooks)
+app.post("/api/analyze-single-template", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.body.shop;
+    const { template, url } = req.body;
+    
+    if (!shop || !template || !url) {
+      return res.status(400).json({
+        ok: false,
+        error: "shop, template, and url parameters required"
+      });
+    }
+    
+    if (!process.env.PAGESPEED_API_KEY) {
+      return res.status(500).json({
+        ok: false,
+        error: "PageSpeed Insights API key not configured"
+      });
+    }
 
+    const shopData = await ShopModel.findOne({ shop });
+    if (!shopData?.site_structure?.template_groups) {
+      return res.status(400).json({
+        ok: false,
+        error: "Run site analysis first"
+      });
+    }
+
+    console.log(`Starting single template analysis for ${shop}: ${template}`);
+
+    // Add to PSI queue
+    const task = {
+      shop: shop,
+      template: template,
+      url: url,
+      page_count: 1,
+      priority: 5 // Higher priority for single analysis
+    };
+    
+    psiAnalysisQueue.unshift(task); // Add to front of queue
+    
+    // Start processing if not already running
+    setTimeout(() => processPSIQueue(), 100);
+
+    res.json({
+      ok: true,
+      message: `PSI analysis queued for template ${template}`,
+      template: template,
+      url: url,
+      queue_position: 1,
+      estimated_time_minutes: 3
+    });
+
+  } catch (error) {
+    console.error('Error analyzing single template:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "Failed to start template analysis",
+      details: error.message 
+    });
+  }
+});
 // ====== Template Defer Configuration Routes ======
 
 // API Route: Get defer configuration for a specific template
@@ -1912,7 +1973,7 @@ app.post("/api/trigger-css-generation", async (req, res) => {
     });
   }
 });
-// NEW: Complete Auto-Setup Endpoint
+// FIXED: Complete Auto-Setup Endpoint with proper waits and error handling
 app.post("/api/complete-auto-setup", async (req, res) => {
   try {
     const shop = req.headers['x-shop'] || req.body.shop;
@@ -1932,85 +1993,253 @@ app.post("/api/complete-auto-setup", async (req, res) => {
       });
     }
 
+    if (!shopData?.short_id) {
+      return res.status(400).json({
+        ok: false,
+        error: "RabbitLoader not connected"
+      });
+    }
+
     console.log(`🚀 Starting complete auto-setup for ${shop}`);
-
-    // STEP 1: Site Analysis (if not already done)
-    if (!shopData.site_structure?.template_groups) {
-      console.log(`Step 1: Running site analysis...`);
-      // Trigger site analysis internally
-      const siteAnalysisResponse = await axios.get(
-        `${process.env.APP_URL}/api/site-analysis`,
-        { headers: { 'x-shop': shop } }
-      );
-      console.log(`✅ Site analysis complete: ${Object.keys(siteAnalysisResponse.data.templates.categories).length} templates found`);
-    }
-
-    // STEP 2: PSI Analysis + Auto-Apply Defer Rules
-    console.log(`Step 2: Starting PSI analysis for JS defer...`);
-    const psiResponse = await axios.post(
-      `${process.env.APP_URL}/api/start-psi-analysis`,
+    
+    // Mark setup as in progress
+    await ShopModel.updateOne(
       { shop },
-      { headers: { 'x-shop': shop } }
+      {
+        $set: {
+          setup_in_progress: true,
+          setup_failed: false,
+          last_setup_attempt: new Date()
+        }
+      }
     );
-    console.log(`✅ PSI analysis queued: ${psiResponse.data.templates_to_analyze.length} templates`);
 
-    // Wait for PSI to complete (poll status)
-    let psiComplete = false;
-    let attempts = 0;
-    while (!psiComplete && attempts < 30) { // Max 5 minutes
-      await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
-      const statusResponse = await axios.get(
-        `${process.env.APP_URL}/api/psi-status?shop=${shop}`
+    const results = {
+      site_analysis_completed: false,
+      css_generated: false,
+      psi_completed: false,
+      defer_script_injected: false,
+      critical_css_injected: false,
+      warnings: []
+    };
+
+    // STEP 1: Site Analysis
+    try {
+      console.log(`Step 1/4: Running site analysis...`);
+      
+      if (!shopData.site_structure?.template_groups) {
+        const siteAnalysisResponse = await axios.get(
+          `${process.env.APP_URL}/api/site-analysis`,
+          { 
+            headers: { 'x-shop': shop },
+            timeout: 60000 // 1 minute timeout
+          }
+        );
+        
+        if (siteAnalysisResponse.data.ok) {
+          results.site_analysis_completed = true;
+          console.log(`✅ Site analysis complete: ${Object.keys(siteAnalysisResponse.data.templates.categories).length} templates`);
+        }
+      } else {
+        results.site_analysis_completed = true;
+        console.log(`✅ Site structure already exists, skipping analysis`);
+      }
+    } catch (error) {
+      console.error('❌ Site analysis failed:', error.message);
+      results.warnings.push('Site analysis failed: ' + error.message);
+    }
+
+    // STEP 2: Critical CSS Generation (run first - faster than PSI)
+    try {
+      console.log(`Step 2/4: Generating Critical CSS...`);
+      
+      const criticalCssServiceUrl = process.env.CRITICAL_CSS_SERVICE_URL || 'http://45.32.212.222:3000';
+      
+      const cssResponse = await axios.post(
+        `${criticalCssServiceUrl}/api/shopify/generate-all-css`,
+        { shop },
+        { timeout: 300000 } // 5 minute timeout
       );
-      psiComplete = statusResponse.data.progress_percent === 100;
-      attempts++;
-      console.log(`PSI Progress: ${statusResponse.data.progress_percent}%`);
+      
+      if (cssResponse.data.ok && cssResponse.data.summary.successful > 0) {
+        results.css_generated = true;
+        console.log(`✅ Critical CSS generated for ${cssResponse.data.summary.successful} templates`);
+      } else {
+        results.warnings.push('Critical CSS generation failed or returned no results');
+      }
+    } catch (error) {
+      console.error('❌ Critical CSS generation failed:', error.message);
+      results.warnings.push('Critical CSS generation failed - will use fallback');
+      // Continue anyway - we have fallback CSS
     }
 
-    if (!psiComplete) {
-      throw new Error('PSI analysis timed out');
+    // STEP 3: Inject Critical CSS Script into theme
+    try {
+      console.log(`Step 3/4: Injecting Critical CSS script...`);
+      
+      if (!shopData.critical_css_injected) {
+        const cssInjectionResult = await injectCriticalCSSIntoTheme(
+          shop,
+          shopData.short_id,
+          shopData.access_token
+        );
+        
+        if (cssInjectionResult.success) {
+          results.critical_css_injected = true;
+          console.log(`✅ Critical CSS script injected`);
+          
+          await ShopModel.updateOne(
+            { shop },
+            {
+              $set: {
+                critical_css_injected: true,
+                critical_css_injection_date: new Date()
+              }
+            }
+          );
+        }
+      } else {
+        results.critical_css_injected = true;
+        console.log(`✅ Critical CSS script already injected`);
+      }
+    } catch (error) {
+      console.error('❌ CSS script injection failed:', error.message);
+      results.warnings.push('Critical CSS injection failed: ' + error.message);
     }
 
-    // STEP 3: Critical CSS Generation
-    console.log(`Step 3: Generating critical CSS...`);
-    const cssResponse = await axios.post(
-      `${process.env.APP_URL}/api/trigger-css-generation`,
+    // STEP 4: PSI Analysis (slowest - do last)
+    try {
+      console.log(`Step 4/4: Starting PSI analysis...`);
+      
+      const psiResponse = await axios.post(
+        `${process.env.APP_URL}/api/start-psi-analysis`,
+        { shop },
+        { 
+          headers: { 'x-shop': shop },
+          timeout: 60000
+        }
+      );
+      
+      if (psiResponse.data.ok) {
+        console.log(`PSI analysis queued: ${psiResponse.data.templates_to_analyze.length} templates`);
+        
+        // Poll for completion (max 10 minutes)
+        let psiComplete = false;
+        let attempts = 0;
+        const maxAttempts = 60; // 10 minutes (60 * 10 seconds)
+        
+        while (!psiComplete && attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, 10000)); // Wait 10 seconds
+          
+          const statusResponse = await axios.get(
+            `${process.env.APP_URL}/api/psi-status?shop=${shop}`
+          );
+          
+          psiComplete = statusResponse.data.progress_percent === 100;
+          attempts++;
+          
+          if (attempts % 6 === 0) { // Log every minute
+            console.log(`PSI Progress: ${statusResponse.data.progress_percent}% (${statusResponse.data.analyzed_templates}/${statusResponse.data.total_templates})`);
+          }
+        }
+        
+        if (psiComplete) {
+          results.psi_completed = true;
+          console.log(`✅ PSI analysis complete`);
+        } else {
+          results.warnings.push('PSI analysis timed out - continuing in background');
+          console.log(`⚠️ PSI analysis timeout - continuing in background`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ PSI analysis failed:', error.message);
+      results.warnings.push('PSI analysis failed: ' + error.message);
+    }
+
+    // STEP 5: Inject Defer Script
+    try {
+      console.log(`Step 5/5: Injecting defer script...`);
+      
+      if (!shopData.script_injected) {
+        const { injectDeferScript } = require('./routes/shopifyConnect');
+        
+        const deferResult = await injectDeferScript(
+          shop,
+          shopData.short_id,
+          shopData.access_token
+        );
+        
+        if (deferResult.success) {
+          results.defer_script_injected = true;
+          console.log(`✅ Defer script injected`);
+          
+          await ShopModel.updateOne(
+            { shop },
+            {
+              $set: {
+                script_injected: true,
+                script_injection_attempted: true
+              }
+            }
+          );
+        }
+      } else {
+        results.defer_script_injected = true;
+        console.log(`✅ Defer script already injected`);
+      }
+    } catch (error) {
+      console.error('❌ Defer script injection failed:', error.message);
+      results.warnings.push('Defer script injection failed: ' + error.message);
+    }
+
+    // Mark setup as complete
+    await ShopModel.updateOne(
       { shop },
-      { headers: { 'x-shop': shop } }
+      {
+        $set: {
+          setup_in_progress: false,
+          setup_completed: true,
+          setup_failed: false
+        }
+      }
     );
-    console.log(`✅ Critical CSS generated for ${cssResponse.data.summary.successful} templates`);
 
-    // STEP 4: Verify Everything
-    const finalVerification = await ShopModel.findOne({ shop });
-    const deferRulesCount = finalVerification?.deferConfig?.rules?.length || 0;
+    // Build response
+    const successCount = Object.values(results).filter(v => v === true).length;
+    const totalSteps = 5;
+    
+    console.log(`✅ Setup complete: ${successCount}/${totalSteps} steps successful`);
 
     res.json({
       ok: true,
-      message: 'Complete auto-setup finished successfully',
-      summary: {
-        templates_analyzed: Object.keys(finalVerification.site_structure.template_groups).length,
-        critical_css_generated: cssResponse.data.summary.successful,
-        defer_rules_created: deferRulesCount,
-        theme_injection: {
-          css_script: cssResponse.data.theme_injection?.success || false,
-          defer_script: true // Already injected during install
-        }
-      },
-      next_steps: [
-        'Visit your store to see Critical CSS and JS defer in action',
-        'Check browser console for: "Critical CSS loaded: [template]"',
-        'Check Network tab to verify deferred JS files'
-      ]
+      message: `Setup complete: ${successCount}/${totalSteps} steps successful`,
+      ...results,
+      retry_possible: successCount < totalSteps
     });
 
   } catch (error) {
     console.error('❌ Complete auto-setup failed:', error);
+    
+    // Mark setup as failed
+    await ShopModel.updateOne(
+      { shop: req.body.shop || req.headers['x-shop'] },
+      {
+        $set: {
+          setup_in_progress: false,
+          setup_failed: true,
+          setup_error: error.message
+        }
+      }
+    );
+    
     res.status(500).json({ 
       ok: false, 
-      error: error.message || "Auto-setup failed"
+      error: error.message || "Auto-setup failed",
+      retry_possible: true
     });
   }
 });
+
 // Helper function to add pages to template categories
 function addToCategory(categories, template, pageData) {
   if (!categories[template]) {
@@ -2178,7 +2407,6 @@ app.use((req, res, next) => {
 
 // ====== Shopify Routes (AFTER auth middleware) ======
 app.use("/shopify", shopifyRoutes);
-
 // ====== Webhook Handler ======
 app.post("/webhooks/app/uninstalled", express.raw({ type: 'application/json' }), async (req, res) => {
   try {
@@ -2215,6 +2443,512 @@ app.post("/webhooks/app/uninstalled", express.raw({ type: 'application/json' }),
   }
 });
 
+// NEW: Webhook handler for app installation/reinstallation
+app.post("/webhooks/app/installed", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    console.log(`App installed/reinstalled for shop: ${shop}`);
+    
+    if (shop) {
+      // Check if this is a reinstallation
+      const existingShop = await ShopModel.findOne({ shop });
+      
+      if (existingShop) {
+        // This is a REINSTALLATION
+        console.log(`Reinstallation detected for ${shop} - marking for setup`);
+        
+        await ShopModel.updateOne(
+          { shop },
+          {
+            $set: {
+              needs_setup: true,
+              setup_completed: false,
+              setup_in_progress: false
+            },
+            $push: {
+              history: {
+                event: "reinstalled",
+                timestamp: new Date(),
+                details: { via: "webhook" }
+              }
+            }
+          }
+        );
+      } else {
+        // First time installation
+        console.log(`First installation for ${shop}`);
+        
+        await ShopModel.create({
+          shop,
+          needs_setup: false, // Will be set after OAuth
+          history: [{
+            event: "installed",
+            timestamp: new Date(),
+            details: { via: "webhook" }
+          }]
+        });
+      }
+    }
+    
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('App installed webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+// NEW: Webhook handlers for content changes (products, pages, collections, articles)
+
+// Products created webhook
+app.post("/webhooks/products/create", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const webhookData = JSON.parse(req.body.toString());
+    
+    console.log(`Product created webhook for ${shop}:`, {
+      id: webhookData.id,
+      title: webhookData.title,
+      template_suffix: webhookData.template_suffix
+    });
+    
+    if (shop) {
+      // Queue webhook for batch processing
+      await ShopModel.updateOne(
+        { shop },
+        {
+          $push: {
+            pending_webhooks: `product_create_${webhookData.id}_${Date.now()}`
+          },
+          $set: {
+            last_webhook_processed: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      
+      // Process webhook (check for new template)
+      const template = webhookData.template_suffix ? 
+        `product.${webhookData.template_suffix}` : 
+        'product';
+      
+      await processNewTemplate(shop, template, {
+        id: `product_${webhookData.id}`,
+        title: webhookData.title,
+        handle: webhookData.handle,
+        url: `/products/${webhookData.handle}`,
+        type: 'product_page',
+        template: template
+      });
+    }
+    
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Products create webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+
+// Products updated webhook
+app.post("/webhooks/products/update", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const webhookData = JSON.parse(req.body.toString());
+    
+    console.log(`Product updated webhook for ${shop}:`, {
+      id: webhookData.id,
+      template_suffix: webhookData.template_suffix
+    });
+    
+    if (shop) {
+      await ShopModel.updateOne(
+        { shop },
+        {
+          $push: {
+            pending_webhooks: `product_update_${webhookData.id}_${Date.now()}`
+          },
+          $set: {
+            last_webhook_processed: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      
+      const template = webhookData.template_suffix ? 
+        `product.${webhookData.template_suffix}` : 
+        'product';
+      
+      await processNewTemplate(shop, template, {
+        id: `product_${webhookData.id}`,
+        title: webhookData.title,
+        handle: webhookData.handle,
+        url: `/products/${webhookData.handle}`,
+        type: 'product_page',
+        template: template
+      });
+    }
+    
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Products update webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+
+// Pages created webhook
+app.post("/webhooks/pages/create", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const webhookData = JSON.parse(req.body.toString());
+    
+    console.log(`Page created webhook for ${shop}:`, {
+      id: webhookData.id,
+      title: webhookData.title,
+      template_suffix: webhookData.template_suffix
+    });
+    
+    if (shop) {
+      await ShopModel.updateOne(
+        { shop },
+        {
+          $push: {
+            pending_webhooks: `page_create_${webhookData.id}_${Date.now()}`
+          },
+          $set: {
+            last_webhook_processed: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      
+      const template = webhookData.template_suffix ? 
+        `page.${webhookData.template_suffix}` : 
+        'page';
+      
+      await processNewTemplate(shop, template, {
+        id: `page_${webhookData.id}`,
+        title: webhookData.title,
+        handle: webhookData.handle,
+        url: `/pages/${webhookData.handle}`,
+        type: 'content_page',
+        template: template
+      });
+    }
+    
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Pages create webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+
+// Pages updated webhook
+app.post("/webhooks/pages/update", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const webhookData = JSON.parse(req.body.toString());
+    
+    console.log(`Page updated webhook for ${shop}:`, {
+      id: webhookData.id,
+      template_suffix: webhookData.template_suffix
+    });
+    
+    if (shop) {
+      await ShopModel.updateOne(
+        { shop },
+        {
+          $push: {
+            pending_webhooks: `page_update_${webhookData.id}_${Date.now()}`
+          },
+          $set: {
+            last_webhook_processed: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      
+      const template = webhookData.template_suffix ? 
+        `page.${webhookData.template_suffix}` : 
+        'page';
+      
+      await processNewTemplate(shop, template, {
+        id: `page_${webhookData.id}`,
+        title: webhookData.title,
+        handle: webhookData.handle,
+        url: `/pages/${webhookData.handle}`,
+        type: 'content_page',
+        template: template
+      });
+    }
+    
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Pages update webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+
+// Collections created webhook
+app.post("/webhooks/collections/create", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const webhookData = JSON.parse(req.body.toString());
+    
+    console.log(`Collection created webhook for ${shop}:`, {
+      id: webhookData.id,
+      title: webhookData.title,
+      template_suffix: webhookData.template_suffix
+    });
+    
+    if (shop) {
+      await ShopModel.updateOne(
+        { shop },
+        {
+          $push: {
+            pending_webhooks: `collection_create_${webhookData.id}_${Date.now()}`
+          },
+          $set: {
+            last_webhook_processed: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      
+      const template = webhookData.template_suffix ? 
+        `collection.${webhookData.template_suffix}` : 
+        'collection';
+      
+      await processNewTemplate(shop, template, {
+        id: `collection_${webhookData.id}`,
+        title: webhookData.title,
+        handle: webhookData.handle,
+        url: `/collections/${webhookData.handle}`,
+        type: 'collection_page',
+        template: template
+      });
+    }
+    
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Collections create webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+
+// Collections updated webhook
+app.post("/webhooks/collections/update", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const webhookData = JSON.parse(req.body.toString());
+    
+    console.log(`Collection updated webhook for ${shop}:`, {
+      id: webhookData.id,
+      template_suffix: webhookData.template_suffix
+    });
+    
+    if (shop) {
+      await ShopModel.updateOne(
+        { shop },
+        {
+          $push: {
+            pending_webhooks: `collection_update_${webhookData.id}_${Date.now()}`
+          },
+          $set: {
+            last_webhook_processed: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      
+      const template = webhookData.template_suffix ? 
+        `collection.${webhookData.template_suffix}` : 
+        'collection';
+      
+      await processNewTemplate(shop, template, {
+        id: `collection_${webhookData.id}`,
+        title: webhookData.title,
+        handle: webhookData.handle,
+        url: `/collections/${webhookData.handle}`,
+        type: 'collection_page',
+        template: template
+      });
+    }
+    
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Collections update webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+
+// Articles created webhook
+app.post("/webhooks/articles/create", express.raw({ type: 'application/json' }), async (req, res) => {
+  try {
+    const shop = req.get('X-Shopify-Shop-Domain');
+    const webhookData = JSON.parse(req.body.toString());
+    
+    console.log(`Article created webhook for ${shop}:`, {
+      id: webhookData.id,
+      title: webhookData.title,
+      template_suffix: webhookData.template_suffix
+    });
+    
+    if (shop) {
+      await ShopModel.updateOne(
+        { shop },
+        {
+          $push: {
+            pending_webhooks: `article_create_${webhookData.id}_${Date.now()}`
+          },
+          $set: {
+            last_webhook_processed: new Date()
+          }
+        },
+        { upsert: true }
+      );
+      
+      const template = webhookData.template_suffix ? 
+        `article.${webhookData.template_suffix}` : 
+        'article';
+      
+      await processNewTemplate(shop, template, {
+        id: `article_${webhookData.id}`,
+        title: webhookData.title,
+        handle: webhookData.handle,
+        url: `/blogs/${webhookData.blog_handle || 'news'}/${webhookData.handle}`,
+        type: 'article_page',
+        template: template
+      });
+    }
+    
+    res.status(200).send('OK');
+  } catch (err) {
+    console.error('Articles create webhook error:', err);
+    res.status(500).send('Error');
+  }
+});
+// Helper function to process new templates from webhooks
+async function processNewTemplate(shop, template, pageData) {
+  try {
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData?.site_structure?.template_groups) {
+      console.log(`No site structure for ${shop}, skipping template processing`);
+      return;
+    }
+    
+    const templateGroups = shopData.site_structure.template_groups;
+    const existingTemplate = templateGroups instanceof Map ? 
+      templateGroups.get(template) : 
+      templateGroups[template];
+    
+    if (existingTemplate) {
+      // Template exists - just add page to existing group
+      console.log(`Template ${template} exists, adding page to group`);
+      
+      const pages = existingTemplate.pages || [];
+      const pageExists = pages.some(p => p.id === pageData.id);
+      
+      if (!pageExists) {
+        await ShopModel.updateOne(
+          { shop },
+          {
+            $push: {
+              [`site_structure.template_groups.${template}.pages`]: pageData
+            },
+            $inc: {
+              [`site_structure.template_groups.${template}.count`]: 1
+            }
+          }
+        );
+        console.log(`Added page to existing template ${template}`);
+      }
+    } else {
+      // NEW TEMPLATE - create group and queue analysis
+      console.log(`NEW template detected: ${template}`);
+      
+      await ShopModel.updateOne(
+        { shop },
+        {
+          $set: {
+            [`site_structure.template_groups.${template}`]: {
+              count: 1,
+              pages: [pageData],
+              sample_page: pageData.url,
+              psi_analyzed: false,
+              pending_psi_analysis: true,
+              js_files: [],
+              defer_recommendations: []
+            }
+          }
+        }
+      );
+      
+      // Check page count for this template
+      const updatedShop = await ShopModel.findOne({ shop });
+      const newTemplateData = updatedShop.site_structure.template_groups instanceof Map ?
+        updatedShop.site_structure.template_groups.get(template) :
+        updatedShop.site_structure.template_groups[template];
+      
+      const pageCount = newTemplateData?.count || 1;
+      
+      // Queue PSI analysis if >5 pages
+      if (pageCount > 5) {
+        console.log(`Template ${template} has ${pageCount} pages - queueing PSI analysis`);
+        
+        psiAnalysisQueue.push({
+          shop: shop,
+          template: template,
+          url: pageData.url,
+          page_count: pageCount,
+          priority: 1
+        });
+        
+        // Start processing if not already running
+        setTimeout(() => processPSIQueue(), 100);
+      } else {
+        console.log(`Template ${template} has ${pageCount} pages - marking for future analysis`);
+      }
+      
+      // Always generate Critical CSS immediately (fast)
+      try {
+        const criticalCssServiceUrl = process.env.CRITICAL_CSS_SERVICE_URL || 'http://45.32.212.222:3000';
+        
+        await axios.post(
+          `${criticalCssServiceUrl}/api/shopify/generate-css`,
+          {
+            shop: shop,
+            template: template,
+            url: pageData.url
+          },
+          { timeout: 60000 }
+        );
+        
+        console.log(`✅ Critical CSS generated for new template ${template}`);
+        
+        await ShopModel.updateOne(
+          { shop },
+          {
+            $set: {
+              [`site_structure.template_groups.${template}.css_generated`]: true
+            }
+          }
+        );
+      } catch (cssError) {
+        console.error(`CSS generation failed for ${template}:`, cssError.message);
+        
+        await ShopModel.updateOne(
+          { shop },
+          {
+            $set: {
+              [`site_structure.template_groups.${template}.css_generation_error`]: cssError.message
+            }
+          }
+        );
+      }
+    }
+  } catch (error) {
+    console.error(`Error processing new template ${template}:`, error);
+  }
+}
 // ====== Health Check ======
 app.get('/health', (req, res) => {
   res.json({ 

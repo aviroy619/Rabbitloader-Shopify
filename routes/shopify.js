@@ -144,38 +144,60 @@ router.get("/auth/callback", async (req, res) => {
       throw new Error("Failed to get access token from Shopify");
     }
 
-    // Save shop with access token (use $set + $push to avoid conflicts)
-    const shopRecord = await ShopModel.findOneAndUpdate(
-      { shop },
-      {
-        $set: {
-          shop,
-          access_token: tokenData.access_token,
-          connected_at: new Date()
-        },
-        $push: {
-          history: {
-            event: "shopify_auth",
-            timestamp: new Date(),
-            details: { via: "oauth" }
-          }
+    // Check if this is a reinstallation BEFORE saving
+const existingShop = await ShopModel.findOne({ shop });
+const isReinstall = existingShop && !existingShop.access_token && existingShop.short_id;
+
+// Save shop with access token (use $set + $push to avoid conflicts)
+const shopRecord = await ShopModel.findOneAndUpdate(
+  { shop },
+  {
+    $set: {
+      shop,
+      access_token: tokenData.access_token,
+      connected_at: new Date(),
+      // If this is a reinstall, mark for setup
+      needs_setup: isReinstall ? true : false
+    },
+    $push: {
+      history: {
+        event: "shopify_auth",
+        timestamp: new Date(),
+        details: { 
+          via: "oauth",
+          reinstall: isReinstall || false
         }
-      },
-      { upsert: true, new: true }
-    );
+      }
+    }
+  },
+  { upsert: true, new: true }
+);
+
+if (isReinstall) {
+  console.log(`Reinstallation detected for ${shop} - will trigger setup`);
+} else {
+  console.log(`Shopify OAuth completed for ${shop}`);
+}
 
     console.log(`Shopify OAuth completed for ${shop}`);
 
     // Generate proper host parameter for Shopify OAuth redirect
-    const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
-    const hostParam = req.query.host || shopBase64;
-    
-    // Redirect to app with proper host parameter
-    const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&shopify_auth=1`;
-    
-    console.log("Shopify OAuth redirect:", redirectUrl);
-    console.log("Generated host parameter:", hostParam);
-    res.redirect(redirectUrl);
+const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
+const hostParam = req.query.host || shopBase64;
+
+// Build redirect URL - add trigger_setup for reinstalls
+let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&shopify_auth=1`;
+
+// If this is a reinstall, trigger the complete setup flow
+if (isReinstall) {
+  redirectUrl += '&trigger_setup=1';
+  console.log("Shopify OAuth redirect (REINSTALL - triggering setup):", redirectUrl);
+} else {
+  console.log("Shopify OAuth redirect:", redirectUrl);
+}
+
+console.log("Generated host parameter:", hostParam);
+res.redirect(redirectUrl);
 
   } catch (err) {
     console.error("OAuth callback error:", err);
