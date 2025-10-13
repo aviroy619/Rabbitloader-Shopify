@@ -5,8 +5,7 @@ application_url = "https://shopify.rb8.in/"
 embedded = true
 
 # Scopes - Add the permissions your app needs
-scopes = "read_themes,write_themes,read_script_tags,write_script_tags,read_content,read_products,read_orders"
-
+scopes = "read_themes,write_themes,read_script_tags,write_script_tags,read_content,write_content,read_products,write_products"
 [build]
 automatically_update_urls_on_dev = true
 
