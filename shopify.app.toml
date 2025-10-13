@@ -59,7 +59,7 @@ uri = "/webhooks/articles/create"
 
 [auth]
 redirect_urls = [
-  "https://shopify.rb8.in/shopify/auth/callback",
+  "https://shopify.rb8.in/shopify/callback",
   "https://shopify.rb8.in/rl/rl-callback"
 ]
 [pos]
