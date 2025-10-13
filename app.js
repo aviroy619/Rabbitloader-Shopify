@@ -29,9 +29,7 @@ const cookieParser = require("cookie-parser");
 const mongoose = require("mongoose");
 const path = require("path");
 const ShopModel = require("./models/Shop");
-
-// Import enhanced PSI analyzer
-const { analyzeSinglePage: analyzePageWithPSI } = require('./utils/psiAnalyzer');
+const jsDeferService = require('./services/jsDeferService');
 
 // Initialize express
 const app = express();
@@ -1040,189 +1038,6 @@ app.get("/api/site-analysis", async (req, res) => {
 
 // ====== Enhanced PSI Analysis Section ======
 
-// Simple in-memory queue for PSI analysis
-const psiAnalysisQueue = [];
-let isProcessingPSI = false;
-
-// PSI Analysis Queue Processor - Updated to use new analyzer
-async function processPSIQueue() {
-  if (isProcessingPSI || psiAnalysisQueue.length === 0) return;
-  
-  isProcessingPSI = true;
-  console.log(`Processing PSI queue - ${psiAnalysisQueue.length} items remaining`);
-  
-  while (psiAnalysisQueue.length > 0) {
-    const task = psiAnalysisQueue.shift();
-    try {
-      console.log(`Analyzing ${task.url} for shop ${task.shop}`);
-      
-      // Use the new enhanced analyzer
-      const analysisResult = await analyzePageWithPSI(task);
-      
-      // Save comprehensive results to database
-      await saveAnalysisResults(analysisResult);
-      
-      // Wait 2 seconds between requests to respect API limits
-      await new Promise(resolve => setTimeout(resolve, 2000));
-    } catch (error) {
-      console.error(`PSI analysis failed for ${task.url}:`, error.message);
-      
-      // Mark as failed in database
-      await markAnalysisAsFailed(task, error.message);
-    }
-  }
-  
-  isProcessingPSI = false;
-}
-
-// Save analysis results to database AND apply defer rules
-async function saveAnalysisResults(analysisResult) {
-  const { shop, template, jsAnalysis, deferRecommendations, psiRawData, analysisSummary } = analysisResult;
-  
-  await ShopModel.findOneAndUpdate(
-    { shop },
-    {
-      $set: {
-        [`site_structure.template_groups.${template}.psi_analyzed`]: true,
-        [`site_structure.template_groups.${template}.js_files`]: jsAnalysis.allFiles.map(f => f.url),
-        [`site_structure.template_groups.${template}.js_analysis`]: {
-          total_files: jsAnalysis.totalFiles,
-          categories: Object.keys(jsAnalysis.categories).reduce((acc, cat) => {
-            acc[cat] = jsAnalysis.categories[cat].length;
-            return acc;
-          }, {}),
-          category_details: jsAnalysis.categories,
-          render_blocking: jsAnalysis.renderBlocking,
-          unused_js: jsAnalysis.unusedJs.map(u => ({
-            url: u.url,
-            wastedPercent: u.wastedPercent,
-            wastedKB: u.wastedKB,
-            category: u.category,
-            deferPriority: u.deferPriority
-          })),
-          total_waste_kb: jsAnalysis.totalWasteKB
-        },
-        [`site_structure.template_groups.${template}.defer_recommendations`]: deferRecommendations,
-        [`site_structure.template_groups.${template}.last_psi_analysis`]: new Date(),
-        [`site_structure.template_groups.${template}.analysis_summary`]: analysisSummary,
-        // Store compressed PSI data (optional - only key metrics)
-        [`site_structure.template_groups.${template}.psi_metrics`]: {
-          performance_score: psiRawData?.audits?.['performance']?.score * 100 || 0,
-          lcp_time: psiRawData?.audits?.['largest-contentful-paint']?.numericValue || 0,
-          fid_time: psiRawData?.audits?.['first-input-delay']?.numericValue || 0,
-          cls_score: psiRawData?.audits?.['cumulative-layout-shift']?.numericValue || 0,
-          created_at: new Date(),
-          url_analyzed: analysisResult.url
-        }
-      }
-    }
-  );
-  
-  console.log(`Enhanced PSI analysis saved for ${shop} template ${template}:`, {
-    jsFiles: jsAnalysis.totalFiles,
-    deferRecommendations: deferRecommendations.length,
-    totalWasteKB: jsAnalysis.totalWasteKB,
-    categories: Object.keys(jsAnalysis.categories).filter(cat => jsAnalysis.categories[cat].length > 0)
-  });
-  
-  // NEW: Auto-apply defer rules to pages
-  await applyTemplateRulesToPages(shop, template, deferRecommendations);
-}
-
-// NEW FUNCTION: Apply template rules to pages
-async function applyTemplateRulesToPages(shop, template, deferRecommendations) {
-  try {
-    // Filter for high/medium priority recommendations only
-    const rules = deferRecommendations
-      .filter(rec => rec.priority === 'high' || rec.priority === 'medium')
-      .map((rec, idx) => {
-        // Escape regex special characters in the file URL
-        const escapedUrl = rec.file
-          .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-          .replace(/https?:\/\/[^\/]+/, '.*');
-        
-        return {
-          id: `${template}-rule-${idx}`,
-          src_regex: escapedUrl,
-          action: 'defer',
-          priority: rec.priority === 'high' ? 8 : 5,
-          enabled: true,
-          conditions: {
-            page_types: [template]
-          },
-          generated_from: {
-            template: template,
-            original_file: rec.file,
-            reason: rec.reason,
-            confidence: rec.confidence
-          }
-        };
-      });
-    
-    if (rules.length === 0) {
-      console.log(`No rules to apply for template ${template}`);
-      return;
-    }
-
-    // Get existing defer config or create new one
-    const shopData = await ShopModel.findOne({ shop });
-    const existingRules = shopData?.deferConfig?.rules || [];
-    
-    // Remove old rules for this template to avoid duplicates
-    const filteredRules = existingRules.filter(rule => 
-      !rule.id?.startsWith(`${template}-rule-`)
-    );
-    
-    // Add new rules
-    const updatedRules = [...filteredRules, ...rules];
-    
-    // FIXED: Use upsert and proper structure
-    await ShopModel.findOneAndUpdate(
-      { shop },
-      {
-        $set: {
-          deferConfig: {  // FIXED: Set entire object
-            rules: updatedRules,
-            enabled: true,
-            updated_at: new Date(),
-            source: 'auto',
-            release_after_ms: 2000,
-            version: '1.0.0'
-          }
-        }
-      },
-      { upsert: true, new: true } // FIXED: Ensure upsert creates if not exists
-    );
-    
-    console.log(`✅ Applied ${rules.length} defer rules for template ${template} on shop ${shop}`);
-    
-    // VERIFY it was saved
-    const verification = await ShopModel.findOne({ shop }, { deferConfig: 1 });
-    console.log(`Verification - Rules saved: ${verification?.deferConfig?.rules?.length || 0}`);
-    
-  } catch (error) {
-    console.error(`❌ Error applying template rules for ${template}:`, error);
-    throw error;
-  }
-}
-// Mark analysis as failed
-async function markAnalysisAsFailed(task, errorMessage) {
-  const { shop, template } = task;
-  
-  await ShopModel.findOneAndUpdate(
-    { shop },
-    {
-      $set: {
-        [`site_structure.template_groups.${template}.psi_analyzed`]: false,
-        [`site_structure.template_groups.${template}.psi_error`]: {
-          message: errorMessage,
-          timestamp: new Date(),
-          url_attempted: task.url
-        }
-      }
-    }
-  );
-}
 
 // API Route: Start PSI Analysis - Updated
 app.post("/api/start-psi-analysis", async (req, res) => {
@@ -1235,13 +1050,6 @@ app.post("/api/start-psi-analysis", async (req, res) => {
         error: "Shop parameter required"
       });
     }
-    
-    if (!process.env.PAGESPEED_API_KEY) {
-      return res.status(500).json({
-        ok: false,
-        error: "PageSpeed Insights API key not configured"
-      });
-    }
 
     const shopData = await ShopModel.findOne({ shop });
     if (!shopData?.site_structure?.template_groups) {
@@ -1251,71 +1059,70 @@ app.post("/api/start-psi-analysis", async (req, res) => {
       });
     }
 
-    // Queue PSI analysis for each template's sample page
-    const queuedPages = [];
+    // Build template list for microservice
     const templateGroups = shopData.site_structure.template_groups;
-    
-    // Convert Map to regular object if needed
     const templates = templateGroups instanceof Map ? 
       Array.from(templateGroups.entries()) : 
       Object.entries(templateGroups);
     
-    // Always prioritize home page
-    let homePageAdded = false;
-    
-    templates.forEach(([template, group]) => {
-      if (group.sample_page && !group.psi_analyzed) {
-        const isHomePage = group.sample_page === '/' || template.includes('index') || template.includes('home');
-        
-        const task = {
-          shop: shop,
-          template: template,
-          url: group.sample_page,
-          page_count: group.count,
-          priority: isHomePage ? 10 : 1
-        };
-        
-        if (isHomePage && !homePageAdded) {
-          queuedPages.unshift(task); // Add to front
-          homePageAdded = true;
-        } else {
-          queuedPages.push(task);
+    const templatesToAnalyze = templates
+      .filter(([template, group]) => group.sample_page && !group.psi_analyzed)
+      .map(([template, group]) => ({
+        template,
+        url: group.sample_page,
+        count: group.count || 1
+      }));
+
+    if (templatesToAnalyze.length === 0) {
+      return res.json({
+        ok: true,
+        message: "All templates already analyzed",
+        templates_to_analyze: []
+      });
+    }
+
+    console.log(`Starting JS Defer analysis for ${shop}: ${templatesToAnalyze.length} templates`);
+
+    // Queue analyses via microservice
+    const queueResult = await jsDeferService.queueBulkAnalysis({
+      shop,
+      templates: templatesToAnalyze
+    });
+
+    if (queueResult.success) {
+      // Start background polling for results
+      setTimeout(async () => {
+        console.log(`[Background] Starting result polling for ${shop}`);
+        for (let i = 0; i < 30; i++) { // Poll for up to 5 minutes
+          await new Promise(resolve => setTimeout(resolve, 10000)); // Every 10 seconds
+          const pollResult = await jsDeferService.pollAndSaveResults(1);
+          if (pollResult.success) {
+            console.log(`[Background] ✅ Results saved for ${shop}`);
+          }
         }
-      }
-    });
+      }, 5000);
 
-    // Add to processing queue
-    psiAnalysisQueue.push(...queuedPages);
-    
-    // Start processing if not already running
-    setTimeout(() => processPSIQueue(), 100);
-
-    res.json({
-      ok: true,
-      message: `Enhanced PSI analysis queued for ${queuedPages.length} template types`,
-      templates_to_analyze: queuedPages.map(p => p.template),
-      queue_position: psiAnalysisQueue.length,
-      estimated_time_minutes: Math.ceil(queuedPages.length * 3),
-      home_page_prioritized: homePageAdded,
-      features: [
-        'Comprehensive JavaScript extraction',
-        'Shopify-specific categorization',
-        'Waste percentage analysis',
-        'Intelligent defer recommendations',
-        'Auto-apply defer rules to pages'
-      ]
-    });
+      res.json({
+        ok: true,
+        message: `JS defer analysis queued for ${queueResult.successCount} templates`,
+        templates_to_analyze: templatesToAnalyze.map(t => t.template),
+        queued: queueResult.successCount,
+        total: templatesToAnalyze.length,
+        estimated_time_minutes: Math.ceil(templatesToAnalyze.length * 2)
+      });
+    } else {
+      throw new Error('Failed to queue analyses');
+    }
 
   } catch (error) {
-    console.error('Error starting enhanced PSI analysis:', error);
+    console.error('Error starting JS defer analysis:', error);
     res.status(500).json({ 
       ok: false, 
-      error: "Failed to start PSI analysis",
+      error: "Failed to start analysis",
       details: error.message 
     });
   }
 });
-
 // API Route: Check PSI Analysis Status - Enhanced
 app.get("/api/psi-status", async (req, res) => {
   try {
@@ -1352,23 +1159,28 @@ app.get("/api/psi-status", async (req, res) => {
       if (group.sample_page) {
         totalTemplates++;
         
-        // Enhanced status with new analysis data
         templateStatus[template] = {
           analyzed: group.psi_analyzed || false,
           js_files_found: (group.js_files || []).length,
-          recommendations_count: (group.defer_recommendations || []).length,
           last_analysis: group.last_psi_analysis,
-          // New enhanced data
-          js_analysis: group.js_analysis || null,
-          analysis_summary: group.analysis_summary || null,
-          psi_metrics: group.psi_metrics || null,
-          error: group.psi_error || null
+          has_recommendations: !!(group.defer_recommendations)
         };
         
         if (group.psi_analyzed) {
           analyzedTemplates++;
           totalJSFiles += (group.js_files || []).length;
-          totalWasteKB += (group.js_analysis?.total_waste_kb || 0);
+          
+          // Calculate total waste
+          if (group.defer_recommendations) {
+            const recs = group.defer_recommendations;
+            ['async', 'defer', 'delay'].forEach(action => {
+              if (recs[action]?.files) {
+                recs[action].files.forEach(f => {
+                  totalWasteKB += (f.waste_kb || 0);
+                });
+              }
+            });
+          }
         }
       }
     });
@@ -1378,24 +1190,20 @@ app.get("/api/psi-status", async (req, res) => {
       total_templates: totalTemplates,
       analyzed_templates: analyzedTemplates,
       progress_percent: totalTemplates > 0 ? Math.round((analyzedTemplates / totalTemplates) * 100) : 0,
-      queue_remaining: psiAnalysisQueue.length,
-      is_processing: isProcessingPSI,
       template_status: templateStatus,
-      last_analyzed: shopData.site_structure.last_analyzed,
-      // Enhanced summary stats
       summary_stats: {
         total_js_files: totalJSFiles,
-        total_waste_kb: totalWasteKB,
-        avg_js_per_template: analyzedTemplates > 0 ? Math.round(totalJSFiles / analyzedTemplates) : 0,
-        avg_waste_per_template: analyzedTemplates > 0 ? Math.round(totalWasteKB / analyzedTemplates) : 0
-      }
+        total_waste_kb: Math.round(totalWasteKB),
+        avg_js_per_template: analyzedTemplates > 0 ? Math.round(totalJSFiles / analyzedTemplates) : 0
+      },
+      last_site_analysis: shopData.site_structure.last_analyzed
     });
 
   } catch (error) {
     console.error('Error checking PSI status:', error);
     res.status(500).json({ 
       ok: false, 
-      error: "Failed to check PSI status" 
+      error: "Failed to check status" 
     });
   }
 });
@@ -1411,56 +1219,49 @@ app.post("/api/analyze-single-template", async (req, res) => {
         error: "shop, template, and url parameters required"
       });
     }
-    
-    if (!process.env.PAGESPEED_API_KEY) {
-      return res.status(500).json({
-        ok: false,
-        error: "PageSpeed Insights API key not configured"
-      });
-    }
 
-    const shopData = await ShopModel.findOne({ shop });
-    if (!shopData?.site_structure?.template_groups) {
-      return res.status(400).json({
-        ok: false,
-        error: "Run site analysis first"
-      });
-    }
+    console.log(`Single template analysis for ${shop}: ${template}`);
 
-    console.log(`Starting single template analysis for ${shop}: ${template}`);
-
-    // Add to PSI queue
-    const task = {
-      shop: shop,
-      template: template,
-      url: url,
-      page_count: 1,
-      priority: 5 // Higher priority for single analysis
-    };
-    
-    psiAnalysisQueue.unshift(task); // Add to front of queue
-    
-    // Start processing if not already running
-    setTimeout(() => processPSIQueue(), 100);
-
-    res.json({
-      ok: true,
-      message: `PSI analysis queued for template ${template}`,
-      template: template,
-      url: url,
-      queue_position: 1,
-      estimated_time_minutes: 3
+    // Queue analysis
+    const queueResult = await jsDeferService.queueAnalysis({
+      shop,
+      template,
+      url
     });
+
+    if (queueResult.success) {
+      // Poll for results (wait up to 2 minutes)
+      setTimeout(async () => {
+        for (let i = 0; i < 12; i++) { // 12 attempts * 10 seconds = 2 minutes
+          await new Promise(resolve => setTimeout(resolve, 10000));
+          const pollResult = await jsDeferService.pollAndSaveResults(1);
+          if (pollResult.success && pollResult.result.template === template) {
+            console.log(`✅ Single template analysis complete: ${template}`);
+            break;
+          }
+        }
+      }, 5000);
+
+      res.json({ 
+        ok: true, 
+        message: `Analysis queued for template ${template}`,
+        jobId: queueResult.jobId,
+        estimated_time_seconds: queueResult.estimatedTime
+      });
+    } else {
+      throw new Error(queueResult.error || 'Failed to queue analysis');
+    }
 
   } catch (error) {
     console.error('Error analyzing single template:', error);
     res.status(500).json({ 
       ok: false, 
-      error: "Failed to start template analysis",
+      error: "Failed to start analysis",
       details: error.message 
     });
   }
 });
+
 // ====== Template Defer Configuration Routes ======
 
 // API Route: Get defer configuration for a specific template
@@ -2769,7 +2570,7 @@ async function processNewTemplate(shop, template, pageData) {
     const shopData = await ShopModel.findOne({ shop });
     
     if (!shopData?.site_structure?.template_groups) {
-      console.log(`No site structure for ${shop}, skipping template processing`);
+      console.log(`No site structure for ${shop}, skipping`);
       return;
     }
     
@@ -2779,9 +2580,7 @@ async function processNewTemplate(shop, template, pageData) {
       templateGroups[template];
     
     if (existingTemplate) {
-      // Template exists - just add page to existing group
-      console.log(`Template ${template} exists, adding page to group`);
-      
+      // Template exists - add page
       const pages = existingTemplate.pages || [];
       const pageExists = pages.some(p => p.id === pageData.id);
       
@@ -2797,11 +2596,11 @@ async function processNewTemplate(shop, template, pageData) {
             }
           }
         );
-        console.log(`Added page to existing template ${template}`);
+        console.log(`Added page to template ${template}`);
       }
     } else {
-      // NEW TEMPLATE - create group and queue analysis
-      console.log(`NEW template detected: ${template}`);
+      // NEW TEMPLATE - create and analyze
+      console.log(`🆕 New template: ${template}`);
       
       await ShopModel.updateOne(
         { shop },
@@ -2812,15 +2611,13 @@ async function processNewTemplate(shop, template, pageData) {
               pages: [pageData],
               sample_page: pageData.url,
               psi_analyzed: false,
-              pending_psi_analysis: true,
               js_files: [],
-              defer_recommendations: []
+              defer_recommendations: {}
             }
           }
         }
       );
       
-      // Check page count for this template
       const updatedShop = await ShopModel.findOne({ shop });
       const newTemplateData = updatedShop.site_structure.template_groups instanceof Map ?
         updatedShop.site_structure.template_groups.get(template) :
@@ -2828,63 +2625,42 @@ async function processNewTemplate(shop, template, pageData) {
       
       const pageCount = newTemplateData?.count || 1;
       
-      // Queue PSI analysis if >5 pages
+      // Trigger JS Defer analysis if >5 pages
       if (pageCount > 5) {
-        console.log(`Template ${template} has ${pageCount} pages - queueing PSI analysis`);
+        console.log(`Template ${template} has ${pageCount} pages - analyzing`);
         
-        psiAnalysisQueue.push({
-          shop: shop,
-          template: template,
-          url: pageData.url,
-          page_count: pageCount,
-          priority: 1
+        jsDeferService.queueAnalysis({
+          shop,
+          template,
+          url: pageData.url
+        }).then(result => {
+          if (result.success) {
+            console.log(`✅ Analysis queued for ${template}`);
+            // Poll for results
+            setTimeout(() => jsDeferService.pollAndSaveResults(5), 10000);
+          }
+        }).catch(err => {
+          console.error(`Failed to queue analysis for ${template}:`, err.message);
         });
-        
-        // Start processing if not already running
-        setTimeout(() => processPSIQueue(), 100);
-      } else {
-        console.log(`Template ${template} has ${pageCount} pages - marking for future analysis`);
       }
       
-      // Always generate Critical CSS immediately (fast)
+      // Generate Critical CSS (existing service)
       try {
-        const criticalCssServiceUrl = process.env.CRITICAL_CSS_SERVICE_URL || 'http://45.32.212.222:3000';
+        const criticalCssServiceUrl = process.env.CRITICAL_CSS_SERVICE_URL || 'http://localhost:3010';
         
         await axios.post(
           `${criticalCssServiceUrl}/api/shopify/generate-css`,
-          {
-            shop: shop,
-            template: template,
-            url: pageData.url
-          },
+          { shop, template, url: pageData.url },
           { timeout: 60000 }
         );
         
-        console.log(`✅ Critical CSS generated for new template ${template}`);
-        
-        await ShopModel.updateOne(
-          { shop },
-          {
-            $set: {
-              [`site_structure.template_groups.${template}.css_generated`]: true
-            }
-          }
-        );
+        console.log(`✅ Critical CSS generated for ${template}`);
       } catch (cssError) {
         console.error(`CSS generation failed for ${template}:`, cssError.message);
-        
-        await ShopModel.updateOne(
-          { shop },
-          {
-            $set: {
-              [`site_structure.template_groups.${template}.css_generation_error`]: cssError.message
-            }
-          }
-        );
       }
     }
   } catch (error) {
-    console.error(`Error processing new template ${template}:`, error);
+    console.error(`Error processing template ${template}:`, error);
   }
 }
 // ====== Health Check ======
@@ -2910,64 +2686,50 @@ app.get('/debug/headers', (req, res) => {
   });
 });
 
-// ====== Test PSI Analysis Route ======
-app.post("/api/test-psi", async (req, res) => {
+// NEW: API to manually trigger result polling
+// ============================================
+app.post("/api/poll-defer-results", async (req, res) => {
   try {
-    const { url } = req.body;
+    const shop = req.headers['x-shop'] || req.body.shop;
     
-    if (!url) {
+    if (!shop) {
       return res.status(400).json({
         ok: false,
-        error: "URL parameter required"
+        error: "Shop parameter required"
       });
     }
-    
-    if (!process.env.PAGESPEED_API_KEY) {
-      return res.status(500).json({
+
+    console.log(`Manual polling for ${shop}`);
+
+    const pollResult = await jsDeferService.pollAndSaveResults(3);
+
+    if (pollResult.success) {
+      res.json({
+        ok: true,
+        message: "Results retrieved and saved",
+        result: {
+          shop: pollResult.result.shop,
+          template: pollResult.result.template,
+          total_js_files: pollResult.result.total_js_files,
+          total_waste_kb: pollResult.result.total_waste_kb
+        }
+      });
+    } else {
+      res.json({
         ok: false,
-        error: "PageSpeed Insights API key not configured"
+        message: "No new results available",
+        error: pollResult.error
       });
     }
-
-    req.setTimeout(300000);
-    res.setTimeout(300000);
-
-    const testTask = {
-      shop: 'test-shop.com',
-      template: 'test',
-      url: url,
-      page_count: 1
-    };
-
-    console.log(`Testing PSI analysis for: ${url}`);
-    
-    const analysisResult = await analyzePageWithPSI(testTask);
-    
-    res.json({
-      ok: true,
-      url: analysisResult.url,
-      analysis: {
-        total_js_files: analysisResult.jsAnalysis.totalFiles,
-        total_waste_kb: analysisResult.jsAnalysis.totalWasteKB,
-        categories: Object.keys(analysisResult.jsAnalysis.categories).reduce((acc, cat) => {
-          acc[cat] = analysisResult.jsAnalysis.categories[cat].length;
-          return acc;
-        }, {}),
-        defer_recommendations: analysisResult.deferRecommendations.length,
-        top_recommendations: analysisResult.deferRecommendations.slice(0, 3)
-      }
-    });
 
   } catch (error) {
-    console.error('PSI test analysis failed:', error);
+    console.error('Poll results error:', error);
     res.status(500).json({ 
       ok: false, 
-      error: "PSI analysis failed",
-      details: error.message 
+      error: "Failed to poll results"
     });
   }
 });
-
 // ====== Error Handling ======
 app.use((err, req, res, next) => {
   console.error('Unhandled error:', err);
