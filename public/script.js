@@ -458,125 +458,141 @@ async triggerCompleteSetup() {
   console.log(`Triggering complete setup for shop: ${this.shop}`);
 
   try {
-    // Show loading message
-    this.showInfo('Optimizing your store... This may take up to 10 minutes. Please keep this page open.');
-
-    const response = await fetch('/api/complete-auto-setup', {
+    // Step 1: Start the setup (returns immediately)
+    this.showInfo('Starting store optimization...');
+    
+    const startResponse = await fetch('/api/start-setup', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ shop: this.shop })
     });
 
-    const data = await response.json();
+    const startData = await startResponse.json();
 
-    if (data.ok) {
-      console.log('Complete setup result:', data);
-      
-      // Build success message based on what worked
-      let successMessage = 'Store optimization complete! ';
-      const results = [];
-      
-      if (data.site_analysis_completed) results.push('Site analyzed');
-      if (data.css_generated) results.push('Critical CSS generated');
-      if (data.psi_completed) results.push('Performance analysis done');
-      if (data.defer_script_injected) results.push('Defer script injected');
-      if (data.critical_css_injected) results.push('Critical CSS injected');
-      
-      if (results.length > 0) {
-        successMessage += results.join(', ') + '.';
-      }
-      
-      this.showSuccess(successMessage);
-      
-      // Show warnings if any partial failures
-      if (data.warnings && data.warnings.length > 0) {
-        data.warnings.forEach(warning => {
-          this.showInfo(warning);
-        });
-      }
-      
-      // Refresh status and UI
-      setTimeout(() => {
-        this.checkStatus();
-        this.updateUI();
-      }, 2000);
-    } else {
-      console.error('Complete setup failed:', data);
-      this.showError(`Setup failed: ${data.error || 'Unknown error'}`);
-      
-      // If setup failed, trigger retry logic
-      if (data.retry_possible) {
-        setTimeout(() => this.retrySetup(), 5000);
-      }
+    if (!startData.ok) {
+      throw new Error(startData.error || 'Failed to start setup');
     }
+
+    console.log('Setup started, now polling for progress...');
+    
+    // Step 2: Show progress bar
+    this.showProgressBar();
+    
+    // Step 3: Poll for progress
+    await this.pollSetupProgress();
+    
   } catch (error) {
     console.error('Complete setup error:', error);
-    this.showError('Setup failed. Retrying...');
-    
-    // Auto-retry on error
-    setTimeout(() => this.retrySetup(), 5000);
+    this.showError('Setup failed: ' + error.message);
+    this.hideProgressBar();
   }
 }
-async retrySetup(attemptNumber = 1) {
-  const maxAttempts = 2;
+
+showProgressBar() {
+  const connectedSection = document.querySelector('#connectedState .connected-section');
+  if (!connectedSection) return;
   
-  if (attemptNumber > maxAttempts) {
-    console.log('Max retry attempts reached, showing manual instructions');
-    this.showError('Automatic setup failed after ' + maxAttempts + ' attempts. Please try manual setup.');
+  // Remove existing progress bar if any
+  const existing = document.querySelector('.setup-progress');
+  if (existing) existing.remove();
+  
+  const progressHTML = `
+    <div class="setup-progress" style="margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+      <h3>🔧 Optimizing Your Store...</h3>
+      <div style="margin: 15px 0;">
+        <div style="background: #e0e0e0; height: 30px; border-radius: 15px; overflow: hidden;">
+          <div id="progress-bar" style="background: linear-gradient(90deg, #4CAF50, #8BC34A); height: 100%; width: 0%; transition: width 0.5s;"></div>
+        </div>
+        <p id="progress-text" style="margin-top: 10px; font-weight: bold;">Starting... 0%</p>
+      </div>
+      <div id="progress-steps" style="margin-top: 15px; font-size: 14px;"></div>
+      <p style="color: #666; margin-top: 10px;">⏱️ This will take 5-10 minutes. Don't close this page.</p>
+    </div>
+  `;
+  
+  connectedSection.insertAdjacentHTML('afterbegin', progressHTML);
+}
+
+hideProgressBar() {
+  const progressBar = document.querySelector('.setup-progress');
+  if (progressBar) progressBar.remove();
+}
+
+async pollSetupProgress() {
+  let attempts = 0;
+  const maxAttempts = 120; // 10 minutes (120 * 5 seconds)
+  
+  while (attempts < maxAttempts) {
+    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
     
-    // Show manual instructions
-    setTimeout(() => {
-      this.showScriptInstructions();
-    }, 2000);
-    return;
-  }
-
-  console.log(`Retrying setup (attempt ${attemptNumber} of ${maxAttempts})...`);
-  this.showInfo(`Retrying setup... (Attempt ${attemptNumber} of ${maxAttempts})`);
-
-  try {
-    const response = await fetch('/api/complete-auto-setup', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ 
-        shop: this.shop,
-        retry_attempt: attemptNumber
-      })
-    });
-
-    const data = await response.json();
-
-    if (data.ok) {
-      this.showSuccess('Setup completed successfully on retry!');
+    try {
+      const response = await fetch(`/api/setup-status?shop=${encodeURIComponent(this.shop)}`);
+      const data = await response.json();
       
-      // Refresh status
-      setTimeout(() => {
-        this.checkStatus();
-        this.updateUI();
-      }, 2000);
-    } else {
-      // Try again if we haven't hit max attempts
-      if (attemptNumber < maxAttempts) {
-        setTimeout(() => this.retrySetup(attemptNumber + 1), 5000);
-      } else {
-        this.showError('Setup failed after all retry attempts. Please use manual setup.');
-        setTimeout(() => this.showScriptInstructions(), 2000);
+      if (!data.ok) {
+        throw new Error(data.error || 'Failed to get status');
       }
+      
+      // Update progress bar
+      this.updateProgressBar(data.progress, data.current_step, data.completed_steps);
+      
+      // Check if complete
+      if (data.progress >= 100 || data.status === 'complete') {
+        this.showSuccess('✅ Store optimization complete!');
+        this.hideProgressBar();
+        
+        // Show any warnings
+        if (data.warnings && data.warnings.length > 0) {
+          data.warnings.forEach(w => this.showInfo(w));
+        }
+        
+        // Refresh dashboard
+        setTimeout(() => {
+          this.checkStatus();
+          this.updateUI();
+        }, 2000);
+        
+        return; // Done!
+      }
+      
+      // Check if failed
+      if (data.status === 'failed') {
+        throw new Error('Setup failed: ' + (data.error || 'Unknown error'));
+      }
+      
+    } catch (error) {
+      console.error('Poll error:', error);
+      this.showError('Progress check failed: ' + error.message);
+      this.hideProgressBar();
+      return;
     }
-  } catch (error) {
-    console.error(`Retry attempt ${attemptNumber} failed:`, error);
     
-    // Try again if we haven't hit max attempts
-    if (attemptNumber < maxAttempts) {
-      setTimeout(() => this.retrySetup(attemptNumber + 1), 5000);
-    } else {
-      this.showError('Setup failed after all retry attempts. Please use manual setup.');
-      setTimeout(() => this.showScriptInstructions(), 2000);
-    }
+    attempts++;
+  }
+  
+  // Timeout
+  this.showError('Setup is taking longer than expected. Check back in a few minutes.');
+  this.hideProgressBar();
+}
+
+updateProgressBar(progress, currentStep, completedSteps) {
+  const progressBar = document.getElementById('progress-bar');
+  const progressText = document.getElementById('progress-text');
+  const progressSteps = document.getElementById('progress-steps');
+  
+  if (progressBar) {
+    progressBar.style.width = progress + '%';
+  }
+  
+  if (progressText) {
+    progressText.textContent = `${currentStep || 'Processing'}... ${progress}%`;
+  }
+  
+  if (progressSteps && completedSteps) {
+    const stepsHTML = completedSteps.map(step => 
+      `<div style="color: #4CAF50;">✅ ${step}</div>`
+    ).join('');
+    progressSteps.innerHTML = stepsHTML;
   }
 }
   initiateRabbitLoaderConnection() {

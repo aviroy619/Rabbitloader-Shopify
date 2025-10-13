@@ -1741,6 +1741,288 @@ app.post("/api/trigger-css-generation", async (req, res) => {
     });
   }
 });
+// Background setup function
+// Background setup function
+async function runSetupInBackground(shop) {
+  const shopData = await ShopModel.findOne({ shop });
+  const completedSteps = [];
+  const warnings = [];
+  let progress = 0;
+
+  try {
+    // STEP 1: Site Analysis (20%)
+    await ShopModel.updateOne({ shop }, { 
+      $set: { setup_current_step: 'Analyzing site', setup_progress: 10 }
+    });
+    
+    if (!shopData.site_structure?.template_groups) {
+      const response = await axios.get(
+        `${process.env.APP_URL}/api/site-analysis`,
+        { headers: { 'x-shop': shop }, timeout: 60000 }
+      );
+      
+      if (response.data.ok) {
+        completedSteps.push('Site analyzed: ' + Object.keys(response.data.templates.categories).length + ' templates');
+        progress = 20;
+      }
+    } else {
+      completedSteps.push('Site structure already exists');
+      progress = 20;
+    }
+    
+    await ShopModel.updateOne({ shop }, { 
+      $set: { setup_progress: progress, setup_completed_steps: completedSteps }
+    });
+
+    // STEP 2: Critical CSS (40%)
+    await ShopModel.updateOne({ shop }, { 
+      $set: { setup_current_step: 'Generating Critical CSS', setup_progress: 30 }
+    });
+    
+    try {
+      const cssResponse = await axios.post(
+        `${process.env.CRITICAL_CSS_SERVICE_URL || 'http://45.32.212.222:3000'}/api/shopify/generate-all-css`,
+        { shop },
+        { timeout: 300000 }
+      );
+      
+      if (cssResponse.data.ok && cssResponse.data.summary.successful > 0) {
+        completedSteps.push('Critical CSS generated');
+      } else {
+        warnings.push('CSS generation returned no results');
+      }
+    } catch (error) {
+      warnings.push('CSS generation failed - using fallback');
+    }
+    
+    progress = 40;
+    await ShopModel.updateOne({ shop }, { 
+      $set: { setup_progress: progress, setup_completed_steps: completedSteps, setup_warnings: warnings }
+    });
+
+    // STEP 3: CSS Injection (60%)
+    await ShopModel.updateOne({ shop }, { 
+      $set: { setup_current_step: 'Injecting CSS script', setup_progress: 50 }
+    });
+    
+    const updatedShopData = await ShopModel.findOne({ shop });
+    
+    if (!updatedShopData.critical_css_injected) {
+      const cssResult = await injectCriticalCSSIntoTheme(
+        shop,
+        updatedShopData.short_id,
+        updatedShopData.access_token
+      );
+      
+      if (cssResult.success) {
+        completedSteps.push('CSS script injected');
+        await ShopModel.updateOne({ shop }, {
+          $set: { critical_css_injected: true }
+        });
+      } else {
+        warnings.push('CSS injection skipped - already exists');
+      }
+    } else {
+      completedSteps.push('CSS script already injected');
+    }
+    
+    progress = 60;
+    await ShopModel.updateOne({ shop }, { 
+      $set: { setup_progress: progress, setup_completed_steps: completedSteps, setup_warnings: warnings }
+    });
+
+    // STEP 4: PSI Analysis (80%)
+    await ShopModel.updateOne({ shop }, { 
+      $set: { setup_current_step: 'Analyzing performance', setup_progress: 70 }
+    });
+    
+    const psiResponse = await axios.post(
+      `${process.env.APP_URL}/api/start-psi-analysis`,
+      { shop },
+      { headers: { 'x-shop': shop }, timeout: 60000 }
+    );
+    
+    if (psiResponse.data.ok) {
+      completedSteps.push('Performance analysis queued: ' + psiResponse.data.queued + ' templates');
+      
+      // Wait for PSI to complete (max 5 minutes)
+      let psiComplete = false;
+      let attempts = 0;
+      
+      while (!psiComplete && attempts < 30) {
+        await new Promise(resolve => setTimeout(resolve, 10000));
+        
+        const statusResponse = await axios.get(
+          `${process.env.APP_URL}/api/psi-status?shop=${shop}`
+        );
+        
+        psiComplete = statusResponse.data.progress_percent === 100;
+        attempts++;
+      }
+      
+      if (psiComplete) {
+        completedSteps.push('Performance analysis complete');
+      } else {
+        warnings.push('Performance analysis continuing in background');
+      }
+    }
+    
+    progress = 80;
+    await ShopModel.updateOne({ shop }, { 
+      $set: { setup_progress: progress, setup_completed_steps: completedSteps, setup_warnings: warnings }
+    });
+
+    // STEP 5: Defer Script (100%)
+    await ShopModel.updateOne({ shop }, { 
+      $set: { setup_current_step: 'Injecting defer script', setup_progress: 90 }
+    });
+    
+    const finalShopData = await ShopModel.findOne({ shop });
+    
+    if (!finalShopData.script_injected) {
+      const { injectDeferScript } = require('./routes/shopifyConnect');
+      
+      const deferResult = await injectDeferScript(
+        shop,
+        finalShopData.short_id,
+        finalShopData.access_token
+      );
+      
+      if (deferResult.success) {
+        completedSteps.push('Defer script injected');
+        await ShopModel.updateOne({ shop }, {
+          $set: { script_injected: true }
+        });
+      }
+    } else {
+      completedSteps.push('Defer script already injected');
+    }
+    
+    progress = 100;
+
+    // Mark as complete
+    await ShopModel.updateOne({ shop }, {
+      $set: {
+        setup_status: 'complete',
+        setup_progress: 100,
+        setup_completed_steps: completedSteps,
+        setup_current_step: 'Complete',
+        setup_in_progress: false,
+        setup_completed_at: new Date(),
+        setup_warnings: warnings
+      }
+    });
+
+    console.log(`✅ Background setup complete for ${shop}`);
+
+  } catch (error) {
+    console.error(`❌ Background setup failed for ${shop}:`, error);
+    
+    await ShopModel.updateOne({ shop }, {
+      $set: {
+        setup_status: 'failed',
+        setup_in_progress: false,
+        setup_error: error.message,
+        setup_warnings: warnings
+      }
+    });
+  }
+}
+// NEW: Start setup (async, returns immediately)
+app.post("/api/start-setup", async (req, res) => {
+  try {
+    const shop = req.headers['x-shop'] || req.body.shop;
+    
+    if (!shop) {
+      return res.status(400).json({
+        ok: false,
+        error: "Shop parameter required"
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    if (!shopData?.access_token) {
+      return res.status(401).json({
+        ok: false,
+        error: "Shop not authenticated"
+      });
+    }
+
+    console.log(`🚀 Starting async setup for ${shop}`);
+    
+    // Mark setup as starting
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $set: {
+          setup_in_progress: true,
+          setup_status: 'starting',
+          setup_progress: 0,
+          setup_completed_steps: [],
+          setup_current_step: 'Initializing',
+          setup_started_at: new Date()
+        }
+      }
+    );
+
+    // Return immediately
+    res.json({
+      ok: true,
+      message: 'Setup started',
+      shop: shop
+    });
+
+    // Run setup in background (don't await)
+    runSetupInBackground(shop).catch(err => {
+      console.error(`Background setup failed for ${shop}:`, err);
+    });
+
+  } catch (error) {
+    console.error('Error starting setup:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+// NEW: Get setup status (for polling)
+app.get("/api/setup-status", async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    
+    if (!shop) {
+      return res.status(400).json({
+        ok: false,
+        error: "Shop parameter required"
+      });
+    }
+
+    const shopData = await ShopModel.findOne({ shop });
+    
+    if (!shopData) {
+      return res.status(404).json({
+        ok: false,
+        error: "Shop not found"
+      });
+    }
+
+    res.json({
+      ok: true,
+      status: shopData.setup_status || 'pending',
+      progress: shopData.setup_progress || 0,
+      current_step: shopData.setup_current_step || 'Waiting',
+      completed_steps: shopData.setup_completed_steps || [],
+      warnings: shopData.setup_warnings || []
+    });
+
+  } catch (error) {
+    console.error('Error getting setup status:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
 // FIXED: Complete Auto-Setup Endpoint with proper waits and error handling
 app.post("/api/complete-auto-setup", async (req, res) => {
   try {
