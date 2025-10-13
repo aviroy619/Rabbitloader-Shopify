@@ -1,22 +1,20 @@
-client_id = "09d41e81fb0d15dd76bc6586d4f9ddd2"
-name = "RL2"
-handle = "rl2"
+client_id = "5c0a85f4b21187c3b4fd41a34c688a6a"
+name = "RabbitLoader"
+handle = "rabbitloader"
 application_url = "https://shopify.rb8.in/"
 embedded = true
 
-# Scopes - Add the permissions your app needs
-scopes = "read_themes,write_themes,read_script_tags,write_script_tags,read_content,write_content,read_products,write_products"
+scopes = "read_products,write_products,read_script_tags,write_script_tags,read_content,write_content,read_themes,write_themes"
+
 [build]
 automatically_update_urls_on_dev = true
 
 [access_scopes]
-# Define the scopes your app requires
 use_legacy_install_flow = false
 
 [webhooks]
-api_version = "2025-01"
+api_version = "2025-10"
 
-# App lifecycle webhooks
 [[webhooks.subscriptions]]
 topics = ["app/uninstalled"]
 uri = "/webhooks/app/uninstalled"
@@ -25,7 +23,6 @@ uri = "/webhooks/app/uninstalled"
 topics = ["app/installed"]
 uri = "/webhooks/app/installed"
 
-# Product webhooks (detect new products and template changes)
 [[webhooks.subscriptions]]
 topics = ["products/create"]
 uri = "/webhooks/products/create"
@@ -34,45 +31,10 @@ uri = "/webhooks/products/create"
 topics = ["products/update"]
 uri = "/webhooks/products/update"
 
-# Page webhooks (detect new pages and template changes)
-[[webhooks.subscriptions]]
-topics = ["pages/create"]
-uri = "/webhooks/pages/create"
-
-[[webhooks.subscriptions]]
-topics = ["pages/update"]
-uri = "/webhooks/pages/update"
-
-# Collection webhooks (detect new collections)
-[[webhooks.subscriptions]]
-topics = ["collections/create"]
-uri = "/webhooks/collections/create"
-
-[[webhooks.subscriptions]]
-topics = ["collections/update"]
-uri = "/webhooks/collections/update"
-
-# Blog/Article webhooks (detect new blog posts)
-[[webhooks.subscriptions]]
-topics = ["articles/create"]
-uri = "/webhooks/articles/create"
-
 [auth]
 redirect_urls = [
-  "https://shopify.rb8.in/shopify/callback",
-  "https://shopify.rb8.in/rl/rl-callback"
+  "https://shopify.rb8.in/shopify/auth/callback"
 ]
+
 [pos]
 embedded = false
-
-# App proxy settings (if you need them later)
-[app_proxy]
-# url = "https://shopify.rb8.in"
-# subpath = "apps"
-# prefix = "apps"
-
-# App navigation for embedded apps
-[app_preferences]
-# Set default URL paths
-url_structure = "subpath"
-default_locale = "en"
