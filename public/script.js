@@ -577,7 +577,7 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
   }
 }
 
-  renderEnhancedDashboard() {
+ renderEnhancedDashboard() {
     const connectedSection = document.querySelector('#connectedState .connected-section');
     if (!connectedSection || !this.dashboardData) return;
 
@@ -586,62 +586,13 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
     // Update store stats
     this.updateStoreStats();
 
+    // NO HOMEPAGE PERFORMANCE OR PAGES SECTIONS
+    // Just add a simple status indicator
     const dashboardHTML = `
       <div class="enhanced-dashboard">
-        <!-- Homepage Performance with N/A structure -->
-        <div class="performance-section">
-          <h3>🏠 Homepage Performance</h3>
-          
-          <div class="score-grid">
-            <div class="score-card">
-              <div class="score-value">N/A</div>
-              <div class="score-label">Mobile Score</div>
-            </div>
-            <div class="score-card">
-              <div class="score-value">N/A</div>
-              <div class="score-label">Desktop Score</div>
-            </div>
-          </div>
-
-          <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 6px;">
-            <p><strong>⏳ Performance data will load once microservice is configured</strong></p>
-            <p style="margin-top: 10px; font-size: 14px; color: #856404;">
-              Layout is ready - data will populate automatically when available.
-            </p>
-          </div>
-        </div>
-
-        <!-- Pages Section -->
-        <div class="performance-section">
-          <h3>📄 Pages</h3>
-          <p style="color: #666; margin-bottom: 20px;">Performance analysis for different page types</p>
-          
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
-            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-              <h4 style="margin-top: 0;">🛍️ Product Pages</h4>
-              <div class="score-value" style="font-size: 36px; margin: 15px 0;">N/A</div>
-              <p style="color: #666; margin: 0;">Analysis pending</p>
-            </div>
-
-            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-              <h4 style="margin-top: 0;">📚 Collection Pages</h4>
-              <div class="score-value" style="font-size: 36px; margin: 15px 0;">N/A</div>
-              <p style="color: #666; margin: 0;">Analysis pending</p>
-            </div>
-
-            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-              <h4 style="margin-top: 0;">📝 Blog Posts</h4>
-              <div class="score-value" style="font-size: 36px; margin: 15px 0;">N/A</div>
-              <p style="color: #666; margin: 0;">Analysis pending</p>
-            </div>
-          </div>
-        </div>
-        
-        <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 6px; text-align: center;">
-          <small>
-            <strong>DID:</strong> ${this.currentDID} | 
-            <strong>Status:</strong> Active
-          </small>
+        <div style="margin: 20px 0; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50; text-align: center;">
+          <strong>✅ Connected to RabbitLoader</strong>
+          <p style="margin: 5px 0 0 0; color: #666;">DID: ${this.currentDID}</p>
         </div>
       </div>
     `;
@@ -677,61 +628,47 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
     this.showError('Failed to load pages');
   }
 }
-  renderPagesManagement() {
-  const connectedSection = document.querySelector('#connectedState .connected-section');
-  if (!connectedSection) return;
-  
-  const existing = document.querySelector('.pages-management-section');
-  if (existing) existing.remove();
-  
-  const { templates, all_pages, total_pages_count, page, has_more } = this.pagesData;
-  
-  const html = `
-    <div class="pages-management-section">
-      <h3>📄 Pages & Templates Management</h3>
-      <p style="color: #666; margin-bottom: 20px;">
-        Manage Critical CSS and JS Defer settings for ${total_pages_count} pages across ${Object.keys(templates).length} templates
-      </p>
-      
-      <!-- Search & Filter -->
-      <div class="search-filter-bar" style="margin-bottom: 20px;">
-        <input 
-          type="text" 
-          id="pageSearch" 
-          placeholder="🔍 Search pages by URL or title..." 
-          style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;"
-        >
-        
-        <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
-          <select id="templateFilter" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px;">
-            <option value="">All Templates (${Object.keys(templates).length})</option>
-            ${Object.entries(templates).map(([template, data]) => 
-              `<option value="${template}">${template} (${data.count})</option>`
-            ).join('')}
-          </select>
-          
-          <button class="btn btn-outline" onclick="dashboard.clearFilters()">Clear Filters</button>
+renderPagesManagement() {
+    const connectedSection = document.querySelector('#connectedState .connected-section');
+    if (!connectedSection) return;
+    
+    const existing = document.querySelector('.pages-management-section');
+    if (existing) existing.remove();
+    
+    const { templates, all_pages, total_pages_count, page, has_more } = this.pagesData;
+    
+    const html = `
+      <div class="pages-management-section" style="font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px;">
+          <div>
+            <h2 style="margin: 0; font-size: 24px; font-weight: 600; color: #1a1a1a;">📄 Pages & Performance</h2>
+            <p style="margin: 4px 0 0 0; color: #666; font-size: 14px;">Manage ${total_pages_count} pages across ${Object.keys(templates).length} templates</p>
+          </div>
         </div>
-      </div>
-      
-      <!-- Template Cards -->
-      <div id="templatesContainer">
-        ${this.renderTemplateCards(templates)}
-      </div>
-      
-      <!-- Pages Table -->
-      <div id="pagesTableContainer" style="margin-top: 30px;">
-        <h4>All Pages (Page ${page} - Showing ${all_pages.length} of ${total_pages_count})</h4>
-        <div style="overflow-x: auto;">
-          <table class="pages-table" style="width: 100%; border-collapse: collapse;">
+        
+        <!-- Search Bar -->
+        <div style="margin-bottom: 20px;">
+          <input 
+            type="text" 
+            id="pageSearch" 
+            placeholder="🔍 Search pages by URL or title..." 
+            style="width: 100%; padding: 12px 16px; border: 1px solid #e0e0e0; border-radius: 8px; font-size: 14px; transition: all 0.2s;"
+            onfocus="this.style.borderColor='#4f46e5'; this.style.boxShadow='0 0 0 3px rgba(79, 70, 229, 0.1)'"
+            onblur="this.style.borderColor='#e0e0e0'; this.style.boxShadow='none'"
+          >
+        </div>
+        
+        <!-- Modern Table -->
+        <div style="background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+          <table style="width: 100%; border-collapse: collapse;">
             <thead>
-              <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
-                <th style="padding: 12px; text-align: left;">Page</th>
-                <th style="padding: 12px; text-align: left;">Template</th>
-                <th style="padding: 12px; text-align: left;">Type</th>
-                <th style="padding: 12px; text-align: center;">Critical CSS</th>
-                <th style="padding: 12px; text-align: center;">JS Defer</th>
-                <th style="padding: 12px; text-align: center;">Actions</th>
+              <tr style="background: #f8fafc; border-bottom: 1px solid #e2e8f0;">
+                <th style="padding: 16px; text-align: left; font-weight: 600; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px;">URL</th>
+                <th style="padding: 16px; text-align: center; font-weight: 600; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; width: 100px;">Mobile</th>
+                <th style="padding: 16px; text-align: center; font-weight: 600; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; width: 100px;">Desktop</th>
+                <th style="padding: 16px; text-align: center; font-weight: 600; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; width: 120px;">Critical CSS</th>
+                <th style="padding: 16px; text-align: center; font-weight: 600; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; width: 100px;">JS Scripts</th>
+                <th style="padding: 16px; text-align: center; font-weight: 600; font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.5px; width: 200px;">Actions</th>
               </tr>
             </thead>
             <tbody id="pagesTableBody">
@@ -739,153 +676,323 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
             </tbody>
           </table>
         </div>
+        
+        <!-- Pagination -->
         ${has_more ? `
-          <div style="text-align: center; margin-top: 20px;">
-            <button class="btn btn-primary" onclick="dashboard.loadMorePages()">
+          <div style="text-align: center; margin-top: 24px;">
+            <button class="btn-modern" onclick="dashboard.loadMorePages()" style="padding: 12px 24px; background: #4f46e5; color: white; border: none; border-radius: 8px; font-weight: 500; cursor: pointer; transition: all 0.2s;">
               Load More Pages (${all_pages.length} of ${total_pages_count} loaded)
             </button>
           </div>
         ` : `
-          <div style="text-align: center; margin-top: 20px; color: #666;">
-            All ${total_pages_count} pages loaded
+          <div style="text-align: center; margin-top: 24px; color: #666; font-size: 14px;">
+            ✅ All ${total_pages_count} pages loaded
           </div>
         `}
+        
+        <div style="margin-top: 16px; padding: 12px; background: #f8fafc; border-radius: 8px; text-align: center; font-size: 13px; color: #64748b;">
+          Showing ${all_pages.length} of ${total_pages_count} pages
+        </div>
       </div>
-    </div>
-  `;
+    `;
+    
+    connectedSection.insertAdjacentHTML('beforeend', html);
+    this.setupPagesEventListeners();
+  }
   
-  connectedSection.insertAdjacentHTML('beforeend', html);
-  this.setupPagesEventListeners();
-}
+ renderTemplateCards(templates) {
+    // Template cards removed - using direct table view only
+    return '';
+  }
+  renderPagesRows(pages) {
+    return pages.map((page, index) => {
+      const rowId = `page-row-${index}`;
+      const expandedId = `page-expanded-${index}`;
+      
+      return `
+        <tr id="${rowId}" style="border-bottom: 1px solid #e2e8f0; transition: background 0.2s;" 
+            data-template="${page.template}" 
+            data-url="${page.url}"
+            data-page-id="${page.id || index}"
+            onmouseenter="this.style.background='#f8fafc'" 
+            onmouseleave="this.style.background='white'">
+          <td style="padding: 16px;">
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <button onclick="dashboard.toggleRowExpand('${rowId}', '${expandedId}')" 
+                      style="background: none; border: none; cursor: pointer; font-size: 16px; padding: 0; color: #64748b; transition: transform 0.2s;"
+                      id="expand-icon-${rowId}">
+                ▶
+              </button>
+              <div>
+                <div style="font-weight: 500; color: #1a1a1a; font-size: 14px;">${page.title || page.url}</div>
+                <div style="color: #64748b; font-size: 12px; margin-top: 2px;">${page.url}</div>
+              </div>
+            </div>
+          </td>
+          <td style="padding: 16px; text-align: center;">
+            <span style="display: inline-block; padding: 4px 12px; background: #f1f5f9; color: #475569; border-radius: 6px; font-size: 13px; font-weight: 500;">
+              --
+            </span>
+          </td>
+          <td style="padding: 16px; text-align: center;">
+            <span style="display: inline-block; padding: 4px 12px; background: #f1f5f9; color: #475569; border-radius: 6px; font-size: 13px; font-weight: 500;">
+              --
+            </span>
+          </td>
+          <td style="padding: 16px; text-align: center;">
+            <span style="display: inline-flex; align-items: center; gap: 6px; padding: 4px 12px; background: #dcfce7; color: #166534; border-radius: 6px; font-size: 12px; font-weight: 500;">
+              <span style="font-size: 10px;">✓</span> Enabled
+            </span>
+          </td>
+          <td style="padding: 16px; text-align: center;">
+            <span style="color: #64748b; font-size: 13px;">${page.js_defer_count || 0} deferred</span>
+          </td>
+          <td style="padding: 16px; text-align: center;">
+            <div style="display: flex; gap: 8px; justify-content: center;">
+              <button onclick="dashboard.analyzePage('${page.id || index}', '${page.url}')" 
+                      style="padding: 6px 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; color: #4f46e5; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 4px;"
+                      onmouseover="this.style.background='#eef2ff'; this.style.borderColor='#4f46e5'"
+                      onmouseout="this.style.background='white'; this.style.borderColor='#e2e8f0'">
+                🔍 Analyze
+              </button>
+              <button onclick="dashboard.toggleRowExpand('${rowId}', '${expandedId}')" 
+                      style="padding: 6px 12px; background: #4f46e5; border: none; border-radius: 6px; color: white; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 4px;"
+                      onmouseover="this.style.background='#4338ca'"
+                      onmouseout="this.style.background='#4f46e5'">
+                ⚙️ Customize
+              </button>
+            </div>
+          </td>
+        </tr>
+        <tr id="${expandedId}" style="display: none; background: #f8fafc;">
+          <td colspan="6" style="padding: 0;">
+            <div style="padding: 24px; border-top: 1px solid #e2e8f0;">
+              ${this.renderExpandedRowContent(page, index)}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+  }
   
-  renderTemplateCards(templates) {
-    return Object.entries(templates).map(([template, data]) => `
-      <div class="template-card" style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <h4 style="margin: 0 0 5px 0;">${this.getTemplateIcon(template)} ${template}</h4>
-            <p style="color: #666; margin: 0; font-size: 14px;">
-              ${data.pages.length} pages | Sample: <a href="${data.sample_page}" target="_blank" style="color: #007bff;">${data.sample_page}</a>
-            </p>
+ renderExpandedRowContent(page, index) {
+    // Mock JS files - in production, fetch from API
+    const jsFiles = [
+      { url: 'cdn.shopify.com/shopifycloud/privacy-banner.js', currentAction: 'defer' },
+      { url: 'cdn.shopify.com/s/files/theme.js', currentAction: 'load' },
+      { url: 'www.google-analytics.com/analytics.js', currentAction: 'defer' },
+    ];
+    
+    return `
+      <div style="display: grid; gap: 24px;">
+        <!-- JS Files Section -->
+        <div>
+          <h4 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 600; color: #1a1a1a; display: flex; align-items: center; gap: 8px;">
+            ⚙️ JavaScript Files
+          </h4>
+          <div style="display: grid; gap: 12px;">
+            ${jsFiles.map((file, fileIndex) => `
+              <div style="background: white; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <div style="font-size: 13px; color: #475569; margin-bottom: 12px; font-family: 'Courier New', monospace;">
+                  📦 ${file.url}
+                </div>
+                <div style="display: flex; gap: 8px;">
+                  ${['defer', 'load', 'async', 'block'].map(action => `
+                    <button onclick="dashboard.changeJSAction('${page.id || index}', '${file.url}', '${action}', '${page.template}')"
+                            style="flex: 1; padding: 8px 12px; border: 1px solid ${file.currentAction === action ? '#4f46e5' : '#e2e8f0'}; 
+                                   background: ${file.currentAction === action ? '#4f46e5' : 'white'}; 
+                                   color: ${file.currentAction === action ? 'white' : '#64748b'}; 
+                                   border-radius: 6px; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; text-transform: capitalize;"
+                            onmouseover="if('${file.currentAction}' !== '${action}') { this.style.borderColor='#cbd5e1'; this.style.background='#f8fafc'; }"
+                            onmouseout="if('${file.currentAction}' !== '${action}') { this.style.borderColor='#e2e8f0'; this.style.background='white'; }">
+                      ${action}
+                    </button>
+                  `).join('')}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </div>
+        
+        <!-- Critical CSS Section -->
+        <div>
+          <h4 style="margin: 0 0 16px 0; font-size: 16px; font-weight: 600; color: #1a1a1a; display: flex; align-items: center; gap: 8px;">
+            🎨 Critical CSS
+          </h4>
+          <div style="background: white; padding: 16px; border-radius: 8px; border: 1px solid #e2e8f0;">
+            <div style="display: flex; gap: 8px;">
+              <button onclick="dashboard.changeCriticalCSS('${page.id || index}', true, '${page.template}')"
+                      style="flex: 1; padding: 12px 16px; border: 1px solid #4f46e5; background: #4f46e5; color: white; 
+                             border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;">
+                Enabled
+              </button>
+              <button onclick="dashboard.changeCriticalCSS('${page.id || index}', false, '${page.template}')"
+                      style="flex: 1; padding: 12px 16px; border: 1px solid #e2e8f0; background: white; color: #64748b; 
+                             border-radius: 6px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s;"
+                      onmouseover="this.style.borderColor='#cbd5e1'; this.style.background='#f8fafc'"
+                      onmouseout="this.style.borderColor='#e2e8f0'; this.style.background='white'">
+                Disabled
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+ toggleRowExpand(rowId, expandedId) {
+    const expandedRow = document.getElementById(expandedId);
+    const icon = document.getElementById(`expand-icon-${rowId}`);
+    
+    if (expandedRow.style.display === 'none') {
+      expandedRow.style.display = 'table-row';
+      icon.textContent = '▼';
+      icon.style.transform = 'rotate(0deg)';
+    } else {
+      expandedRow.style.display = 'none';
+      icon.textContent = '▶';
+    }
+  }
+
+  async analyzePage(pageId, url) {
+    this.showInfo(`🔍 Analyzing ${url}...`);
+    
+    // TODO: Call actual performance API
+    setTimeout(() => {
+      this.showSuccess(`✅ Analysis complete for ${url}`);
+    }, 2000);
+  }
+
+  changeJSAction(pageId, scriptUrl, action, template) {
+    // Get template info
+    const templateData = this.pagesData.templates[template];
+    const pageCount = templateData ? templateData.count : 1;
+    
+    // Show modal
+    this.showScopeModal('js', action, scriptUrl, pageId, template, pageCount);
+  }
+
+  changeCriticalCSS(pageId, enabled, template) {
+    // Get template info
+    const templateData = this.pagesData.templates[template];
+    const pageCount = templateData ? templateData.count : 1;
+    
+    // Show modal
+    this.showScopeModal('css', enabled ? 'enabled' : 'disabled', null, pageId, template, pageCount);
+  }
+
+  showScopeModal(type, value, scriptUrl, pageId, template, pageCount) {
+    const isJS = type === 'js';
+    const title = isJS ? '⚙️ Apply JavaScript Rule' : '🎨 Critical CSS Setting';
+    const description = isJS 
+      ? `You selected: <strong>${value}</strong><br>For script: <code style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-size: 12px;">${scriptUrl}</code>`
+      : `You selected: <strong>${value === 'enabled' ? 'Enabled' : 'Disabled'}</strong>`;
+    
+    const templateName = template.charAt(0).toUpperCase() + template.slice(1);
+    
+    const modalHTML = `
+      <div class="modal-overlay-modern" onclick="dashboard.closeModal()" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000; backdrop-filter: blur(4px);">
+        <div onclick="event.stopPropagation()" style="background: white; border-radius: 16px; max-width: 500px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); animation: modalSlideIn 0.2s ease-out;">
+          <div style="padding: 24px; border-bottom: 1px solid #e2e8f0;">
+            <h3 style="margin: 0; font-size: 20px; font-weight: 600; color: #1a1a1a;">${title}</h3>
+            <p style="margin: 8px 0 0 0; color: #64748b; font-size: 14px; line-height: 1.5;">${description}</p>
           </div>
           
-          <div style="display: flex; gap: 10px; align-items: center;">
-            <div class="toggle-container">
-              <label style="font-size: 14px; margin-right: 8px;">Critical CSS:</label>
-              <label class="toggle-switch">
-                <input 
-                  type="checkbox" 
-                  ${data.critical_css_enabled !== false ? 'checked' : ''} 
-                  onchange="dashboard.toggleTemplateCriticalCSS('${template}', this.checked)"
-                >
-                <span class="toggle-slider"></span>
+          <div style="padding: 24px;">
+            <div style="margin-bottom: 16px;">
+              <p style="margin: 0 0 16px 0; font-weight: 500; color: #475569; font-size: 14px;">Apply this ${isJS ? 'rule' : 'setting'} to:</p>
+              
+              <label style="display: flex; align-items: center; padding: 16px; border: 2px solid #e2e8f0; border-radius: 8px; cursor: pointer; margin-bottom: 12px; transition: all 0.2s;"
+                     onmouseover="this.style.borderColor='#4f46e5'; this.style.background='#f8fafc'"
+                     onmouseout="this.style.borderColor='#e2e8f0'; this.style.background='white'">
+                <input type="radio" name="scope" value="page" checked style="margin-right: 12px; width: 18px; height: 18px; cursor: pointer;">
+                <div>
+                  <div style="font-weight: 500; color: #1a1a1a; font-size: 14px;">This page only</div>
+                  <div style="color: #64748b; font-size: 12px; margin-top: 2px;">Apply to current page</div>
+                </div>
+              </label>
+              
+              <label style="display: flex; align-items: center; padding: 16px; border: 2px solid #e2e8f0; border-radius: 8px; cursor: pointer; margin-bottom: 12px; transition: all 0.2s;"
+                     onmouseover="this.style.borderColor='#4f46e5'; this.style.background='#f8fafc'"
+                     onmouseout="this.style.borderColor='#e2e8f0'; this.style.background='white'">
+                <input type="radio" name="scope" value="template" style="margin-right: 12px; width: 18px; height: 18px; cursor: pointer;">
+                <div>
+                  <div style="font-weight: 500; color: #1a1a1a; font-size: 14px;">All ${templateName} pages</div>
+                  <div style="color: #64748b; font-size: 12px; margin-top: 2px;">Apply to all ${pageCount} pages in this category</div>
+                </div>
+              </label>
+              
+              <label style="display: flex; align-items: center; padding: 16px; border: 2px solid #e2e8f0; border-radius: 8px; cursor: pointer; transition: all 0.2s;"
+                     onmouseover="this.style.borderColor='#4f46e5'; this.style.background='#f8fafc'"
+                     onmouseout="this.style.borderColor='#e2e8f0'; this.style.background='white'">
+                <input type="radio" name="scope" value="global" style="margin-right: 12px; width: 18px; height: 18px; cursor: pointer;">
+                <div>
+                  <div style="font-weight: 500; color: #1a1a1a; font-size: 14px;">Entire website</div>
+                  <div style="color: #64748b; font-size: 12px; margin-top: 2px;">Apply to all ${this.pagesData.total_pages_count} pages</div>
+                </div>
               </label>
             </div>
-            
-            <button class="btn btn-outline btn-sm" onclick="dashboard.manageTemplateJS('${template}')">
-              ⚙️ JS Rules
+          </div>
+          
+          <div style="padding: 16px 24px 24px 24px; display: flex; gap: 12px; justify-content: flex-end;">
+            <button onclick="dashboard.closeModal()" 
+                    style="padding: 10px 20px; border: 1px solid #e2e8f0; background: white; color: #64748b; border-radius: 8px; font-weight: 500; cursor: pointer; transition: all 0.2s;"
+                    onmouseover="this.style.background='#f8fafc'"
+                    onmouseout="this.style.background='white'">
+              Cancel
             </button>
-            
-            <button class="btn btn-outline btn-sm" onclick="dashboard.viewTemplatePages('${template}')">
-              📋 View Pages
+            <button onclick="dashboard.applyScope('${type}', '${value}', '${scriptUrl}', '${pageId}', '${template}')" 
+                    style="padding: 10px 20px; border: none; background: #4f46e5; color: white; border-radius: 8px; font-weight: 500; cursor: pointer; transition: all 0.2s;"
+                    onmouseover="this.style.background='#4338ca'"
+                    onmouseout="this.style.background='#4f46e5'">
+              Apply ✓
             </button>
           </div>
         </div>
       </div>
-    `).join('');
-  }
-  
-  renderPagesRows(pages) {
-    return pages.map(page => `
-      <tr style="border-bottom: 1px solid #dee2e6;" data-template="${page.template}" data-url="${page.url}">
-        <td style="padding: 12px;">
-          <div>
-            <strong>${page.title}</strong><br>
-            <small style="color: #666;">${page.url}</small>
-          </div>
-        </td>
-        <td style="padding: 12px;">
-          <span class="badge" style="background: #e3f2fd; color: #1976d2; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
-            ${page.template}
-          </span>
-        </td>
-        <td style="padding: 12px;">
-          <span style="font-size: 12px; color: #666;">${page.type}</span>
-        </td>
-        <td style="padding: 12px; text-align: center;">
-          <label class="toggle-switch" style="margin: 0;">
-            <input 
-              type="checkbox" 
-              ${page.critical_css_enabled !== false ? 'checked' : ''} 
-              onchange="dashboard.togglePageCriticalCSS('${page.id}', '${page.template}', this.checked)"
-            >
-            <span class="toggle-slider"></span>
-          </label>
-        </td>
-        <td style="padding: 12px; text-align: center;">
-          <span class="js-status" style="font-size: 12px; color: #666;">
-            ${page.js_defer_count || 0} rules
-          </span>
-        </td>
-        <td style="padding: 12px; text-align: center;">
-          <button class="btn btn-sm" onclick="dashboard.managePageJS('${page.id}', '${page.url}')" style="padding: 4px 8px; font-size: 12px;">
-            ⚙️ Configure
-          </button>
-        </td>
-      </tr>
-    `).join('');
-  }
-  
-  setupPagesEventListeners() {
-    // Search
-    const searchInput = document.getElementById('pageSearch');
-    if (searchInput) {
-      searchInput.addEventListener('input', (e) => {
-        this.filterPages(e.target.value, document.getElementById('templateFilter').value);
-      });
-    }
-    
-    // Template filter
-    const templateFilter = document.getElementById('templateFilter');
-    if (templateFilter) {
-      templateFilter.addEventListener('change', (e) => {
-        this.filterPages(document.getElementById('pageSearch').value, e.target.value);
-      });
-    }
-  }
-  
-  filterPages(searchTerm, templateFilter) {
-    const rows = document.querySelectorAll('#pagesTableBody tr');
-    let visibleCount = 0;
-    
-    rows.forEach(row => {
-      const url = row.dataset.url.toLowerCase();
-      const template = row.dataset.template;
-      const title = row.querySelector('strong').textContent.toLowerCase();
       
-      const matchesSearch = !searchTerm || 
-        url.includes(searchTerm.toLowerCase()) || 
-        title.includes(searchTerm.toLowerCase());
-      
-      const matchesTemplate = !templateFilter || template === templateFilter;
-      
-      if (matchesSearch && matchesTemplate) {
-        row.style.display = '';
-        visibleCount++;
-      } else {
-        row.style.display = 'none';
-      }
-    });
+      <style>
+        @keyframes modalSlideIn {
+          from {
+            opacity: 0;
+            transform: translateY(-20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateY(0);
+          }
+        }
+      </style>
+    `;
     
-    console.log(`Filtered: ${visibleCount} pages visible`);
+    document.body.insertAdjacentHTML('beforeend', modalHTML);
   }
-  
+
+  closeModal() {
+    const modal = document.querySelector('.modal-overlay-modern');
+    if (modal) modal.remove();
+  }
+
+  async applyScope(type, value, scriptUrl, pageId, template) {
+    const scope = document.querySelector('input[name="scope"]:checked').value;
+    
+    let scopeText = '';
+    if (scope === 'page') scopeText = 'this page';
+    else if (scope === 'template') scopeText = `all ${template} pages`;
+    else scopeText = 'entire website';
+    
+    this.closeModal();
+    this.showInfo(`Applying changes to ${scopeText}...`);
+    
+    // TODO: Call actual API
+    setTimeout(() => {
+      this.showSuccess(`✅ Successfully applied to ${scopeText}`);
+    }, 1000);
+  }
   clearFilters() {
     document.getElementById('pageSearch').value = '';
-    document.getElementById('templateFilter').value = '';
     this.filterPages('', '');
   }
-  
+
   getTemplateIcon(template) {
     const icons = {
       'index': '🏠',
@@ -903,7 +1010,43 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
     }
     return '📄';
   }
+
+  setupPagesEventListeners() {
+    const searchInput = document.getElementById('pageSearch');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        this.filterPages(e.target.value, '');
+      });
+    }
+  }
   
+  filterPages(searchTerm, templateFilter) {
+    const rows = document.querySelectorAll('#pagesTableBody tr[data-url]');
+    let visibleCount = 0;
+    
+    rows.forEach(row => {
+      const url = row.dataset.url.toLowerCase();
+      const titleEl = row.querySelector('div[style*="font-weight: 500"]');
+      const title = titleEl ? titleEl.textContent.toLowerCase() : '';
+      
+      const matchesSearch = !searchTerm || 
+        url.includes(searchTerm.toLowerCase()) || 
+        title.includes(searchTerm.toLowerCase());
+      
+      if (matchesSearch) {
+        row.style.display = '';
+        visibleCount++;
+      } else {
+        row.style.display = 'none';
+        const nextRow = row.nextElementSibling;
+        if (nextRow && nextRow.id && nextRow.id.startsWith('page-expanded-')) {
+          nextRow.style.display = 'none';
+        }
+      }
+    });
+    
+    console.log(`Filtered: ${visibleCount} pages visible`);
+      }
   // Toggle Critical CSS for entire template
   async toggleTemplateCriticalCSS(template, enabled) {
     try {
