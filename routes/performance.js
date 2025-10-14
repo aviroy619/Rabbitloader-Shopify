@@ -10,6 +10,8 @@ const PSI_SERVICE_URL = process.env.PSI_MICROSERVICE_URL || 'http://45.32.212.22
 router.get("/homepage", async (req, res) => {
   const { shop } = req.query;
   
+  console.log(`[Performance] Getting homepage data for: ${shop}`);
+  
   if (!shop) {
     return res.status(400).json({ 
       ok: false, 
@@ -28,6 +30,8 @@ router.get("/homepage", async (req, res) => {
       });
     }
 
+    console.log(`[Performance] Calling PSI microservice: ${PSI_SERVICE_URL}/api/analyze`);
+
     // Call PSI microservice
     const response = await axios.post(`${PSI_SERVICE_URL}/api/analyze`, {
       shop: shop,
@@ -40,6 +44,11 @@ router.get("/homepage", async (req, res) => {
     if (response.data.ok) {
       const data = response.data.data;
       
+      console.log(`[Performance] PSI response received:`, {
+        mobileScore: data.pagespeed.mobileScore,
+        desktopScore: data.pagespeed.desktopScore
+      });
+      
       // Transform to frontend format
       const result = {
         psi: {
@@ -48,12 +57,12 @@ router.get("/homepage", async (req, res) => {
           lab_data: {
             fcp: data.pagespeed.perceivedLoadTime * 1000 * 0.3, // Estimate
             lcp: data.pagespeed.perceivedLoadTime * 1000,
-            cls: 0.1, // Would come from detailed metrics
-            tbt: 200 // Would come from detailed metrics
+            cls: 0.1,
+            tbt: 200
           },
           report_url: `https://pagespeed.web.dev/analysis?url=${encodeURIComponent('https://' + shop)}`
         },
-        crux: data.chromeUX ? {
+        crux: data.chromeUX && data.chromeUX.lcpCategory ? {
           available: true,
           collection_period: data.chromeUX.period,
           lcp: {
@@ -71,17 +80,21 @@ router.get("/homepage", async (req, res) => {
           message: data.chromeUX.summary.join('\n')
         } : {
           available: false,
-          message: "Chrome UX Report data not available yet"
+          message: "Chrome UX Report data not available yet. Real user data will appear after 28 days of traffic.",
+          days_until_available: 28
         },
         fetched_at: data.checkedAt,
         days_since_install: 0
       };
+
+      console.log(`[Performance] ✅ Homepage performance data prepared for ${shop}`);
 
       res.json({
         ok: true,
         data: result
       });
     } else {
+      console.error('[Performance] PSI microservice returned error');
       res.status(500).json({
         ok: false,
         error: "PSI analysis failed"
@@ -90,9 +103,11 @@ router.get("/homepage", async (req, res) => {
 
   } catch (error) {
     console.error('[Performance] Homepage error:', error.message);
+    
+    // Return a user-friendly error
     res.status(500).json({ 
       ok: false, 
-      error: error.message 
+      error: error.message || "Failed to analyze homepage performance"
     });
   }
 });
@@ -102,6 +117,8 @@ router.get("/homepage", async (req, res) => {
 // ============================================================
 router.get("/template", async (req, res) => {
   const { shop, type } = req.query;
+  
+  console.log(`[Performance] Getting ${type} template data for: ${shop}`);
   
   if (!shop || !type) {
     return res.status(400).json({ 
@@ -127,20 +144,25 @@ router.get("/template", async (req, res) => {
       new Map(Object.entries(shopRecord.site_structure.template_groups));
     
     let sampleUrl = null;
+    let templateName = null;
     
-    for (const [templateName, templateData] of templateGroups) {
-      if (templateName.includes(type)) {
+    for (const [tName, templateData] of templateGroups) {
+      if (tName.includes(type)) {
         sampleUrl = templateData.sample_page;
+        templateName = tName;
         break;
       }
     }
 
     if (!sampleUrl) {
+      console.error(`[Performance] No ${type} template found for ${shop}`);
       return res.status(404).json({
         ok: false,
         error: `No ${type} template found`
       });
     }
+
+    console.log(`[Performance] Found sample URL for ${type}: ${sampleUrl}`);
 
     // Call PSI microservice
     const response = await axios.post(`${PSI_SERVICE_URL}/api/analyze`, {
@@ -166,7 +188,7 @@ router.get("/template", async (req, res) => {
           },
           report_url: `https://pagespeed.web.dev/analysis?url=${encodeURIComponent(sampleUrl)}`
         },
-        crux: data.chromeUX ? {
+        crux: data.chromeUX && data.chromeUX.lcpCategory ? {
           available: true,
           collection_period: data.chromeUX.period,
           message: data.chromeUX.summary.join('\n')
@@ -176,6 +198,8 @@ router.get("/template", async (req, res) => {
         },
         fetched_at: data.checkedAt
       };
+
+      console.log(`[Performance] ✅ ${type} template data prepared for ${shop}`);
 
       res.json({
         ok: true,
@@ -192,9 +216,20 @@ router.get("/template", async (req, res) => {
     console.error(`[Performance] ${type} error:`, error.message);
     res.status(500).json({ 
       ok: false, 
-      error: error.message 
+      error: error.message || `Failed to analyze ${type} performance`
     });
   }
+});
+
+// ============================================================
+// ROUTE: Health Check
+// ============================================================
+router.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    service: "performance-routes",
+    microservice_url: PSI_SERVICE_URL
+  });
 });
 
 module.exports = router;
