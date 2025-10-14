@@ -43,6 +43,9 @@
   </script>
 </head>
 <body>
+  <!-- Flash Messages Container (Fixed position, top-right) -->
+  <div id="flashMessages"></div>
+
   <div class="dashboard-container">
     <!-- Loading State -->
     <div id="loadingState" class="loading-screen">
@@ -83,7 +86,7 @@
       </div>
     </div>
 
-    <!-- Connected State: Simple Dashboard -->
+    <!-- Connected State: Dashboard with Performance Data -->
     <div id="connectedState" class="page-state" style="display: none;">
       <div class="dashboard-card">
         <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
@@ -92,23 +95,66 @@
           <div class="store-name" id="storeNameConnected">Loading...</div>
           <div class="connection-status">
             <div class="status-indicator success"></div>
+            <span class="status-text">Connected</span>
           </div>
         </div>
 
         <div class="connected-section">
           <h1 class="main-title">Optimization Active</h1>
-          <p class="subtitle">Your store is now optimized with RabbitLoader</p>
+          <p class="subtitle">Your store is optimized with RabbitLoader</p>
           
-          <div class="actions-section">
-            <button class="btn btn-config" onclick="openScriptConfiguration()">Configure Defer Rules</button>
-            <button class="btn btn-reports" onclick="openReports()">View Reports</button>
+          <!-- Quick Actions -->
+          <div class="quick-actions">
+            <a href="https://rabbitloader.com/dashboard/" target="_blank" class="btn btn-primary">View Full Dashboard</a>
+            <a href="https://rabbitloader.com/customize/" target="_blank" class="btn btn-outline">Customize Settings</a>
             <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
           </div>
+
+          <!-- Performance data will be dynamically inserted here by script.js -->
+          <!-- The homepage performance loads automatically -->
+          <!-- Template performance (product, collection, blog) loads on-demand -->
+
+          <!-- Template Performance Cards (On-Demand Loading) -->
+          <div class="template-cards">
+            <h2>📊 Page Performance Analysis</h2>
+            <p style="color: #666; margin-bottom: 20px;">Click to load performance data for each page type</p>
+
+            <!-- Product Pages Card -->
+            <div class="template-card">
+              <h4>🛍️ Product Pages</h4>
+              <p style="color: #666; margin: 10px 0;">Performance analysis for product pages</p>
+              <button class="btn btn-outline load-btn" onclick="dashboard.loadTemplatePerformance('product')">
+                Load Product Page Performance
+              </button>
+              <div id="product-performance" style="margin-top: 20px;"></div>
+            </div>
+
+            <!-- Collection Pages Card -->
+            <div class="template-card">
+              <h4>📚 Collection Pages</h4>
+              <p style="color: #666; margin: 10px 0;">Performance analysis for collection pages</p>
+              <button class="btn btn-outline load-btn" onclick="dashboard.loadTemplatePerformance('collection')">
+                Load Collection Page Performance
+              </button>
+              <div id="collection-performance" style="margin-top: 20px;"></div>
+            </div>
+
+            <!-- Blog Posts Card -->
+            <div class="template-card">
+              <h4>📝 Blog Posts</h4>
+              <p style="color: #666; margin: 10px 0;">Performance analysis for blog posts</p>
+              <button class="btn btn-outline load-btn" onclick="dashboard.loadTemplatePerformance('blog')">
+                Load Blog Performance
+              </button>
+              <div id="blog-performance" style="margin-top: 20px;"></div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
   </div>
 
-    <script src="/script.js"></script>
+  <script src="/script.js"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-// Frontend Dashboard Logic for RabbitLoader Shopify App - COMPLETE FILE
+// Frontend Dashboard Logic for RabbitLoader Shopify App - WITH BROWSER CACHE
 class RabbitLoaderDashboard {
   constructor() {
     this.shop = window.appState.shop || new URLSearchParams(window.location.search).get('shop');
@@ -8,6 +8,14 @@ class RabbitLoaderDashboard {
     this.currentDID = null;
     this.history = [];
     this.dashboardData = null;
+    
+    // NEW: Performance data
+    this.performanceData = {
+      homepage: null,
+      product: null,
+      collection: null,
+      blog: null
+    };
     
     // UI element references
     this.loadingState = document.getElementById('loadingState');
@@ -63,13 +71,13 @@ class RabbitLoaderDashboard {
       setTimeout(() => this.checkStatus(), 1000);
     }
 
-  // Handle trigger_setup flag (for fresh installs and reinstalls)
-  if (urlParams.get('trigger_setup') === '1') {
-    console.log('Setup trigger detected - starting complete setup flow');
-    this.showInfo('Setting up your store optimization... This may take a few minutes.');
-    // Trigger setup after a brief delay to ensure page is ready
-    setTimeout(() => this.triggerCompleteSetup(), 2000);
-  }
+    // Handle trigger_setup flag (for fresh installs and reinstalls)
+    if (urlParams.get('trigger_setup') === '1') {
+      console.log('Setup trigger detected - starting complete setup flow');
+      this.showInfo('Setting up your store optimization... This may take a few minutes.');
+      // Trigger setup after a brief delay to ensure page is ready
+      setTimeout(() => this.triggerCompleteSetup(), 2000);
+    }
   }
 
   async checkStatus() {
@@ -95,9 +103,10 @@ class RabbitLoaderDashboard {
           script_injected: data.script_injected
         });
 
-        // If connected, also get dashboard data
+        // If connected, load dashboard data and performance data
         if (this.isRLConnected) {
           await this.loadDashboardData();
+          await this.loadHomepagePerformance(); // NEW: Load performance data
         }
       } else {
         console.error('Status check failed:', data.error);
@@ -142,6 +151,429 @@ class RabbitLoaderDashboard {
       };
     }
   }
+
+  // ============================================================
+  // NEW: PERFORMANCE DATA WITH BROWSER CACHE
+  // ============================================================
+
+  // Get cache key for localStorage
+  getPerformanceCacheKey(page) {
+    return `rl_perf_${this.shop}_${page}`;
+  }
+
+  // Get cached performance data from browser
+  getCachedPerformance(page) {
+    const key = this.getPerformanceCacheKey(page);
+    const cached = localStorage.getItem(key);
+
+    if (!cached) {
+      return null;
+    }
+
+    try {
+      const data = JSON.parse(cached);
+      
+      // Check if expired (1 hour TTL)
+      const ONE_HOUR = 3600000;
+      if (Date.now() > data.expiresAt) {
+        localStorage.removeItem(key);
+        return null;
+      }
+
+      console.log(`✅ Loaded ${page} performance from browser cache`);
+      return data.value;
+      
+    } catch (error) {
+      localStorage.removeItem(key);
+      return null;
+    }
+  }
+
+  // Store performance data in browser cache
+  setCachedPerformance(page, data) {
+    const key = this.getPerformanceCacheKey(page);
+    const ONE_HOUR = 3600000;
+    
+    const cacheData = {
+      value: data,
+      cachedAt: Date.now(),
+      expiresAt: Date.now() + ONE_HOUR
+    };
+
+    try {
+      localStorage.setItem(key, JSON.stringify(cacheData));
+      console.log(`💾 Saved ${page} performance to browser cache`);
+    } catch (error) {
+      console.warn('Cache storage failed:', error);
+    }
+  }
+
+  // Clear performance cache
+  clearPerformanceCache(page) {
+    if (page) {
+      const key = this.getPerformanceCacheKey(page);
+      localStorage.removeItem(key);
+      console.log(`🗑️ Cleared ${page} cache`);
+    } else {
+      // Clear all performance caches
+      Object.keys(localStorage).forEach(key => {
+        if (key.startsWith(`rl_perf_${this.shop}_`)) {
+          localStorage.removeItem(key);
+        }
+      });
+      console.log('🗑️ Cleared all performance caches');
+    }
+  }
+
+  // Load homepage performance data (auto-loads)
+  async loadHomepagePerformance() {
+    try {
+      // 1. Try browser cache first
+      const cached = this.getCachedPerformance('homepage');
+      
+      if (cached) {
+        this.performanceData.homepage = cached;
+        this.displayHomepagePerformance(cached);
+        return;
+      }
+
+      // 2. No cache - fetch from API
+      console.log('📡 Fetching homepage performance from API...');
+
+      const response = await fetch(`/api/performance/homepage?shop=${encodeURIComponent(this.shop)}`);
+      const result = await response.json();
+
+      if (result.ok) {
+        // 3. Store in browser cache
+        this.setCachedPerformance('homepage', result.data);
+        
+        // 4. Store in memory
+        this.performanceData.homepage = result.data;
+        
+        // 5. Display
+        this.displayHomepagePerformance(result.data);
+      } else {
+        console.error('Failed to load homepage performance:', result.error);
+      }
+
+    } catch (error) {
+      console.error('Homepage performance load error:', error);
+    }
+  }
+
+  // Load template performance (on-demand)
+  async loadTemplatePerformance(templateType) {
+    try {
+      // 1. Try browser cache first
+      const cached = this.getCachedPerformance(templateType);
+      
+      if (cached) {
+        this.performanceData[templateType] = cached;
+        this.displayTemplatePerformance(templateType, cached);
+        return;
+      }
+
+      // 2. Show loading indicator
+      this.showTemplateLoading(templateType);
+
+      // 3. Fetch from API
+      console.log(`📡 Fetching ${templateType} performance from API...`);
+
+      const response = await fetch(`/api/performance/template?shop=${encodeURIComponent(this.shop)}&type=${templateType}`);
+      const result = await response.json();
+
+      if (result.ok) {
+        // 4. Store in browser cache
+        this.setCachedPerformance(templateType, result.data);
+        
+        // 5. Store in memory
+        this.performanceData[templateType] = result.data;
+        
+        // 6. Display
+        this.displayTemplatePerformance(templateType, result.data);
+      } else {
+        console.error(`Failed to load ${templateType} performance:`, result.error);
+        this.showTemplateError(templateType, result.error);
+      }
+
+    } catch (error) {
+      console.error(`${templateType} performance load error:`, error);
+      this.showTemplateError(templateType, error.message);
+    }
+  }
+
+  // Force refresh performance data (bypass cache)
+  async refreshPerformanceData(page = 'homepage') {
+    // Clear browser cache
+    this.clearPerformanceCache(page);
+    
+    // Reload
+    if (page === 'homepage') {
+      await this.loadHomepagePerformance();
+    } else {
+      await this.loadTemplatePerformance(page);
+    }
+    
+    this.showSuccess(`${page} performance data refreshed!`);
+  }
+
+  // Display homepage performance
+  displayHomepagePerformance(data) {
+    const connectedSection = document.querySelector('#connectedState .connected-section');
+    if (!connectedSection) return;
+
+    // Remove existing performance section
+    const existing = document.querySelector('.performance-section');
+    if (existing) existing.remove();
+
+    const html = this.buildPerformanceHTML(data, 'homepage');
+    connectedSection.insertAdjacentHTML('beforeend', html);
+  }
+
+  // Display template performance
+  displayTemplatePerformance(templateType, data) {
+    const container = document.getElementById(`${templateType}-performance`);
+    if (!container) return;
+
+    const html = this.buildPerformanceHTML(data, templateType);
+    container.innerHTML = html;
+  }
+
+  // Show loading indicator for template
+  showTemplateLoading(templateType) {
+    const container = document.getElementById(`${templateType}-performance`);
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="loading-container">
+        <div class="spinner"></div>
+        <p>Loading ${templateType} performance data...</p>
+      </div>
+    `;
+  }
+
+  // Show error for template
+  showTemplateError(templateType, error) {
+    const container = document.getElementById(`${templateType}-performance`);
+    if (!container) return;
+
+    container.innerHTML = `
+      <div class="error-container">
+        <p>❌ Failed to load ${templateType} performance: ${error}</p>
+        <button class="btn btn-secondary" onclick="dashboard.loadTemplatePerformance('${templateType}')">Retry</button>
+      </div>
+    `;
+  }
+
+  // Build performance HTML
+  buildPerformanceHTML(data, pageType) {
+    const daysSinceInstall = data.days_since_install || 0;
+    const cruxAvailable = data.crux && data.crux.available;
+
+    return `
+      <div class="performance-section" data-page="${pageType}">
+        <h3>📊 ${this.getPageTitle(pageType)} Performance</h3>
+        
+        ${data.psi ? this.buildPSISection(data.psi) : ''}
+        
+        ${cruxAvailable ? this.buildCrUXSection(data.crux) : this.buildCrUXUnavailableSection(data.crux, daysSinceInstall)}
+        
+        <div class="performance-actions">
+          <button class="btn btn-outline" onclick="dashboard.refreshPerformanceData('${pageType}')">
+            🔄 Refresh Data
+          </button>
+          ${data.psi && data.psi.report_url ? `
+            <a href="${data.psi.report_url}" target="_blank" class="btn btn-outline">
+              📊 View Full PSI Report
+            </a>
+          ` : ''}
+        </div>
+        
+        <small style="color: #666; display: block; margin-top: 10px;">
+          Last updated: ${new Date(data.fetched_at || Date.now()).toLocaleString()}
+          ${this.getCachedPerformance(pageType) ? ' | 💾 From cache' : ' | ⚡ Fresh data'}
+        </small>
+      </div>
+    `;
+  }
+
+  // Build PSI section
+  buildPSISection(psi) {
+    return `
+      <div class="psi-section">
+        <h4>📈 PageSpeed Insights Score</h4>
+        <div class="score-grid">
+          <div class="score-card">
+            <div class="score-value ${this.getScoreClass(psi.mobile_score)}">
+              ${psi.mobile_score}
+            </div>
+            <div class="score-label">Mobile</div>
+          </div>
+          <div class="score-card">
+            <div class="score-value ${this.getScoreClass(psi.desktop_score)}">
+              ${psi.desktop_score}
+            </div>
+            <div class="score-label">Desktop</div>
+          </div>
+        </div>
+        
+        ${psi.lab_data ? this.buildLabDataSection(psi.lab_data) : ''}
+      </div>
+    `;
+  }
+
+  // Build lab data section
+  buildLabDataSection(labData) {
+    return `
+      <div class="lab-data">
+        <h5>⚡ Lab Metrics</h5>
+        <div class="metrics-grid">
+          <div class="metric">
+            <span class="metric-label">FCP</span>
+            <span class="metric-value">${this.formatTime(labData.fcp)}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">LCP</span>
+            <span class="metric-value">${this.formatTime(labData.lcp)}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">CLS</span>
+            <span class="metric-value">${labData.cls}</span>
+          </div>
+          <div class="metric">
+            <span class="metric-label">TBT</span>
+            <span class="metric-value">${this.formatTime(labData.tbt)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Build CrUX section (when available)
+  buildCrUXSection(crux) {
+    return `
+      <div class="crux-section">
+        <h4>📊 Real User Experience (Last 28 Days)</h4>
+        <div class="crux-metrics">
+          ${crux.lcp ? `
+            <div class="crux-metric">
+              <span class="metric-name">Largest Contentful Paint (LCP)</span>
+              <span class="metric-value ${crux.lcp.p75 <= 2500 ? 'good' : 'poor'}">
+                ${this.formatTime(crux.lcp.p75)}
+              </span>
+              <span class="metric-detail">${crux.lcp.good_pct}% of users have good experience</span>
+            </div>
+          ` : ''}
+          
+          ${crux.fcp ? `
+            <div class="crux-metric">
+              <span class="metric-name">First Contentful Paint (FCP)</span>
+              <span class="metric-value ${crux.fcp.p75 <= 1800 ? 'good' : 'poor'}">
+                ${this.formatTime(crux.fcp.p75)}
+              </span>
+              <span class="metric-detail">${crux.fcp.good_pct}% of users have good experience</span>
+            </div>
+          ` : ''}
+          
+          ${crux.cls ? `
+            <div class="crux-metric">
+              <span class="metric-name">Cumulative Layout Shift (CLS)</span>
+              <span class="metric-value ${crux.cls.p75 <= 0.1 ? 'good' : 'poor'}">
+                ${crux.cls.p75}
+              </span>
+              <span class="metric-detail">${crux.cls.good_pct}% of users have good experience</span>
+            </div>
+          ` : ''}
+          
+          ${crux.fid ? `
+            <div class="crux-metric">
+              <span class="metric-name">First Input Delay (FID)</span>
+              <span class="metric-value ${crux.fid.p75 <= 100 ? 'good' : 'poor'}">
+                ${this.formatTime(crux.fid.p75)}
+              </span>
+              <span class="metric-detail">${crux.fid.good_pct}% of users have good experience</span>
+            </div>
+          ` : ''}
+        </div>
+        <small style="color: #666; display: block; margin-top: 10px;">
+          📅 Data collected: ${this.formatDateRange(crux.collection_period)}
+        </small>
+      </div>
+    `;
+  }
+
+  // Build CrUX unavailable section (< 28 days)
+  buildCrUXUnavailableSection(crux, daysSinceInstall) {
+    return `
+      <div class="crux-unavailable">
+        <h4>📊 Real User Experience (Chrome UX Report)</h4>
+        <div class="unavailable-message">
+          <div class="icon">⏳</div>
+          <h5>COLLECTING DATA...</h5>
+          <p>${crux.message || 'Chrome UX Report data is not yet available.'}</p>
+          
+          ${daysSinceInstall < 28 ? `
+            <div class="timeline">
+              <div class="timeline-item">
+                <strong>📅 Installed:</strong> ${daysSinceInstall} days ago
+              </div>
+              <div class="timeline-item">
+                <strong>⏰ Data available in:</strong> ${crux.days_until_available || (28 - daysSinceInstall)} days
+              </div>
+            </div>
+            
+            <div class="explanation">
+              <h6>Why the wait?</h6>
+              <p>Google's Chrome UX Report collects real user data over a 28-day rolling period. Once 28 days have passed since installation, you'll see:</p>
+              <ul>
+                <li>✅ Real loading times from actual visitors</li>
+                <li>✅ Performance breakdown by device type</li>
+                <li>✅ Connection speed analysis</li>
+                <li>✅ User experience distribution</li>
+              </ul>
+            </div>
+            
+            <p class="meanwhile">
+              <strong>In the meantime, your PageSpeed Insights score above shows that optimizations are working! 🚀</strong>
+            </p>
+          ` : `
+            <p>CrUX data may not be available if your site doesn't have enough traffic yet.</p>
+          `}
+        </div>
+      </div>
+    `;
+  }
+
+  // Helper: Get page title
+  getPageTitle(pageType) {
+    const titles = {
+      homepage: 'Homepage',
+      product: 'Product Pages',
+      collection: 'Collection Pages',
+      blog: 'Blog Posts'
+    };
+    return titles[pageType] || pageType;
+  }
+
+  // Helper: Format time (ms to seconds)
+  formatTime(ms) {
+    if (!ms) return 'N/A';
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  }
+
+  // Helper: Format date range
+  formatDateRange(period) {
+    if (!period) return 'N/A';
+    const first = period.first_date;
+    const last = period.last_date;
+    if (!first || !last) return 'N/A';
+    return `${first.year}-${first.month}-${first.day} to ${last.year}-${last.month}-${last.day}`;
+  }
+
+  // ============================================================
+  // END: PERFORMANCE DATA WITH BROWSER CACHE
+  // ============================================================
 
   updateUI() {
     console.log('Updating UI, connected:', this.isRLConnected);
@@ -217,67 +649,12 @@ class RabbitLoaderDashboard {
         </div>
         
         <div class="dashboard-grid">
-          <div class="psi-scores-section">
-            <h3>PageSpeed Improvement</h3>
-            <div class="psi-comparison">
-              <div>
-                <h4>Before RabbitLoader</h4>
-                <div class="score-box">
-                  <div class="score">
-                    <span class="score-value ${this.getScoreClass(this.dashboardData.psi_scores.before.mobile)}">${this.dashboardData.psi_scores.before.mobile}</span>
-                    <span class="score-label">Mobile</span>
-                  </div>
-                  <div class="score">
-                    <span class="score-value ${this.getScoreClass(this.dashboardData.psi_scores.before.desktop)}">${this.dashboardData.psi_scores.before.desktop}</span>
-                    <span class="score-label">Desktop</span>
-                  </div>
-                </div>
-              </div>
-              <div class="improvement-arrow">→</div>
-              <div>
-                <h4>After RabbitLoader</h4>
-                <div class="score-box">
-                  <div class="score">
-                    <span class="score-value ${this.getScoreClass(this.dashboardData.psi_scores.after.mobile)}">${this.dashboardData.psi_scores.after.mobile}</span>
-                    <span class="score-label">Mobile</span>
-                  </div>
-                  <div class="score">
-                    <span class="score-value ${this.getScoreClass(this.dashboardData.psi_scores.after.desktop)}">${this.dashboardData.psi_scores.after.desktop}</span>
-                    <span class="score-label">Desktop</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div class="plan-section">
-            <h3>Current Plan</h3>
-            <div class="plan-info">
-              <div class="plan-details">
-                <h4>${this.dashboardData.plan.name}</h4>
-                <p>Up to ${this.dashboardData.plan.pageviews} pageviews</p>
-                <p><strong>${this.dashboardData.plan.price}</strong></p>
-              </div>
-            </div>
-          </div>
-
-          <div class="analytics-section">
-            <h3>This Month</h3>
-            <div class="analytics-stats">
-              <div class="stat">
-                <span class="stat-value">${this.dashboardData.pageviews_this_month}</span>
-                <span class="stat-label">Pageviews</span>
-              </div>
-            </div>
-          </div>
-
           <div class="actions-section">
             <h3>Quick Actions</h3>
             <div class="action-buttons">
               <a href="${this.dashboardData.reports_url}" target="_blank" class="btn btn-primary">View Reports</a>
               <a href="${this.dashboardData.customize_url}" target="_blank" class="btn btn-outline">Customize Settings</a>
               <button class="btn btn-secondary" onclick="dashboard.showScriptInstructions()">Script Setup</button>
-              <a href="/shopify/configure-defer?shop=${encodeURIComponent(this.shop)}" target="_blank" class="btn btn-outline">Configure Defer Rules</a>
             </div>
           </div>
         </div>
@@ -285,8 +662,7 @@ class RabbitLoaderDashboard {
         <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 6px; text-align: center;">
           <small>
             <strong>DID:</strong> ${this.currentDID} | 
-            <strong>Status:</strong> Active |
-            <strong>Script:</strong> Defer configuration only
+            <strong>Status:</strong> Active
           </small>
         </div>
       </div>
@@ -301,6 +677,8 @@ class RabbitLoaderDashboard {
     return 'poor';
   }
 
+  // ... (rest of your existing methods remain the same)
+  
   showScriptInstructions() {
     this.getManualInstructions();
   }
@@ -436,10 +814,20 @@ class RabbitLoaderDashboard {
       const data = await response.json();
 
       if (data.ok) {
-        this.showSuccess('Successfully disconnected from RabbitLoader');
+       this.showSuccess('Successfully disconnected from RabbitLoader');
+        
+        // Clear all caches
+        this.clearPerformanceCache();
+        
         this.isRLConnected = false;
         this.currentDID = null;
         this.dashboardData = null;
+        this.performanceData = {
+          homepage: null,
+          product: null,
+          collection: null,
+          blog: null
+        };
         this.updateUI();
       } else {
         this.showError(`Disconnect failed: ${data.error}`);
@@ -449,152 +837,154 @@ class RabbitLoaderDashboard {
       this.showError('Failed to disconnect');
     }
   }
-async triggerCompleteSetup() {
-  if (!this.shop) {
-    this.showError('Shop parameter is required for setup');
-    return;
-  }
 
-  console.log(`Triggering complete setup for shop: ${this.shop}`);
-
-  try {
-    // Step 1: Start the setup (returns immediately)
-    this.showInfo('Starting store optimization...');
-    
-    const startResponse = await fetch('/api/start-setup', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ shop: this.shop })
-    });
-
-    const startData = await startResponse.json();
-
-    if (!startData.ok) {
-      throw new Error(startData.error || 'Failed to start setup');
-    }
-
-    console.log('Setup started, now polling for progress...');
-    
-    // Step 2: Show progress bar
-    this.showProgressBar();
-    
-    // Step 3: Poll for progress
-    await this.pollSetupProgress();
-    
-  } catch (error) {
-    console.error('Complete setup error:', error);
-    this.showError('Setup failed: ' + error.message);
-    this.hideProgressBar();
-  }
-}
-
-showProgressBar() {
-  const connectedSection = document.querySelector('#connectedState .connected-section');
-  if (!connectedSection) return;
-  
-  // Remove existing progress bar if any
-  const existing = document.querySelector('.setup-progress');
-  if (existing) existing.remove();
-  
-  const progressHTML = `
-    <div class="setup-progress" style="margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 8px;">
-      <h3>🔧 Optimizing Your Store...</h3>
-      <div style="margin: 15px 0;">
-        <div style="background: #e0e0e0; height: 30px; border-radius: 15px; overflow: hidden;">
-          <div id="progress-bar" style="background: linear-gradient(90deg, #4CAF50, #8BC34A); height: 100%; width: 0%; transition: width 0.5s;"></div>
-        </div>
-        <p id="progress-text" style="margin-top: 10px; font-weight: bold;">Starting... 0%</p>
-      </div>
-      <div id="progress-steps" style="margin-top: 15px; font-size: 14px;"></div>
-      <p style="color: #666; margin-top: 10px;">⏱️ This will take 5-10 minutes. Don't close this page.</p>
-    </div>
-  `;
-  
-  connectedSection.insertAdjacentHTML('afterbegin', progressHTML);
-}
-
-hideProgressBar() {
-  const progressBar = document.querySelector('.setup-progress');
-  if (progressBar) progressBar.remove();
-}
-
-async pollSetupProgress() {
-  let attempts = 0;
-  const maxAttempts = 120; // 10 minutes (120 * 5 seconds)
-  
-  while (attempts < maxAttempts) {
-    await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
-    
-    try {
-      const response = await fetch(`/api/setup-status?shop=${encodeURIComponent(this.shop)}`);
-      const data = await response.json();
-      
-      if (!data.ok) {
-        throw new Error(data.error || 'Failed to get status');
-      }
-      
-      // Update progress bar
-      this.updateProgressBar(data.progress, data.current_step, data.completed_steps);
-      
-      // Check if complete
-      if (data.progress >= 100 || data.status === 'complete') {
-        this.showSuccess('✅ Store optimization complete!');
-        this.hideProgressBar();
-        
-        // Show any warnings
-        if (data.warnings && data.warnings.length > 0) {
-          data.warnings.forEach(w => this.showInfo(w));
-        }
-        
-        // Refresh dashboard
-        setTimeout(() => {
-          this.checkStatus();
-          this.updateUI();
-        }, 2000);
-        
-        return; // Done!
-      }
-      
-      // Check if failed
-      if (data.status === 'failed') {
-        throw new Error('Setup failed: ' + (data.error || 'Unknown error'));
-      }
-      
-    } catch (error) {
-      console.error('Poll error:', error);
-      this.showError('Progress check failed: ' + error.message);
-      this.hideProgressBar();
+  async triggerCompleteSetup() {
+    if (!this.shop) {
+      this.showError('Shop parameter is required for setup');
       return;
     }
-    
-    attempts++;
-  }
-  
-  // Timeout
-  this.showError('Setup is taking longer than expected. Check back in a few minutes.');
-  this.hideProgressBar();
-}
 
-updateProgressBar(progress, currentStep, completedSteps) {
-  const progressBar = document.getElementById('progress-bar');
-  const progressText = document.getElementById('progress-text');
-  const progressSteps = document.getElementById('progress-steps');
-  
-  if (progressBar) {
-    progressBar.style.width = progress + '%';
+    console.log(`Triggering complete setup for shop: ${this.shop}`);
+
+    try {
+      // Step 1: Start the setup (returns immediately)
+      this.showInfo('Starting store optimization...');
+      
+      const startResponse = await fetch('/api/start-setup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop: this.shop })
+      });
+
+      const startData = await startResponse.json();
+
+      if (!startData.ok) {
+        throw new Error(startData.error || 'Failed to start setup');
+      }
+
+      console.log('Setup started, now polling for progress...');
+      
+      // Step 2: Show progress bar
+      this.showProgressBar();
+      
+      // Step 3: Poll for progress
+      await this.pollSetupProgress();
+      
+    } catch (error) {
+      console.error('Complete setup error:', error);
+      this.showError('Setup failed: ' + error.message);
+      this.hideProgressBar();
+    }
   }
-  
-  if (progressText) {
-    progressText.textContent = `${currentStep || 'Processing'}... ${progress}%`;
+
+  showProgressBar() {
+    const connectedSection = document.querySelector('#connectedState .connected-section');
+    if (!connectedSection) return;
+    
+    // Remove existing progress bar if any
+    const existing = document.querySelector('.setup-progress');
+    if (existing) existing.remove();
+    
+    const progressHTML = `
+      <div class="setup-progress" style="margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 8px;">
+        <h3>🔧 Optimizing Your Store...</h3>
+        <div style="margin: 15px 0;">
+          <div style="background: #e0e0e0; height: 30px; border-radius: 15px; overflow: hidden;">
+            <div id="progress-bar" style="background: linear-gradient(90deg, #4CAF50, #8BC34A); height: 100%; width: 0%; transition: width 0.5s;"></div>
+          </div>
+          <p id="progress-text" style="margin-top: 10px; font-weight: bold;">Starting... 0%</p>
+        </div>
+        <div id="progress-steps" style="margin-top: 15px; font-size: 14px;"></div>
+        <p style="color: #666; margin-top: 10px;">⏱️ This will take 5-10 minutes. Don't close this page.</p>
+      </div>
+    `;
+    
+    connectedSection.insertAdjacentHTML('afterbegin', progressHTML);
   }
-  
-  if (progressSteps && completedSteps) {
-    const stepsHTML = completedSteps.map(step => 
-      `<div style="color: #4CAF50;">✅ ${step}</div>`
-    ).join('');
-    progressSteps.innerHTML = stepsHTML;
+
+  hideProgressBar() {
+    const progressBar = document.querySelector('.setup-progress');
+    if (progressBar) progressBar.remove();
   }
-}
+
+  async pollSetupProgress() {
+    let attempts = 0;
+    const maxAttempts = 120; // 10 minutes (120 * 5 seconds)
+    
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+      
+      try {
+        const response = await fetch(`/api/setup-status?shop=${encodeURIComponent(this.shop)}`);
+        const data = await response.json();
+        
+        if (!data.ok) {
+          throw new Error(data.error || 'Failed to get status');
+        }
+        
+        // Update progress bar
+        this.updateProgressBar(data.progress, data.current_step, data.completed_steps);
+        
+        // Check if complete
+        if (data.progress >= 100 || data.status === 'complete') {
+          this.showSuccess('✅ Store optimization complete!');
+          this.hideProgressBar();
+          
+          // Show any warnings
+          if (data.warnings && data.warnings.length > 0) {
+            data.warnings.forEach(w => this.showInfo(w));
+          }
+          
+          // Refresh dashboard and load performance data
+          setTimeout(() => {
+            this.checkStatus();
+            this.updateUI();
+          }, 2000);
+          
+          return; // Done!
+        }
+        
+        // Check if failed
+        if (data.status === 'failed') {
+          throw new Error('Setup failed: ' + (data.error || 'Unknown error'));
+        }
+        
+      } catch (error) {
+        console.error('Poll error:', error);
+        this.showError('Progress check failed: ' + error.message);
+        this.hideProgressBar();
+        return;
+      }
+      
+      attempts++;
+    }
+    
+    // Timeout
+    this.showError('Setup is taking longer than expected. Check back in a few minutes.');
+    this.hideProgressBar();
+  }
+
+  updateProgressBar(progress, currentStep, completedSteps) {
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+    const progressSteps = document.getElementById('progress-steps');
+    
+    if (progressBar) {
+      progressBar.style.width = progress + '%';
+    }
+    
+    if (progressText) {
+      progressText.textContent = `${currentStep || 'Processing'}... ${progress}%`;
+    }
+    
+    if (progressSteps && completedSteps) {
+      const stepsHTML = completedSteps.map(step => 
+        `<div style="color: #4CAF50;">✅ ${step}</div>`
+      ).join('');
+      progressSteps.innerHTML = stepsHTML;
+    }
+  }
+
   initiateRabbitLoaderConnection() {
     if (!this.shop) {
       this.showError('Shop parameter is required for connection');

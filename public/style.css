@@ -469,3 +469,306 @@ body {
     max-width: none;
   }
 }   
+
+/* Existing styles... */
+
+/* Performance Section Styles */
+.performance-section {
+  margin: 30px 0;
+  padding: 25px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  border-left: 4px solid #007bff;
+}
+
+.performance-section h3 {
+  margin-top: 0;
+  color: #1a1a1a;
+  font-size: 20px;
+}
+
+.performance-section h4 {
+  color: #333;
+  font-size: 18px;
+  margin: 20px 0 15px 0;
+}
+
+.performance-section h5 {
+  color: #555;
+  font-size: 16px;
+  margin: 15px 0 10px 0;
+}
+
+/* PSI Scores */
+.psi-section {
+  margin: 20px 0;
+}
+
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 20px;
+  margin: 20px 0;
+}
+
+.score-card {
+  text-align: center;
+  padding: 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.score-value {
+  display: block;
+  font-size: 48px;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
+.score-value.good {
+  color: #28a745;
+}
+
+.score-value.average {
+  color: #ffc107;
+}
+
+.score-value.poor {
+  color: #dc3545;
+}
+
+.score-label {
+  display: block;
+  font-size: 14px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Lab Data */
+.lab-data {
+  margin: 20px 0;
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 15px;
+  margin-top: 15px;
+}
+
+.metric {
+  text-align: center;
+  padding: 10px;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.metric-label {
+  display: block;
+  font-size: 12px;
+  color: #666;
+  text-transform: uppercase;
+  margin-bottom: 5px;
+}
+
+.metric-value {
+  display: block;
+  font-size: 18px;
+  font-weight: bold;
+  color: #007bff;
+}
+
+/* CrUX Metrics */
+.crux-section {
+  margin: 20px 0;
+}
+
+.crux-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-top: 15px;
+}
+
+.crux-metric {
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+  border-left: 4px solid #28a745;
+}
+
+.crux-metric .metric-name {
+  display: block;
+  font-weight: 600;
+  color: #333;
+  margin-bottom: 8px;
+}
+
+.crux-metric .metric-value {
+  display: block;
+  font-size: 24px;
+  font-weight: bold;
+  margin-bottom: 5px;
+}
+
+.crux-metric .metric-value.good {
+  color: #28a745;
+}
+
+.crux-metric .metric-value.poor {
+  color: #dc3545;
+}
+
+.crux-metric .metric-detail {
+  display: block;
+  font-size: 14px;
+  color: #666;
+}
+
+/* CrUX Unavailable */
+.crux-unavailable {
+  margin: 20px 0;
+  padding: 25px;
+  background: #fff3cd;
+  border-radius: 8px;
+  border-left: 4px solid #ffc107;
+}
+
+.crux-unavailable .icon {
+  font-size: 48px;
+  text-align: center;
+  margin-bottom: 15px;
+}
+
+.crux-unavailable h5 {
+  text-align: center;
+  color: #856404;
+  margin: 10px 0;
+}
+
+.unavailable-message {
+  color: #856404;
+}
+
+.timeline {
+  margin: 20px 0;
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+}
+
+.timeline-item {
+  padding: 10px 0;
+  border-bottom: 1px solid #eee;
+}
+
+.timeline-item:last-child {
+  border-bottom: none;
+}
+
+.explanation {
+  margin: 20px 0;
+  padding: 15px;
+  background: white;
+  border-radius: 6px;
+}
+
+.explanation h6 {
+  margin-top: 0;
+  color: #856404;
+}
+
+.explanation ul {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+
+.explanation li {
+  margin: 5px 0;
+}
+
+.meanwhile {
+  text-align: center;
+  margin-top: 20px;
+  padding: 15px;
+  background: #d4edda;
+  border-radius: 6px;
+  color: #155724;
+}
+
+/* Performance Actions */
+.performance-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+.performance-actions .btn {
+  flex: 1;
+  min-width: 150px;
+}
+
+/* Loading & Error States */
+.loading-container {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.loading-container .spinner {
+  margin: 0 auto 20px;
+}
+
+.error-container {
+  text-align: center;
+  padding: 40px 20px;
+  color: #dc3545;
+}
+
+.error-container p {
+  margin-bottom: 20px;
+}
+
+/* Template Performance Cards */
+.template-card {
+  margin: 20px 0;
+  padding: 20px;
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+
+.template-card h4 {
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.template-card .load-btn {
+  margin-top: 15px;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .score-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .metrics-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .performance-actions {
+    flex-direction: column;
+  }
+
+  .performance-actions .btn {
+    width: 100%;
+  }
+}

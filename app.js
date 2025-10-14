@@ -120,12 +120,13 @@ app.use(express.static(path.join(__dirname, "public")));
 const shopifyRoutes = require("./routes/shopify");
 const deferConfigRoutes = require("./routes/deferConfig");
 const shopifyConnectRouter = require("./routes/shopifyConnect");
+const performanceRoutes = require("./routes/performance");
 
 // ====== Mount Routes ======
 app.use("/shopify", shopifyRoutes);
 app.use("/defer-config", deferConfigRoutes);
 app.use("/rl", shopifyConnectRouter);
-
+app.use(performanceRoutes);
 
 // Helper function to inject Critical CSS into theme - OPTION A (First Position)
 async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
