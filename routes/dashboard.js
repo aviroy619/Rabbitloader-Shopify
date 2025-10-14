@@ -1173,21 +1173,34 @@ router.get("/analyze-page", async (req, res) => {
     // Call Google PageSpeed Insights API directly
     const PSI_API_KEY = process.env.GOOGLE_PSI_API_KEY || 'YOUR_API_KEY';
     
-    // Fetch mobile score
-    const mobileUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(fullUrl)}&strategy=mobile&key=${PSI_API_KEY}`;
-    const mobileResponse = await fetch(mobileUrl);
-    const mobileData = await mobileResponse.json();
-    
-    // Fetch desktop score
-    const desktopUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(fullUrl)}&strategy=desktop&key=${PSI_API_KEY}`;
-    const desktopResponse = await fetch(desktopUrl);
-    const desktopData = await desktopResponse.json();
-    
-    const mobileScore = Math.round((mobileData?.lighthouseResult?.categories?.performance?.score || 0) * 100);
-    const desktopScore = Math.round((desktopData?.lighthouseResult?.categories?.performance?.score || 0) * 100);
-    
-    console.log(`[Analyze Page] PSI Scores for ${url}: Mobile=${mobileScore}, Desktop=${desktopScore}`);
+   // Fetch mobile score
+const mobileUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(fullUrl)}&strategy=mobile&key=${PSI_API_KEY}`;
+console.log('[PSI Debug] Calling mobile URL:', mobileUrl.replace(PSI_API_KEY, 'API_KEY_HIDDEN'));
 
+const mobileResponse = await fetch(mobileUrl);
+const mobileData = await mobileResponse.json();
+console.log('[PSI Debug] Mobile response status:', mobileResponse.status);
+console.log('[PSI Debug] Mobile response:', JSON.stringify(mobileData, null, 2));
+
+// Fetch desktop score
+const desktopUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(fullUrl)}&strategy=desktop&key=${PSI_API_KEY}`;
+console.log('[PSI Debug] Calling desktop URL:', desktopUrl.replace(PSI_API_KEY, 'API_KEY_HIDDEN'));
+
+const desktopResponse = await fetch(desktopUrl);
+const desktopData = await desktopResponse.json();
+console.log('[PSI Debug] Desktop response status:', desktopResponse.status);
+console.log('[PSI Debug] Desktop response:', JSON.stringify(desktopData, null, 2));
+
+const mobileScore = Math.round((mobileData?.lighthouseResult?.categories?.performance?.score || 0) * 100);
+const desktopScore = Math.round((desktopData?.lighthouseResult?.categories?.performance?.score || 0) * 100);
+
+console.log(`[Analyze Page] PSI Scores for ${url}: Mobile=${mobileScore}, Desktop=${desktopScore}`);
+
+// If scores are 0, log the error
+if (mobileScore === 0 || desktopScore === 0) {
+  console.error('[PSI Error] Zero scores detected. Mobile data:', mobileData?.error || 'No error');
+  console.error('[PSI Error] Desktop data:', desktopData?.error || 'No error');
+}
     res.json({
       ok: true,
       scores: {
