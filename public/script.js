@@ -654,100 +654,109 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
   // ============================================================
   
   async loadPagesAndTemplates() {
-    try {
-      const response = await fetch(`/rl/pages-list?shop=${encodeURIComponent(this.shop)}`);
-      const data = await response.json();
+  try {
+    this.showInfo('Loading pages...');
+    
+    // Load first page
+    const response = await fetch(`/rl/pages-list?shop=${encodeURIComponent(this.shop)}&page=1&limit=100`);
+    const data = await response.json();
+    
+    if (data.ok) {
+      this.pagesData = data.data;
+      this.currentPage = 1;
+      this.hasMorePages = data.data.has_more;
+      this.renderPagesManagement();
       
-      if (data.ok) {
-        this.pagesData = data.data;
-        this.renderPagesManagement();
-      } else {
-        console.error('Failed to load pages:', data.error);
-      }
-    } catch (error) {
-      console.error('Pages load error:', error);
+      console.log(`Loaded ${data.data.total_pages} of ${data.data.total_pages_count} pages`);
+    } else {
+      console.error('Failed to load pages:', data.error);
+      this.showError('Failed to load pages: ' + data.error);
     }
+  } catch (error) {
+    console.error('Pages load error:', error);
+    this.showError('Failed to load pages');
   }
-  
+}
   renderPagesManagement() {
-    const connectedSection = document.querySelector('#connectedState .connected-section');
-    if (!connectedSection) return;
-    
-    // Remove existing pages section
-    const existing = document.querySelector('.pages-management-section');
-    if (existing) existing.remove();
-    
-    const { templates, all_pages, total_pages } = this.pagesData;
-    
-    const html = `
-      <div class="pages-management-section">
-        <h3>📄 Pages & Templates Management</h3>
-        <p style="color: #666; margin-bottom: 20px;">
-          Manage Critical CSS and JS Defer settings for ${total_pages} pages across ${Object.keys(templates).length} templates
-        </p>
+  const connectedSection = document.querySelector('#connectedState .connected-section');
+  if (!connectedSection) return;
+  
+  const existing = document.querySelector('.pages-management-section');
+  if (existing) existing.remove();
+  
+  const { templates, all_pages, total_pages_count, page, has_more } = this.pagesData;
+  
+  const html = `
+    <div class="pages-management-section">
+      <h3>📄 Pages & Templates Management</h3>
+      <p style="color: #666; margin-bottom: 20px;">
+        Manage Critical CSS and JS Defer settings for ${total_pages_count} pages across ${Object.keys(templates).length} templates
+      </p>
+      
+      <!-- Search & Filter -->
+      <div class="search-filter-bar" style="margin-bottom: 20px;">
+        <input 
+          type="text" 
+          id="pageSearch" 
+          placeholder="🔍 Search pages by URL or title..." 
+          style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;"
+        >
         
-        <!-- Search & Filter -->
-        <div class="search-filter-bar" style="margin-bottom: 20px;">
-          <input 
-            type="text" 
-            id="pageSearch" 
-            placeholder="🔍 Search pages by URL or title..." 
-            style="width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px;"
-          >
+        <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+          <select id="templateFilter" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px;">
+            <option value="">All Templates (${Object.keys(templates).length})</option>
+            ${Object.entries(templates).map(([template, data]) => 
+              `<option value="${template}">${template} (${data.count})</option>`
+            ).join('')}
+          </select>
           
-          <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
-            <select id="templateFilter" style="padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px;">
-              <option value="">All Templates (${Object.keys(templates).length})</option>
-              ${Object.entries(templates).map(([template, data]) => 
-                `<option value="${template}">${template} (${data.pages.length})</option>`
-              ).join('')}
-            </select>
-            
-            <button class="btn btn-outline" onclick="dashboard.clearFilters()">Clear Filters</button>
-          </div>
-        </div>
-        
-        <!-- Template Cards -->
-        <div id="templatesContainer">
-          ${this.renderTemplateCards(templates)}
-        </div>
-        
-        <!-- Pages Table -->
-        <div id="pagesTableContainer" style="margin-top: 30px;">
-          <h4>All Pages</h4>
-          <div style="overflow-x: auto;">
-            <table class="pages-table" style="width: 100%; border-collapse: collapse;">
-              <thead>
-                <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
-                  <th style="padding: 12px; text-align: left;">Page</th>
-                  <th style="padding: 12px; text-align: left;">Template</th>
-                  <th style="padding: 12px; text-align: left;">Type</th>
-                  <th style="padding: 12px; text-align: center;">Critical CSS</th>
-                  <th style="padding: 12px; text-align: center;">JS Defer</th>
-                  <th style="padding: 12px; text-align: center;">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="pagesTableBody">
-                ${this.renderPagesRows(all_pages.slice(0, 50))}
-              </tbody>
-            </table>
-          </div>
-          ${all_pages.length > 50 ? `
-            <div style="text-align: center; margin-top: 20px;">
-              <button class="btn btn-outline" onclick="dashboard.loadMorePages()">
-                Load More Pages (showing 50 of ${all_pages.length})
-              </button>
-            </div>
-          ` : ''}
+          <button class="btn btn-outline" onclick="dashboard.clearFilters()">Clear Filters</button>
         </div>
       </div>
-    `;
-    
-    connectedSection.insertAdjacentHTML('beforeend', html);
-    
-    // Setup event listeners
-    this.setupPagesEventListeners();
-  }
+      
+      <!-- Template Cards -->
+      <div id="templatesContainer">
+        ${this.renderTemplateCards(templates)}
+      </div>
+      
+      <!-- Pages Table -->
+      <div id="pagesTableContainer" style="margin-top: 30px;">
+        <h4>All Pages (Page ${page} - Showing ${all_pages.length} of ${total_pages_count})</h4>
+        <div style="overflow-x: auto;">
+          <table class="pages-table" style="width: 100%; border-collapse: collapse;">
+            <thead>
+              <tr style="background: #f8f9fa; border-bottom: 2px solid #dee2e6;">
+                <th style="padding: 12px; text-align: left;">Page</th>
+                <th style="padding: 12px; text-align: left;">Template</th>
+                <th style="padding: 12px; text-align: left;">Type</th>
+                <th style="padding: 12px; text-align: center;">Critical CSS</th>
+                <th style="padding: 12px; text-align: center;">JS Defer</th>
+                <th style="padding: 12px; text-align: center;">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="pagesTableBody">
+              ${this.renderPagesRows(all_pages)}
+            </tbody>
+          </table>
+        </div>
+        ${has_more ? `
+          <div style="text-align: center; margin-top: 20px;">
+            <button class="btn btn-primary" onclick="dashboard.loadMorePages()">
+              Load More Pages (${all_pages.length} of ${total_pages_count} loaded)
+            </button>
+          </div>
+        ` : `
+          <div style="text-align: center; margin-top: 20px; color: #666;">
+            All ${total_pages_count} pages loaded
+          </div>
+        `}
+      </div>
+    </div>
+  `;
+  
+  connectedSection.insertAdjacentHTML('beforeend', html);
+  this.setupPagesEventListeners();
+}
   
   renderTemplateCards(templates) {
     return Object.entries(templates).map(([template, data]) => `
@@ -1192,10 +1201,61 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
     document.getElementById('pagesTableContainer').scrollIntoView({ behavior: 'smooth' });
   }
   
-  loadMorePages() {
-    // Implementation for pagination
+  async loadMorePages() {
+  try {
     this.showInfo('Loading more pages...');
+    
+    const nextPage = this.currentPage + 1;
+    const response = await fetch(`/rl/pages-list?shop=${encodeURIComponent(this.shop)}&page=${nextPage}&limit=100`);
+    const data = await response.json();
+    
+    if (data.ok) {
+      // Append new pages to existing ones
+      this.pagesData.all_pages.push(...data.data.all_pages);
+      this.pagesData.total_pages = this.pagesData.all_pages.length;
+      this.pagesData.has_more = data.data.has_more;
+      this.currentPage = nextPage;
+      
+      // Re-render just the table
+      const tbody = document.getElementById('pagesTableBody');
+      if (tbody) {
+        tbody.innerHTML = this.renderPagesRows(this.pagesData.all_pages);
+      }
+      
+      // Update pagination info
+      const container = document.getElementById('pagesTableContainer');
+      if (container) {
+        const h4 = container.querySelector('h4');
+        if (h4) {
+          h4.textContent = `All Pages (Page ${this.currentPage} - Showing ${this.pagesData.all_pages.length} of ${this.pagesData.total_pages_count})`;
+        }
+        
+        // Update button
+        const buttonContainer = container.querySelector('div[style*="text-align: center"]');
+        if (buttonContainer) {
+          if (this.pagesData.has_more) {
+            buttonContainer.innerHTML = `
+              <button class="btn btn-primary" onclick="dashboard.loadMorePages()">
+                Load More Pages (${this.pagesData.all_pages.length} of ${this.pagesData.total_pages_count} loaded)
+              </button>
+            `;
+          } else {
+            buttonContainer.innerHTML = `
+              <div style="color: #666;">
+                All ${this.pagesData.total_pages_count} pages loaded
+              </div>
+            `;
+          }
+        }
+      }
+      
+      this.showSuccess(`Loaded ${data.data.all_pages.length} more pages`);
+    }
+  } catch (error) {
+    console.error('Load more pages error:', error);
+    this.showError('Failed to load more pages');
   }
+}
 
   getScoreClass(score) {
     if (score >= 90) return 'good';

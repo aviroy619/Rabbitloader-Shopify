@@ -575,10 +575,10 @@ router.get("/debug/:shop", async (req, res) => {
   }
 });
 // ============================================================
-// ROUTE: Get Pages List with Templates
+// ROUTE: Get Pages List with Templates (OPTIMIZED - PAGINATED)
 // ============================================================
 router.get("/pages-list", async (req, res) => {
-  const { shop } = req.query;
+  const { shop, page = 1, limit = 100 } = req.query;
   
   if (!shop) {
     return res.status(400).json({ 
@@ -597,7 +597,10 @@ router.get("/pages-list", async (req, res) => {
         data: {
           templates: {},
           all_pages: [],
-          total_pages: 0
+          total_pages: 0,
+          page: 1,
+          total_pages_count: 0,
+          has_more: false
         },
         message: "No site structure found. Run site analysis first."
       });
@@ -608,37 +611,54 @@ router.get("/pages-list", async (req, res) => {
       site_structure.template_groups :
       new Map(Object.entries(site_structure.template_groups));
 
-    // Build response
+    // Build templates summary (lightweight - no pages array)
     const templates = {};
-    const allPages = [];
+    let allPages = [];
     
     for (const [templateName, templateData] of templateGroups) {
       const pages = templateData.pages || [];
       
+      // Summary only for templates object
       templates[templateName] = {
         count: templateData.count || pages.length,
         sample_page: templateData.sample_page || (pages[0] ? pages[0].url : '/'),
         critical_css_enabled: templateData.critical_css_enabled !== false,
-        js_defer_count: (templateData.js_defer_rules || []).length,
-        pages: pages.map(page => ({
-          ...page,
-          critical_css_enabled: page.critical_css_enabled !== false,
-          js_defer_count: (page.js_defer_rules || []).length
-        }))
+        js_defer_count: (templateData.js_defer_rules || []).length
+        // DON'T include full pages array here
       };
       
-      allPages.push(...templates[templateName].pages);
+      // Collect all pages for pagination
+      allPages.push(...pages.map(page => ({
+        ...page,
+        template: templateName,
+        critical_css_enabled: page.critical_css_enabled !== false,
+        js_defer_count: (page.js_defer_rules || []).length
+      })));
     }
 
-    console.log(`[Pages List] Loaded ${allPages.length} pages across ${Object.keys(templates).length} templates for ${shop}`);
+    // Paginate
+    const pageNum = parseInt(page) || 1;
+    const pageLimit = Math.min(parseInt(limit) || 100, 200); // Max 200 per page
+    const startIndex = (pageNum - 1) * pageLimit;
+    const endIndex = startIndex + pageLimit;
+    
+    const paginatedPages = allPages.slice(startIndex, endIndex);
+    const totalPages = allPages.length;
+    const hasMore = endIndex < totalPages;
+
+    console.log(`[Pages List] Loaded page ${pageNum} (${paginatedPages.length} pages) of ${totalPages} total for ${shop}`);
 
     res.json({
       ok: true,
       data: {
         templates: templates,
-        all_pages: allPages,
-        total_pages: allPages.length,
-        total_templates: Object.keys(templates).length
+        all_pages: paginatedPages,
+        total_pages: paginatedPages.length,
+        total_pages_count: totalPages,
+        total_templates: Object.keys(templates).length,
+        page: pageNum,
+        limit: pageLimit,
+        has_more: hasMore
       }
     });
 
