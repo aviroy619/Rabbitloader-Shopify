@@ -65,12 +65,16 @@ class RabbitLoaderDashboard {
       setTimeout(() => this.checkStatus(), 1000);
     }
 
-    // Handle trigger_setup flag
-    if (urlParams.get('trigger_setup') === '1') {
-      console.log('Setup trigger detected - starting complete setup flow');
-      this.showInfo('Setting up your store optimization... This may take a few minutes.');
-      setTimeout(() => this.triggerCompleteSetup(), 2000);
-    }
+    // Handle trigger_setup flag (disabled - not implemented yet)
+if (urlParams.get('trigger_setup') === '1') {
+  console.log('Setup trigger detected - but setup flow not implemented yet');
+  this.showInfo('⚠️ Connected successfully! Please configure manually from the dashboard.');
+  
+  // Remove the trigger_setup flag from URL
+  const url = new URL(window.location);
+  url.searchParams.delete('trigger_setup');
+  window.history.replaceState({}, '', url);
+}
   }
 
   async checkStatus() {
@@ -82,8 +86,7 @@ class RabbitLoaderDashboard {
 
     try {
       console.log(`Checking status for shop: ${this.shop}`);
-      
-      const response = await fetch(`/shopify/status?shop=${encodeURIComponent(this.shop)}`);
+      const response = await fetch(`/rl/status?shop=${encodeURIComponent(this.shop)}`);
       const data = await response.json();
 
       if (data.ok) {
@@ -113,7 +116,7 @@ class RabbitLoaderDashboard {
 
   async loadDashboardData() {
     try {
-      const response = await fetch(`/shopify/dashboard-data?shop=${encodeURIComponent(this.shop)}`);
+const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.shop)}`);
       const data = await response.json();
 
       if (data.ok) {
@@ -654,7 +657,7 @@ class RabbitLoaderDashboard {
   // NEW: Update store stats from MongoDB
 async updateStoreStats() {
   try {
-    const response = await fetch(`/shopify/status?shop=${encodeURIComponent(this.shop)}`);
+    const response = await fetch(`/rl/status?shop=${encodeURIComponent(this.shop)}`);
     const data = await response.json();
 
     // If site_structure is not available, try to fetch from site-analysis API
@@ -713,7 +716,7 @@ async updateStoreStats() {
 
   async getManualInstructions() {
     try {
-      const response = await fetch(`/shopify/manual-instructions?shop=${encodeURIComponent(this.shop)}`);
+      const response = await fetch(`/rl/manual-instructions?shop=${encodeURIComponent(this.shop)}`);
       const data = await response.json();
 
       if (data.ok) {
@@ -795,13 +798,13 @@ async updateStoreStats() {
     try {
       this.showInfo('Attempting automatic script injection...');
 
-      const response = await fetch('/shopify/inject-script', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ shop: this.shop })
-      });
+      const response = await fetch('/rl/inject-script', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({ shop: this.shop })
+});
 
       const data = await response.json();
 
@@ -828,13 +831,13 @@ async updateStoreStats() {
     try {
       this.showInfo('Disconnecting...');
 
-      const response = await fetch('/shopify/disconnect', {
-       method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ shop: this.shop })
-      });
+      const response = await fetch('/rl/disconnect', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({ shop: this.shop })
+});
 
       const data = await response.json();
 
@@ -861,42 +864,15 @@ async updateStoreStats() {
       this.showError('Failed to disconnect');
     }
   }
-
-  async triggerCompleteSetup() {
-    if (!this.shop) {
-      this.showError('Shop parameter is required for setup');
-      return;
-    }
-
-    console.log(`Triggering complete setup for shop: ${this.shop}`);
-
-    try {
-      this.showInfo('Starting store optimization...');
-      
-      const startResponse = await fetch('/api/start-setup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop: this.shop })
-      });
-
-      const startData = await startResponse.json();
-
-      if (!startData.ok) {
-        throw new Error(startData.error || 'Failed to start setup');
-      }
-
-      console.log('Setup started, now polling for progress...');
-      
-      this.showProgressBar();
-      await this.pollSetupProgress();
-      
-    } catch (error) {
-      console.error('Complete setup error:', error);
-      this.showError('Setup failed: ' + error.message);
-      this.hideProgressBar();
-    }
-  }
-
+async triggerCompleteSetup() {
+  console.warn('[Setup] Complete setup flow not yet implemented');
+  this.showInfo('Setup flow is under development. Please use manual setup for now.');
+  return;
+  
+  // TODO: Implement setup flow with these endpoints:
+  // POST /api/start-setup
+  // GET /api/setup-status
+}
   showProgressBar() {
     const connectedSection = document.querySelector('#connectedState .connected-section');
     if (!connectedSection) return;

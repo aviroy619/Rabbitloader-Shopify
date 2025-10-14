@@ -1,7 +1,9 @@
 const express = require("express");
 const router = express.Router();
 
-// Helper function to inject defer script
+// ============================================================
+// HELPER FUNCTION: Inject Defer Script
+// ============================================================
 async function injectDeferScript(shop, did, accessToken) {
   console.log(`[RL] Attempting auto defer script injection for ${shop} with DID: ${did}`);
 
@@ -107,7 +109,9 @@ async function injectDeferScript(shop, did, accessToken) {
   }
 }
 
-// Handle RabbitLoader callbacks - SIMPLIFIED (no auto-injection)
+// ============================================================
+// ROUTE: RabbitLoader OAuth Callback
+// ============================================================
 router.get("/rl-callback", async (req, res) => {
   const { shop, "rl-token": rlToken } = req.query;
 
@@ -173,7 +177,7 @@ router.get("/rl-callback", async (req, res) => {
       updateData.$set.account_id = decoded.account_id;
     }
 
-    const updatedShop = await ShopModel.findOneAndUpdate(
+    await ShopModel.findOneAndUpdate(
       { shop },
       updateData,
       { upsert: true, new: true }
@@ -218,7 +222,9 @@ router.get("/rl-callback", async (req, res) => {
   }
 });
 
-// Connect/redirect to RabbitLoader
+// ============================================================
+// ROUTE: Initiate RabbitLoader Connection
+// ============================================================
 router.get("/rl-connect", async (req, res) => {
   const { shop, host } = req.query;
   
@@ -264,11 +270,265 @@ router.get("/rl-connect", async (req, res) => {
   }
 });
 
-// Disconnect from RabbitLoader - GET route
+// ============================================================
+// ROUTE: Get Shop Status (FIXED - was missing!)
+// ============================================================
+router.get("/status", async (req, res) => {
+  const { shop } = req.query;
+  
+  console.log(`[RL] Status check for: ${shop}`);
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord) {
+      return res.json({ 
+        ok: true, 
+        connected: false,
+        message: "Shop not found"
+      });
+    }
+    
+    res.json({
+      ok: true,
+      connected: !!shopRecord.api_token,
+      did: shopRecord.short_id,
+      script_injected: shopRecord.script_injected || false,
+      critical_css_injected: shopRecord.critical_css_injected || false,
+      needs_setup: shopRecord.needs_setup || false,
+      setup_completed: shopRecord.setup_completed || false,
+      connected_at: shopRecord.connected_at,
+      site_structure: shopRecord.site_structure || null
+    });
+    
+  } catch (error) {
+    console.error(`[RL] Status check error:`, error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Get Dashboard Data (FIXED - was missing!)
+// ============================================================
+router.get("/dashboard-data", async (req, res) => {
+  const { shop } = req.query;
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not found" 
+      });
+    }
+
+    res.json({
+      ok: true,
+      data: {
+        did: shopRecord.short_id,
+        reports_url: `https://rabbitloader.com/account/`,
+        customize_url: `https://rabbitloader.com/account/`,
+        api_token: shopRecord.api_token ? 'present' : 'missing',
+        connected_at: shopRecord.connected_at,
+        script_injected: shopRecord.script_injected || false,
+        critical_css_injected: shopRecord.critical_css_injected || false,
+        site_structure: shopRecord.site_structure || null
+      }
+    });
+  } catch (error) {
+    console.error('[Dashboard Data] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Get Manual Instructions (FIXED - was missing!)
+// ============================================================
+router.get("/manual-instructions", async (req, res) => {
+  const { shop } = req.query;
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
+  
+  res.json({
+    ok: true,
+    scriptTag: `<script src="${deferLoaderUrl}"></script>`,
+    instructions: {
+      step1: "In your Shopify admin, go to Online Store > Themes",
+      step2: "Click Actions > Edit code on your active theme",
+      step3: "In the left sidebar, find and click on theme.liquid under Layout",
+      step4: "Locate the opening <head> tag (usually near the top of the file)",
+      step5: "Add the script AFTER <head> and BEFORE any other scripts",
+      step6: "Click Save in the top right corner",
+      step7: "Test your store to ensure everything works correctly",
+      step8: "Configure defer rules in the Defer Configuration section below"
+    }
+  });
+});
+
+// ============================================================
+// ROUTE: Auto-Inject Script (FIXED - was missing!)
+// ============================================================
+router.post("/inject-script", async (req, res) => {
+  const { shop } = req.body;
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.accessToken) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: 'Shop not found or access token missing' 
+      });
+    }
+
+    // Call the helper function
+    const result = await injectDeferScript(
+      shop, 
+      shopRecord.short_id, 
+      shopRecord.accessToken
+    );
+
+    // Update shop record
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $set: {
+          script_injected: true,
+          script_injection_attempted: true
+        },
+        $push: {
+          history: {
+            event: "script_injection",
+            timestamp: new Date(),
+            details: {
+              success: result.success,
+              position: result.position,
+              theme_id: result.themeId
+            }
+          }
+        }
+      }
+    );
+
+    res.json({ 
+      ok: true, 
+      message: result.message,
+      ...result
+    });
+
+  } catch (error) {
+    console.error('[Inject Script] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Disconnect (FIXED - changed from GET to POST!)
+// ============================================================
+router.post("/disconnect", async (req, res) => {
+  const { shop } = req.body; // Changed from req.query
+  
+  console.log(`[RL] Disconnect request for: ${shop}`);
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $unset: { 
+          api_token: "", 
+          short_id: "",
+          script_injected: "",
+          script_injection_attempted: "",
+          critical_css_injected: ""
+        },
+        $set: { 
+          connected_at: null,
+          needs_setup: false,
+          setup_completed: false
+        },
+        $push: {
+          history: {
+            event: "disconnect",
+            timestamp: new Date(),
+            details: { via: "manual-disconnect" }
+          }
+        }
+      }
+    );
+
+    console.log(`[RL] ✅ Disconnected shop: ${shop}`);
+    
+    res.json({ 
+      ok: true, 
+      message: "Disconnected from RabbitLoader successfully" 
+    });
+    
+  } catch (error) {
+    console.error(`[RL] ❌ Disconnect error:`, error);
+    res.status(500).json({ 
+      ok: false, 
+      error: "Failed to disconnect" 
+    });
+  }
+});
+
+// ============================================================
+// DEPRECATED: Old GET route for backward compatibility
+// ============================================================
 router.get("/rl-disconnect", async (req, res) => {
   const { shop } = req.query;
   
-  console.log(`[RL] Disconnect request for: ${shop}`);
+  console.warn(`[RL] DEPRECATED: Use POST /disconnect instead`);
   
   if (!shop) {
     return res.status(400).json({ 
@@ -295,7 +555,7 @@ router.get("/rl-disconnect", async (req, res) => {
           history: {
             event: "disconnect",
             timestamp: new Date(),
-            details: { via: "manual-rl-disconnect" }
+            details: { via: "deprecated-rl-disconnect" }
           }
         }
       }
@@ -317,27 +577,56 @@ router.get("/rl-disconnect", async (req, res) => {
   }
 });
 
-// Health check for RabbitLoader routes
+// ============================================================
+// ROUTE: Health Check
+// ============================================================
 router.get("/health", (req, res) => {
   res.json({
     ok: true,
-    service: "rabbitloader-connect",
+    service: "rabbitloader-shopify-integration",
     timestamp: new Date().toISOString(),
-    routes: ["rl-callback", "rl-connect", "rl-disconnect", "health", "debug"],
-    features: ["connection-only", "setup-via-frontend"]
+    routes: [
+      "rl-callback",
+      "rl-connect",
+      "status",
+      "dashboard-data",
+      "manual-instructions",
+      "inject-script",
+      "disconnect",
+      "health",
+      "debug"
+    ],
+    features: [
+      "oauth-connection",
+      "auto-script-injection",
+      "manual-instructions",
+      "setup-flow",
+      "disconnect"
+    ]
   });
 });
 
-// Debug route to check connection status
+// ============================================================
+// ROUTE: Debug (Check Connection Status)
+// ============================================================
 router.get("/debug/:shop", async (req, res) => {
   const { shop } = req.params;
   
   try {
     const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop: shop + '.myshopify.com' });
+    
+    // Try with and without .myshopify.com suffix
+    let shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord && !shop.includes('.myshopify.com')) {
+      shopRecord = await ShopModel.findOne({ shop: shop + '.myshopify.com' });
+    }
     
     if (!shopRecord) {
-      return res.json({ found: false, shop });
+      return res.json({ 
+        found: false, 
+        shop,
+        message: "Shop not found in database"
+      });
     }
     
     res.json({
@@ -351,14 +640,20 @@ router.get("/debug/:shop", async (req, res) => {
       injection_attempted: shopRecord.script_injection_attempted || false,
       connected_at: shopRecord.connected_at,
       did: shopRecord.short_id,
-      history: shopRecord.history || []
+      account_id: shopRecord.account_id,
+      history: shopRecord.history || [],
+      site_structure: shopRecord.site_structure || null
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      error: error.message 
+    });
   }
 });
 
-// Export both router and helper function
+// ============================================================
+// EXPORTS
+// ============================================================
 module.exports = {
   router,
   injectDeferScript
