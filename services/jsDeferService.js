@@ -1,14 +1,22 @@
 // ============================================
-// CREATE NEW FILE: services/jsDeferService.js
+// services/jsDeferService.js
 // ============================================
 
 const axios = require('axios');
 const ShopModel = require('../models/Shop');
+const amqp = require('amqplib');
 
 class JsDeferService {
   constructor() {
     this.baseURL = process.env.JS_DEFER_SERVICE_URL || 'http://45.32.212.222:3002';
     this.timeout = 120000; // 2 minutes
+    
+    // RabbitMQ properties
+    this.rabbitmqURL = process.env.RABBITMQ_URL || 'amqp://guest:guest@45.32.212.222:5672';
+    this.queueName = process.env.RABBITMQ_QUEUE || 'psi_results_queue';
+    this.connection = null;
+    this.channel = null;
+    this.isConnected = false;
   }
 
   /**
@@ -353,6 +361,111 @@ class JsDeferService {
     } catch (error) {
       console.error(`[JS Defer] Stats failed:`, error.message);
       return null;
+    }
+  }
+
+  /**
+   * Connect to RabbitMQ and start consuming PSI results
+   */
+  async connectRabbitMQ() {
+    try {
+      console.log(`[RabbitMQ] Connecting to ${this.rabbitmqURL}...`);
+      
+      // Create connection
+      this.connection = await amqp.connect(this.rabbitmqURL);
+      this.channel = await this.connection.createChannel();
+      
+      // Assert queue exists
+      await this.channel.assertQueue(this.queueName, { durable: true });
+      
+      // Set prefetch to process one message at a time
+      this.channel.prefetch(1);
+      
+      console.log(`✅ [RabbitMQ] Connected to queue: ${this.queueName}`);
+      this.isConnected = true;
+      
+      // Start consuming messages
+      this.channel.consume(this.queueName, async (msg) => {
+        if (msg !== null) {
+          try {
+            const result = JSON.parse(msg.content.toString());
+            console.log(`[RabbitMQ] 📨 Received result for ${result.shop}/${result.template}`);
+            
+            // Process the message
+            await this.handlePSIResult(result);
+            
+            // Acknowledge message (remove from queue)
+            this.channel.ack(msg);
+            console.log(`[RabbitMQ] ✅ Processed and acknowledged: ${result.jobId}`);
+            
+          } catch (error) {
+            console.error(`[RabbitMQ] ❌ Failed to process message:`, error);
+            
+            // Reject message and requeue if processing failed
+            this.channel.nack(msg, false, true);
+          }
+        }
+      }, {
+        noAck: false // Manual acknowledgment
+      });
+      
+      // Handle connection errors
+      this.connection.on('error', (err) => {
+        console.error('[RabbitMQ] ❌ Connection error:', err);
+        this.isConnected = false;
+      });
+      
+      this.connection.on('close', () => {
+        console.log('[RabbitMQ] Connection closed, reconnecting in 5s...');
+        this.isConnected = false;
+        setTimeout(() => this.connectRabbitMQ(), 5000);
+      });
+      
+    } catch (error) {
+      console.error('[RabbitMQ] ❌ Connection failed:', error);
+      this.isConnected = false;
+      
+      // Retry connection after 10 seconds
+      console.log('[RabbitMQ] Retrying connection in 10s...');
+      setTimeout(() => this.connectRabbitMQ(), 10000);
+    }
+  }
+
+  /**
+   * Handle PSI result from RabbitMQ
+   */
+  async handlePSIResult(result) {
+    const { shop, template, jobId, status } = result;
+    
+    // Only process completed results
+    if (status !== 'completed') {
+      console.log(`[RabbitMQ] ⚠️ Skipping ${status} result: ${jobId}`);
+      return;
+    }
+    
+    console.log(`[RabbitMQ] Processing result for ${shop}/${template}`);
+    
+    // Use existing saveAnalysisToDatabase method
+    await this.saveAnalysisToDatabase(result);
+    
+    console.log(`[RabbitMQ] ✅ Saved to database: ${shop}/${template}`);
+  }
+
+  /**
+   * Close RabbitMQ connection
+   */
+  async closeRabbitMQ() {
+    try {
+      if (this.channel) {
+        await this.channel.close();
+      }
+      if (this.connection) {
+        await this.connection.close();
+      }
+      this.isConnected = false;
+      console.log('[RabbitMQ] Connection closed');
+    } catch (error) {
+      console.error('[RabbitMQ] Error closing connection:', error);
     }
   }
 }

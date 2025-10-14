@@ -103,6 +103,11 @@ mongoose.connect(process.env.MONGO_URI);
 
 mongoose.connection.on("connected", () => {
   console.log("MongoDB connected");
+  
+  // Start RabbitMQ consumer
+  jsDeferService.connectRabbitMQ().catch(err => {
+    console.error('Failed to start RabbitMQ consumer:', err);
+  });
 });
 mongoose.connection.on("error", (err) => {
   console.error("MongoDB connection error:", err);
@@ -3089,6 +3094,19 @@ app.use((req, res) => {
     });
   }
 });
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  await jsDeferService.closeRabbitMQ();
+  process.exit(0);
+});
+
+process.on('SIGTERM', async () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  await jsDeferService.closeRabbitMQ();
+  process.exit(0);
+});
+
 app.listen(PORT, () => {
   console.log(`✅ RL-Shopify app running on port ${PORT}`);
   console.log(`🌐 App URL: ${process.env.APP_URL}`);
