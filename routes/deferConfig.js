@@ -357,15 +357,32 @@ router.get("/critical.css", async (req, res) => {
       }
       
       console.log(`Fetching critical CSS for ${shop}, template: ${template}`);
-      
+
+      // First, get the record from CSS MS to find CDN URL
       const response = await axios.get(
-        `${criticalCssServiceUrl}/api/shopify/${shop}/${template}/css`,
+        `${criticalCssServiceUrl}/api/critical-css/${shop}/${template}`,
         { timeout: 5000 }
       );
-      
-      if (response.data && response.status === 200) {
-        console.log(`Served generated critical CSS for ${shop}/${template}`);
-        return res.send(response.data);
+
+      if (response.data && response.data.ok && response.data.enabled && response.data.data) {
+        const cssData = response.data.data;
+        
+        // If we have a CDN URL, redirect to it for best performance
+        if (cssData.cdn_url) {
+          console.log(`Redirecting to CDN URL: ${cssData.cdn_url}`);
+          return res.redirect(302, cssData.cdn_url);
+        }
+        
+        // Otherwise, serve the CSS directly from the response
+        if (cssData.css) {
+          console.log(`Served critical CSS for ${shop}/${template} (${cssData.metadata?.size || 0} bytes)`);
+          return res.send(cssData.css);
+        }
+      }
+
+      // If disabled or no CSS found, log and fall through to fallback
+      if (response.data && !response.data.enabled) {
+        console.log(`Critical CSS is disabled for ${shop}/${template}`);
       }
     } catch (fetchError) {
       console.warn(`Failed to fetch from Critical CSS service: ${fetchError.message}`);
@@ -399,4 +416,5 @@ img { max-width: 100%; height: auto; }
     res.status(500).send('/* Error generating critical CSS */');
   }
 });
+
 module.exports = router;
