@@ -126,7 +126,7 @@ const performanceRoutes = require("./routes/performance");
 app.use("/shopify", shopifyRoutes);
 app.use("/defer-config", deferConfigRoutes);
 app.use("/rl", dashboardRouter);  // 
-app.use(performanceRoutes);
+app.use('/api/performance', performanceRoutes);
 
 // Helper function to inject Critical CSS into theme - OPTION A (First Position)
 async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
