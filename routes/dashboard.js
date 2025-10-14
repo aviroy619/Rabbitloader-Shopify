@@ -1190,8 +1190,7 @@ router.get("/analyze-page", async (req, res) => {
     const desktopScore = psiData.desktop?.performance_score || 0;
 
     // Save scores to database
-    const ShopModel = require("../models/Shop");
-    await ShopModel.updateOne(
+        await ShopModel.updateOne(
       { shop },
       {
         $push: {
