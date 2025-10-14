@@ -1145,6 +1145,309 @@ router.get("/export-defer-config", async (req, res) => {
   }
 });
 // ============================================================
+// ROUTE: Analyze Page Performance
+// ============================================================
+router.get("/analyze-page", async (req, res) => {
+  const { shop, url } = req.query;
+  
+  if (!shop || !url) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop and url parameters required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.short_id) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not connected to RabbitLoader" 
+      });
+    }
+
+    // Call your PSI microservice
+    const psiUrl = `http://psi-microservice:3000/analyze?url=https://${shop}${url}&strategy=mobile,desktop`;
+    
+    console.log(`[Analyze Page] Calling PSI for ${shop}${url}`);
+    
+    const psiResponse = await fetch(psiUrl, {
+      headers: {
+        'Authorization': `Bearer ${shopRecord.api_token}`
+      }
+    });
+
+    if (!psiResponse.ok) {
+      throw new Error(`PSI service returned ${psiResponse.status}`);
+    }
+
+    const psiData = await psiResponse.json();
+    
+    // Extract scores
+    const mobileScore = psiData.mobile?.performance_score || 0;
+    const desktopScore = psiData.desktop?.performance_score || 0;
+
+    // Save scores to database
+    const ShopModel = require("../models/Shop");
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $push: {
+          history: {
+            event: "page_analyzed",
+            timestamp: new Date(),
+            details: {
+              url: url,
+              mobile_score: mobileScore,
+              desktop_score: desktopScore
+            }
+          }
+        }
+      }
+    );
+
+    console.log(`[Analyze Page] Scores for ${url}: Mobile=${mobileScore}, Desktop=${desktopScore}`);
+
+    res.json({
+      ok: true,
+      scores: {
+        mobile: mobileScore,
+        desktop: desktopScore
+      },
+      url: url,
+      analyzed_at: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('[Analyze Page] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Apply JS Rule (Page/Template/Global)
+// ============================================================
+router.post("/apply-js-rule", async (req, res) => {
+  const { shop, scope, template, pageId, scriptUrl, action } = req.body;
+  
+  if (!shop || !scope || !action) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop, scope, and action are required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    
+    const newRule = {
+      id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      pattern: scriptUrl,
+      action: action,
+      created_at: new Date()
+    };
+
+    let updateQuery = {};
+    
+    if (scope === 'page') {
+      // Apply to single page
+      const shopRecord = await ShopModel.findOne({ shop });
+      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+        shopRecord.site_structure.template_groups :
+        new Map(Object.entries(shopRecord.site_structure.template_groups));
+      
+      let foundTemplate = null;
+      let pageIndex = -1;
+      
+      for (const [templateName, templateData] of templateGroups) {
+        const pages = templateData.pages || [];
+        pageIndex = pages.findIndex(p => p._doc?.id === pageId || p.id === pageId);
+        
+        if (pageIndex !== -1) {
+          foundTemplate = templateName;
+          break;
+        }
+      }
+      
+      if (!foundTemplate) {
+        return res.status(404).json({ 
+          ok: false, 
+          error: "Page not found" 
+        });
+      }
+      
+      updateQuery = {
+        $push: {
+          [`site_structure.template_groups.${foundTemplate}.pages.${pageIndex}.js_defer_rules`]: newRule
+        }
+      };
+      
+    } else if (scope === 'template') {
+      // Apply to all pages in template
+      updateQuery = {
+        $push: {
+          [`site_structure.template_groups.${template}.js_defer_rules`]: newRule
+        }
+      };
+      
+    } else if (scope === 'global') {
+      // Apply to all templates
+      const shopRecord = await ShopModel.findOne({ shop });
+      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+        shopRecord.site_structure.template_groups :
+        new Map(Object.entries(shopRecord.site_structure.template_groups));
+      
+      const updates = [];
+      for (const templateName of templateGroups.keys()) {
+        updates.push(
+          ShopModel.updateOne(
+            { shop },
+            {
+              $push: {
+                [`site_structure.template_groups.${templateName}.js_defer_rules`]: newRule
+              }
+            }
+          )
+        );
+      }
+      
+      await Promise.all(updates);
+      
+      return res.json({
+        ok: true,
+        message: `JS rule applied globally to all templates`
+      });
+    }
+
+    await ShopModel.updateOne({ shop }, updateQuery);
+
+    console.log(`[Apply JS Rule] Applied ${action} for ${scriptUrl} to ${scope} in ${shop}`);
+
+    res.json({
+      ok: true,
+      message: `JS rule applied successfully to ${scope}`,
+      rule: newRule
+    });
+
+  } catch (error) {
+    console.error('[Apply JS Rule] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Apply CSS Setting (Page/Template/Global)
+// ============================================================
+router.post("/apply-css-setting", async (req, res) => {
+  const { shop, scope, template, pageId, enabled } = req.body;
+  
+  if (!shop || !scope || enabled === undefined) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop, scope, and enabled are required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    let updateQuery = {};
+    
+    if (scope === 'page') {
+      // Apply to single page
+      const shopRecord = await ShopModel.findOne({ shop });
+      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+        shopRecord.site_structure.template_groups :
+        new Map(Object.entries(shopRecord.site_structure.template_groups));
+      
+      let foundTemplate = null;
+      let pageIndex = -1;
+      
+      for (const [templateName, templateData] of templateGroups) {
+        const pages = templateData.pages || [];
+        pageIndex = pages.findIndex(p => p._doc?.id === pageId || p.id === pageId);
+        
+        if (pageIndex !== -1) {
+          foundTemplate = templateName;
+          break;
+        }
+      }
+      
+      if (!foundTemplate) {
+        return res.status(404).json({ 
+          ok: false, 
+          error: "Page not found" 
+        });
+      }
+      
+      updateQuery = {
+        $set: {
+          [`site_structure.template_groups.${foundTemplate}.pages.${pageIndex}.critical_css_enabled`]: enabled
+        }
+      };
+      
+    } else if (scope === 'template') {
+      // Apply to template
+      updateQuery = {
+        $set: {
+          [`site_structure.template_groups.${template}.critical_css_enabled`]: enabled
+        }
+      };
+      
+    } else if (scope === 'global') {
+      // Apply to all templates
+      const shopRecord = await ShopModel.findOne({ shop });
+      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+        shopRecord.site_structure.template_groups :
+        new Map(Object.entries(shopRecord.site_structure.template_groups));
+      
+      const updates = [];
+      for (const templateName of templateGroups.keys()) {
+        updates.push(
+          ShopModel.updateOne(
+            { shop },
+            {
+              $set: {
+                [`site_structure.template_groups.${templateName}.critical_css_enabled`]: enabled
+              }
+            }
+          )
+        );
+      }
+      
+      await Promise.all(updates);
+      
+      return res.json({
+        ok: true,
+        message: `Critical CSS ${enabled ? 'enabled' : 'disabled'} globally`
+      });
+    }
+
+    await ShopModel.updateOne({ shop }, updateQuery);
+
+    console.log(`[Apply CSS Setting] Set to ${enabled} for ${scope} in ${shop}`);
+
+    res.json({
+      ok: true,
+      message: `Critical CSS ${enabled ? 'enabled' : 'disabled'} for ${scope}`
+    });
+
+  } catch (error) {
+    console.error('[Apply CSS Setting] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+// ============================================================
 // EXPORTS
 // ============================================================
 module.exports = {

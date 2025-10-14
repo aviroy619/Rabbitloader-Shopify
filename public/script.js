@@ -712,8 +712,8 @@ renderPagesManagement() {
       return `
         <tr id="${rowId}" style="border-bottom: 1px solid #e2e8f0; transition: background 0.2s;" 
             data-template="${page.template}" 
-            data-url="${page.url}"
-            data-page-id="${page.id || index}"
+            data-url="${page._doc?.url || ''}"
+            data-page-id="${page._doc?.id || index}"
             onmouseenter="this.style.background='#f8fafc'" 
             onmouseleave="this.style.background='white'">
           <td style="padding: 16px;">
@@ -724,10 +724,9 @@ renderPagesManagement() {
                 ▶
               </button>
               <div>
-                <div style="font-weight: 500; color: #1a1a1a; font-size: 14px;">${page.title || page.url}</div>
-                <div style="color: #64748b; font-size: 12px; margin-top: 2px;">${page.url}</div>
+                <div style="font-weight: 500; color: #1a1a1a; font-size: 14px;">${page._doc?.title || page._doc?.url || 'Untitled'}</div>
+                <div style="color: #64748b; font-size: 12px; margin-top: 2px;">${page._doc?.url || 'No URL'}</div>
               </div>
-            </div>
           </td>
           <td style="padding: 16px; text-align: center;">
             <span style="display: inline-block; padding: 4px 12px; background: #f1f5f9; color: #475569; border-radius: 6px; font-size: 13px; font-weight: 500;">
@@ -749,7 +748,7 @@ renderPagesManagement() {
           </td>
           <td style="padding: 16px; text-align: center;">
             <div style="display: flex; gap: 8px; justify-content: center;">
-              <button onclick="dashboard.analyzePage('${page.id || index}', '${page.url}')" 
+              <button onclick="dashboard.analyzePage('${page._doc?.id || index}', '${page._doc?.url || ''}')"
                       style="padding: 6px 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; color: #4f46e5; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 4px;"
                       onmouseover="this.style.background='#eef2ff'; this.style.borderColor='#4f46e5'"
                       onmouseout="this.style.background='white'; this.style.borderColor='#e2e8f0'">
@@ -853,13 +852,48 @@ renderPagesManagement() {
     }
   }
 
-  async analyzePage(pageId, url) {
+async analyzePage(pageId, url) {
     this.showInfo(`🔍 Analyzing ${url}...`);
     
-    // TODO: Call actual performance API
-    setTimeout(() => {
-      this.showSuccess(`✅ Analysis complete for ${url}`);
-    }, 2000);
+    try {
+      // Call your performance analysis API
+      const response = await fetch(`/rl/analyze-page?shop=${encodeURIComponent(this.shop)}&url=${encodeURIComponent(url)}`);
+      const data = await response.json();
+      
+      if (data.ok && data.scores) {
+        // Update the scores in the table
+        const row = document.querySelector(`tr[data-url="${url}"]`);
+        if (row) {
+          const mobileTd = row.children[1];
+          const desktopTd = row.children[2];
+          
+          mobileTd.innerHTML = `
+            <span style="display: inline-block; padding: 4px 12px; background: ${this.getScoreColor(data.scores.mobile)}; color: white; border-radius: 6px; font-size: 13px; font-weight: 500;">
+              ${data.scores.mobile}
+            </span>
+          `;
+          
+          desktopTd.innerHTML = `
+            <span style="display: inline-block; padding: 4px 12px; background: ${this.getScoreColor(data.scores.desktop)}; color: white; border-radius: 6px; font-size: 13px; font-weight: 500;">
+              ${data.scores.desktop}
+            </span>
+          `;
+        }
+        
+        this.showSuccess(`✅ Analysis complete! Mobile: ${data.scores.mobile}, Desktop: ${data.scores.desktop}`);
+      } else {
+        throw new Error(data.error || 'Analysis failed');
+      }
+    } catch (error) {
+      console.error('Analysis error:', error);
+      this.showError(`Failed to analyze ${url}: ${error.message}`);
+    }
+  }
+  
+  getScoreColor(score) {
+    if (score >= 90) return '#10b981'; // green
+    if (score >= 50) return '#f59e0b'; // orange
+    return '#ef4444'; // red
   }
 
   changeJSAction(pageId, scriptUrl, action, template) {
@@ -983,10 +1017,36 @@ renderPagesManagement() {
     this.closeModal();
     this.showInfo(`Applying changes to ${scopeText}...`);
     
-    // TODO: Call actual API
-    setTimeout(() => {
-      this.showSuccess(`✅ Successfully applied to ${scopeText}`);
-    }, 1000);
+    try {
+      const endpoint = type === 'js' ? '/rl/apply-js-rule' : '/rl/apply-css-setting';
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          shop: this.shop,
+          scope: scope,
+          template: template,
+          pageId: pageId,
+          scriptUrl: scriptUrl,
+          action: value, // For JS: defer/load/async/block
+          enabled: value === 'enabled' // For CSS: true/false
+        })
+      });
+      
+      const data = await response.json();
+      
+      if (data.ok) {
+        this.showSuccess(`✅ Successfully applied to ${scopeText}`);
+        // Optionally reload the page data
+        // await this.loadPagesAndTemplates();
+      } else {
+        throw new Error(data.error || 'Failed to apply changes');
+      }
+    } catch (error) {
+      console.error('Apply scope error:', error);
+      this.showError(`Failed to apply changes: ${error.message}`);
+    }
   }
   clearFilters() {
     document.getElementById('pageSearch').value = '';
