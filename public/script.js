@@ -1,4 +1,4 @@
-// Frontend Dashboard Logic for RabbitLoader Shopify App - WITH BROWSER CACHE
+// Frontend Dashboard Logic for RabbitLoader Shopify App - UPDATED VERSION
 class RabbitLoaderDashboard {
   constructor() {
     this.shop = window.appState.shop || new URLSearchParams(window.location.search).get('shop');
@@ -9,7 +9,7 @@ class RabbitLoaderDashboard {
     this.history = [];
     this.dashboardData = null;
     
-    // NEW: Performance data
+    // Performance data
     this.performanceData = {
       homepage: null,
       product: null,
@@ -34,13 +34,8 @@ class RabbitLoaderDashboard {
       isInFrame: window.top !== window.self
     });
 
-    // Set up event listeners
     this.setupEventListeners();
-    
-    // Check connection status
     await this.checkStatus();
-    
-    // Update UI based on status
     this.updateUI();
   }
 
@@ -63,19 +58,17 @@ class RabbitLoaderDashboard {
       });
     }
 
-    // Handle URL changes (for connected parameter)
+    // Handle URL parameters
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('connected') === '1') {
       this.showSuccess('Successfully connected to RabbitLoader!');
-      // Re-check status after connection
       setTimeout(() => this.checkStatus(), 1000);
     }
 
-    // Handle trigger_setup flag (for fresh installs and reinstalls)
+    // Handle trigger_setup flag
     if (urlParams.get('trigger_setup') === '1') {
       console.log('Setup trigger detected - starting complete setup flow');
       this.showInfo('Setting up your store optimization... This may take a few minutes.');
-      // Trigger setup after a brief delay to ensure page is ready
       setTimeout(() => this.triggerCompleteSetup(), 2000);
     }
   }
@@ -106,7 +99,7 @@ class RabbitLoaderDashboard {
         // If connected, load dashboard data and performance data
         if (this.isRLConnected) {
           await this.loadDashboardData();
-          await this.loadHomepagePerformance(); // NEW: Load performance data
+          await this.loadHomepagePerformance();
         }
       } else {
         console.error('Status check failed:', data.error);
@@ -128,40 +121,31 @@ class RabbitLoaderDashboard {
         console.log('Dashboard data loaded:', this.dashboardData);
       } else {
         console.warn('Failed to load dashboard data:', data.error);
-        // Set minimal fallback data so dashboard still shows
+        // Minimal fallback
         this.dashboardData = {
           did: this.currentDID || 'unknown',
-          psi_scores: { before: { mobile: 50, desktop: 70 }, after: { mobile: 90, desktop: 95 } },
-          plan: { name: "RabbitLoader", pageviews: "N/A", price: "N/A" },
-          reports_url: "https://rabbitloader.com/dashboard/",
-          customize_url: "https://rabbitloader.com/customize/",
-          pageviews_this_month: "N/A"
+          reports_url: `https://rabbitloader.com/account/`,
+          customize_url: `https://rabbitloader.com/account/`
         };
       }
     } catch (error) {
       console.error('Dashboard data error:', error);
-      // Set minimal fallback data
       this.dashboardData = {
         did: this.currentDID || 'unknown',
-        psi_scores: { before: { mobile: 50, desktop: 70 }, after: { mobile: 90, desktop: 95 } },
-        plan: { name: "RabbitLoader", pageviews: "N/A", price: "N/A" },
-        reports_url: "https://rabbitloader.com/dashboard/",
-        customize_url: "https://rabbitloader.com/customize/",
-        pageviews_this_month: "N/A"
+        reports_url: `https://rabbitloader.com/account/`,
+        customize_url: `https://rabbitloader.com/account/`
       };
     }
   }
 
   // ============================================================
-  // NEW: PERFORMANCE DATA WITH BROWSER CACHE
+  // PERFORMANCE DATA WITH BROWSER CACHE
   // ============================================================
 
-  // Get cache key for localStorage
   getPerformanceCacheKey(page) {
     return `rl_perf_${this.shop}_${page}`;
   }
 
-  // Get cached performance data from browser
   getCachedPerformance(page) {
     const key = this.getPerformanceCacheKey(page);
     const cached = localStorage.getItem(key);
@@ -173,7 +157,6 @@ class RabbitLoaderDashboard {
     try {
       const data = JSON.parse(cached);
       
-      // Check if expired (1 hour TTL)
       const ONE_HOUR = 3600000;
       if (Date.now() > data.expiresAt) {
         localStorage.removeItem(key);
@@ -189,7 +172,6 @@ class RabbitLoaderDashboard {
     }
   }
 
-  // Store performance data in browser cache
   setCachedPerformance(page, data) {
     const key = this.getPerformanceCacheKey(page);
     const ONE_HOUR = 3600000;
@@ -208,14 +190,12 @@ class RabbitLoaderDashboard {
     }
   }
 
-  // Clear performance cache
   clearPerformanceCache(page) {
     if (page) {
       const key = this.getPerformanceCacheKey(page);
       localStorage.removeItem(key);
       console.log(`🗑️ Cleared ${page} cache`);
     } else {
-      // Clear all performance caches
       Object.keys(localStorage).forEach(key => {
         if (key.startsWith(`rl_perf_${this.shop}_`)) {
           localStorage.removeItem(key);
@@ -225,10 +205,8 @@ class RabbitLoaderDashboard {
     }
   }
 
-  // Load homepage performance data (auto-loads)
   async loadHomepagePerformance() {
     try {
-      // 1. Try browser cache first
       const cached = this.getCachedPerformance('homepage');
       
       if (cached) {
@@ -237,20 +215,14 @@ class RabbitLoaderDashboard {
         return;
       }
 
-      // 2. No cache - fetch from API
       console.log('📡 Fetching homepage performance from API...');
 
       const response = await fetch(`/api/performance/homepage?shop=${encodeURIComponent(this.shop)}`);
       const result = await response.json();
 
       if (result.ok) {
-        // 3. Store in browser cache
         this.setCachedPerformance('homepage', result.data);
-        
-        // 4. Store in memory
         this.performanceData.homepage = result.data;
-        
-        // 5. Display
         this.displayHomepagePerformance(result.data);
       } else {
         console.error('Failed to load homepage performance:', result.error);
@@ -261,10 +233,8 @@ class RabbitLoaderDashboard {
     }
   }
 
-  // Load template performance (on-demand)
   async loadTemplatePerformance(templateType) {
     try {
-      // 1. Try browser cache first
       const cached = this.getCachedPerformance(templateType);
       
       if (cached) {
@@ -273,23 +243,16 @@ class RabbitLoaderDashboard {
         return;
       }
 
-      // 2. Show loading indicator
       this.showTemplateLoading(templateType);
 
-      // 3. Fetch from API
       console.log(`📡 Fetching ${templateType} performance from API...`);
 
       const response = await fetch(`/api/performance/template?shop=${encodeURIComponent(this.shop)}&type=${templateType}`);
       const result = await response.json();
 
       if (result.ok) {
-        // 4. Store in browser cache
         this.setCachedPerformance(templateType, result.data);
-        
-        // 5. Store in memory
         this.performanceData[templateType] = result.data;
-        
-        // 6. Display
         this.displayTemplatePerformance(templateType, result.data);
       } else {
         console.error(`Failed to load ${templateType} performance:`, result.error);
@@ -302,12 +265,9 @@ class RabbitLoaderDashboard {
     }
   }
 
-  // Force refresh performance data (bypass cache)
   async refreshPerformanceData(page = 'homepage') {
-    // Clear browser cache
     this.clearPerformanceCache(page);
     
-    // Reload
     if (page === 'homepage') {
       await this.loadHomepagePerformance();
     } else {
@@ -317,12 +277,10 @@ class RabbitLoaderDashboard {
     this.showSuccess(`${page} performance data refreshed!`);
   }
 
-  // Display homepage performance
   displayHomepagePerformance(data) {
     const connectedSection = document.querySelector('#connectedState .connected-section');
     if (!connectedSection) return;
 
-    // Remove existing performance section
     const existing = document.querySelector('.performance-section');
     if (existing) existing.remove();
 
@@ -330,7 +288,6 @@ class RabbitLoaderDashboard {
     connectedSection.insertAdjacentHTML('beforeend', html);
   }
 
-  // Display template performance
   displayTemplatePerformance(templateType, data) {
     const container = document.getElementById(`${templateType}-performance`);
     if (!container) return;
@@ -339,7 +296,6 @@ class RabbitLoaderDashboard {
     container.innerHTML = html;
   }
 
-  // Show loading indicator for template
   showTemplateLoading(templateType) {
     const container = document.getElementById(`${templateType}-performance`);
     if (!container) return;
@@ -352,7 +308,6 @@ class RabbitLoaderDashboard {
     `;
   }
 
-  // Show error for template
   showTemplateError(templateType, error) {
     const container = document.getElementById(`${templateType}-performance`);
     if (!container) return;
@@ -365,7 +320,6 @@ class RabbitLoaderDashboard {
     `;
   }
 
-  // Build performance HTML
   buildPerformanceHTML(data, pageType) {
     const daysSinceInstall = data.days_since_install || 0;
     const cruxAvailable = data.crux && data.crux.available;
@@ -397,7 +351,6 @@ class RabbitLoaderDashboard {
     `;
   }
 
-  // Build PSI section
   buildPSISection(psi) {
     return `
       <div class="psi-section">
@@ -422,7 +375,6 @@ class RabbitLoaderDashboard {
     `;
   }
 
-  // Build lab data section
   buildLabDataSection(labData) {
     return `
       <div class="lab-data">
@@ -449,7 +401,6 @@ class RabbitLoaderDashboard {
     `;
   }
 
-  // Build CrUX section (when available)
   buildCrUXSection(crux) {
     return `
       <div class="crux-section">
@@ -502,7 +453,6 @@ class RabbitLoaderDashboard {
     `;
   }
 
-  // Build CrUX unavailable section (< 28 days)
   buildCrUXUnavailableSection(crux, daysSinceInstall) {
     return `
       <div class="crux-unavailable">
@@ -544,7 +494,6 @@ class RabbitLoaderDashboard {
     `;
   }
 
-  // Helper: Get page title
   getPageTitle(pageType) {
     const titles = {
       homepage: 'Homepage',
@@ -555,14 +504,12 @@ class RabbitLoaderDashboard {
     return titles[pageType] || pageType;
   }
 
-  // Helper: Format time (ms to seconds)
   formatTime(ms) {
     if (!ms) return 'N/A';
     if (ms < 1000) return `${ms}ms`;
     return `${(ms / 1000).toFixed(1)}s`;
   }
 
-  // Helper: Format date range
   formatDateRange(period) {
     if (!period) return 'N/A';
     const first = period.first_date;
@@ -572,13 +519,13 @@ class RabbitLoaderDashboard {
   }
 
   // ============================================================
-  // END: PERFORMANCE DATA WITH BROWSER CACHE
+  // END: PERFORMANCE DATA
   // ============================================================
 
   updateUI() {
     console.log('Updating UI, connected:', this.isRLConnected);
     
-    // Update store names
+    // Update store names - remove .myshopify.com
     const storeNames = [
       document.getElementById('storeName'),
       document.getElementById('storeNameDisconnected'),
@@ -591,14 +538,12 @@ class RabbitLoaderDashboard {
       }
     });
 
-    // Show appropriate state
     if (this.isRLConnected) {
       this.showConnectedState();
     } else {
       this.showDisconnectedState();
     }
     
-    // Hide loading state
     if (this.loadingState) {
       this.loadingState.style.display = 'none';
     }
@@ -619,7 +564,6 @@ class RabbitLoaderDashboard {
     if (this.connectedState) {
       this.connectedState.style.display = 'block';
       
-      // Add enhanced dashboard if we have data
       if (this.dashboardData) {
         this.renderEnhancedDashboard();
       }
@@ -633,28 +577,58 @@ class RabbitLoaderDashboard {
     const connectedSection = document.querySelector('#connectedState .connected-section');
     if (!connectedSection || !this.dashboardData) return;
 
-    // Check if dashboard already exists
     if (document.querySelector('.enhanced-dashboard')) return;
 
-    // Show data source indicator
-    const dataSourceBadge = this.dashboardData.data_source === 'api' ? 
-      '<span style="background: #28a745; color: white; padding: 2px 6px; border-radius: 3px; font-size: 12px;">Live Data</span>' : 
-      '<span style="background: #ffc107; color: black; padding: 2px 6px; border-radius: 3px; font-size: 12px;">Demo Data</span>';
+    // Update store stats
+    this.updateStoreStats();
 
     const dashboardHTML = `
       <div class="enhanced-dashboard">
-        <div style="text-align: center; margin-bottom: 15px;">
-          ${dataSourceBadge}
-          ${this.dashboardData.last_updated ? '<small style="color: #666; margin-left: 10px;">Updated: ' + new Date(this.dashboardData.last_updated).toLocaleTimeString() + '</small>' : ''}
+        <!-- Homepage Performance with N/A structure -->
+        <div class="performance-section">
+          <h3>🏠 Homepage Performance</h3>
+          
+          <div class="score-grid">
+            <div class="score-card">
+              <div class="score-value">N/A</div>
+              <div class="score-label">Mobile Score</div>
+            </div>
+            <div class="score-card">
+              <div class="score-value">N/A</div>
+              <div class="score-label">Desktop Score</div>
+            </div>
+          </div>
+
+          <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 6px;">
+            <p><strong>⏳ Performance data will load once microservice is configured</strong></p>
+            <p style="margin-top: 10px; font-size: 14px; color: #856404;">
+              Layout is ready - data will populate automatically when available.
+            </p>
+          </div>
         </div>
-        
-        <div class="dashboard-grid">
-          <div class="actions-section">
-            <h3>Quick Actions</h3>
-            <div class="action-buttons">
-              <a href="${this.dashboardData.reports_url}" target="_blank" class="btn btn-primary">View Reports</a>
-              <a href="${this.dashboardData.customize_url}" target="_blank" class="btn btn-outline">Customize Settings</a>
-              <button class="btn btn-secondary" onclick="dashboard.showScriptInstructions()">Script Setup</button>
+
+        <!-- Pages Section -->
+        <div class="performance-section">
+          <h3>📄 Pages</h3>
+          <p style="color: #666; margin-bottom: 20px;">Performance analysis for different page types</p>
+          
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
+            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+              <h4 style="margin-top: 0;">🛍️ Product Pages</h4>
+              <div class="score-value" style="font-size: 36px; margin: 15px 0;">N/A</div>
+              <p style="color: #666; margin: 0;">Analysis pending</p>
+            </div>
+
+            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+              <h4 style="margin-top: 0;">📚 Collection Pages</h4>
+              <div class="score-value" style="font-size: 36px; margin: 15px 0;">N/A</div>
+              <p style="color: #666; margin: 0;">Analysis pending</p>
+            </div>
+
+            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+              <h4 style="margin-top: 0;">📝 Blog Posts</h4>
+              <div class="score-value" style="font-size: 36px; margin: 15px 0;">N/A</div>
+              <p style="color: #666; margin: 0;">Analysis pending</p>
             </div>
           </div>
         </div>
@@ -677,8 +651,62 @@ class RabbitLoaderDashboard {
     return 'poor';
   }
 
-  // ... (rest of your existing methods remain the same)
-  
+  // NEW: Update store stats from MongoDB
+async updateStoreStats() {
+  try {
+    const response = await fetch(`/shopify/status?shop=${encodeURIComponent(this.shop)}`);
+    const data = await response.json();
+
+    // If site_structure is not available, try to fetch from site-analysis API
+    if (data.ok && !data.site_structure) {
+      console.log('Site structure not in status response, will try site-analysis endpoint if needed');
+      
+      // Set default values
+      const totalPagesEl = document.getElementById('totalPages');
+      const totalTemplatesEl = document.getElementById('totalTemplates');
+      
+      if (totalPagesEl) totalPagesEl.textContent = '--';
+      if (totalTemplatesEl) totalTemplatesEl.textContent = '--';
+      
+      return;
+    }
+
+    if (data.ok && data.site_structure) {
+      const { site_structure } = data;
+      
+      let totalPages = 0;
+      let totalTemplates = 0;
+
+      if (site_structure.template_groups) {
+        const templates = site_structure.template_groups instanceof Map ?
+          Array.from(site_structure.template_groups.entries()) :
+          Object.entries(site_structure.template_groups);
+
+        totalTemplates = templates.length;
+        templates.forEach(([template, group]) => {
+          totalPages += group.count || 0;
+        });
+      }
+
+      const totalPagesEl = document.getElementById('totalPages');
+      const totalTemplatesEl = document.getElementById('totalTemplates');
+
+      if (totalPagesEl) totalPagesEl.textContent = totalPages || '--';
+      if (totalTemplatesEl) totalTemplatesEl.textContent = totalTemplates || '--';
+
+      console.log(`Store stats updated: ${totalPages} pages, ${totalTemplates} templates`);
+    }
+  } catch (error) {
+    console.error('Failed to load store stats:', error);
+    
+    // Set default values on error
+    const totalPagesEl = document.getElementById('totalPages');
+    const totalTemplatesEl = document.getElementById('totalTemplates');
+    
+    if (totalPagesEl) totalPagesEl.textContent = '--';
+    if (totalTemplatesEl) totalTemplatesEl.textContent = '--';
+  }
+}
   showScriptInstructions() {
     this.getManualInstructions();
   }
@@ -700,7 +728,6 @@ class RabbitLoaderDashboard {
   }
 
   displayScriptInstructions(data) {
-    // Check if instructions already exist
     let existingInstructions = document.querySelector('.script-instructions');
     if (existingInstructions) {
       existingInstructions.remove();
@@ -753,7 +780,6 @@ class RabbitLoaderDashboard {
       </div>
     `;
 
-    // Add to connected state
     const connectedSection = document.querySelector('#connectedState .connected-section');
     if (connectedSection) {
       connectedSection.insertAdjacentHTML('beforeend', instructionsHTML);
@@ -782,7 +808,6 @@ class RabbitLoaderDashboard {
       if (data.ok) {
         this.showSuccess(`Script injection successful! ${data.message}`);
         
-        // Refresh status after injection
         setTimeout(() => {
           this.checkStatus();
         }, 2000);
@@ -804,7 +829,7 @@ class RabbitLoaderDashboard {
       this.showInfo('Disconnecting...');
 
       const response = await fetch('/shopify/disconnect', {
-        method: 'POST',
+       method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
@@ -814,9 +839,8 @@ class RabbitLoaderDashboard {
       const data = await response.json();
 
       if (data.ok) {
-       this.showSuccess('Successfully disconnected from RabbitLoader');
+        this.showSuccess('Successfully disconnected from RabbitLoader');
         
-        // Clear all caches
         this.clearPerformanceCache();
         
         this.isRLConnected = false;
@@ -847,7 +871,6 @@ class RabbitLoaderDashboard {
     console.log(`Triggering complete setup for shop: ${this.shop}`);
 
     try {
-      // Step 1: Start the setup (returns immediately)
       this.showInfo('Starting store optimization...');
       
       const startResponse = await fetch('/api/start-setup', {
@@ -864,10 +887,7 @@ class RabbitLoaderDashboard {
 
       console.log('Setup started, now polling for progress...');
       
-      // Step 2: Show progress bar
       this.showProgressBar();
-      
-      // Step 3: Poll for progress
       await this.pollSetupProgress();
       
     } catch (error) {
@@ -881,7 +901,6 @@ class RabbitLoaderDashboard {
     const connectedSection = document.querySelector('#connectedState .connected-section');
     if (!connectedSection) return;
     
-    // Remove existing progress bar if any
     const existing = document.querySelector('.setup-progress');
     if (existing) existing.remove();
     
@@ -909,10 +928,10 @@ class RabbitLoaderDashboard {
 
   async pollSetupProgress() {
     let attempts = 0;
-    const maxAttempts = 120; // 10 minutes (120 * 5 seconds)
+    const maxAttempts = 120;
     
     while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000)); // Wait 5 seconds
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
       try {
         const response = await fetch(`/api/setup-status?shop=${encodeURIComponent(this.shop)}`);
@@ -922,29 +941,24 @@ class RabbitLoaderDashboard {
           throw new Error(data.error || 'Failed to get status');
         }
         
-        // Update progress bar
         this.updateProgressBar(data.progress, data.current_step, data.completed_steps);
         
-        // Check if complete
         if (data.progress >= 100 || data.status === 'complete') {
           this.showSuccess('✅ Store optimization complete!');
           this.hideProgressBar();
           
-          // Show any warnings
           if (data.warnings && data.warnings.length > 0) {
             data.warnings.forEach(w => this.showInfo(w));
           }
           
-          // Refresh dashboard and load performance data
           setTimeout(() => {
             this.checkStatus();
             this.updateUI();
           }, 2000);
           
-          return; // Done!
+          return;
         }
         
-        // Check if failed
         if (data.status === 'failed') {
           throw new Error('Setup failed: ' + (data.error || 'Unknown error'));
         }
@@ -959,7 +973,6 @@ class RabbitLoaderDashboard {
       attempts++;
     }
     
-    // Timeout
     this.showError('Setup is taking longer than expected. Check back in a few minutes.');
     this.hideProgressBar();
   }
@@ -993,13 +1006,11 @@ class RabbitLoaderDashboard {
 
     console.log(`Initiating RabbitLoader connection for shop: ${this.shop}`);
 
-    // Build RabbitLoader connect URL
     const connectUrl = new URL('https://rabbitloader.com/account/');
     connectUrl.searchParams.set('source', 'shopify');
     connectUrl.searchParams.set('action', 'connect');
     connectUrl.searchParams.set('site_url', `https://${this.shop}`);
     
-    // Build redirect URL back to this app
     const redirectUrl = new URL('/rl/rl-callback', window.env.APP_URL);
     redirectUrl.searchParams.set('shop', this.shop);
     if (this.host) {
@@ -1013,7 +1024,6 @@ class RabbitLoaderDashboard {
     const finalUrl = connectUrl.toString();
     console.log('Redirecting to RabbitLoader connect:', finalUrl);
 
-    // For embedded apps, use top-level navigation to break out of frame
     if (this.embedded || window.top !== window.self) {
       window.top.location.href = finalUrl;
     } else {
@@ -1025,7 +1035,6 @@ class RabbitLoaderDashboard {
     this.showInfo('Refreshing dashboard data...');
     await this.loadDashboardData();
     
-    // Remove existing dashboard and re-render
     const existingDashboard = document.querySelector('.enhanced-dashboard');
     if (existingDashboard) {
       existingDashboard.remove();
@@ -1060,7 +1069,6 @@ class RabbitLoaderDashboard {
 
     this.flashMessages.appendChild(flash);
 
-    // Auto remove after 5 seconds
     setTimeout(() => {
       flash.classList.add('fade-out');
       setTimeout(() => {

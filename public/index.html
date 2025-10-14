@@ -3,21 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>RabbitLoader - Connect Store</title>
+  <title>RabbitLoader - Shopify Store Optimization</title>
   <link rel="stylesheet" href="/style.css">
   <script src="https://unpkg.com/@shopify/app-bridge@3"></script>
   <script>
-    // Get data from URL parameters instead of server variables
     const urlParams = new URLSearchParams(window.location.search);
     
-    // Expose env vars to frontend - will be loaded via API
     window.env = {
       APP_URL: '',
       SHOPIFY_API_VERSION: '',
       SHOPIFY_API_KEY: ''
     };
     
-    // Expose app state from URL parameters
     window.appState = {
       shop: urlParams.get('shop') || '',
       host: urlParams.get('host') || '',
@@ -25,7 +22,6 @@
       connected: urlParams.get('connected') === '1'
     };
 
-    // Load environment variables from API
     async function loadEnvVars() {
       try {
         const response = await fetch('/api/env');
@@ -38,19 +34,26 @@
       }
     }
 
-    // Load env vars when page loads
     document.addEventListener('DOMContentLoaded', loadEnvVars);
   </script>
 </head>
 <body>
-  <!-- Flash Messages Container (Fixed position, top-right) -->
+  <!-- Flash Messages Container -->
   <div id="flashMessages"></div>
 
   <div class="dashboard-container">
     <!-- Loading State -->
     <div id="loadingState" class="loading-screen">
       <div class="dashboard-card">
-        <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+        <div class="header-section">
+          <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+          <div class="header-title">
+            <h2>Optimizing Shopify Store</h2>
+            <svg class="shopify-icon" viewBox="0 0 24 24" width="32" height="32">
+              <path fill="#95BF47" d="M15.337 2.126c-.397-.047-1.096.093-1.821.489-.204.116-.43.256-.668.42-.674-.627-1.522-.883-2.354-.802-1.998.198-3.967 1.616-5.551 3.996C3.918 7.73 3.25 9.427 3.038 10.85c-1.684.524-2.856.89-2.893.905C-.277 12.026-.315 12.06-.349 12.5c-.023.325-2.664 20.494-2.664 20.494L18.148 36l7.852-1.947S16.337 2.336 15.337 2.126zm-2.822 3.068c-.186.058-.384.119-.593.186V5.17c0-1.028-.14-1.857-.373-2.513.93.07 1.549.91 1.966 2.537zm-2.16-2.816c.233.593.373 1.45.373 2.653v.128c-.895.28-1.868.583-2.83.885.546-2.095 1.59-3.107 2.457-3.666zm-.768-1.094c.186 0 .361.035.524.104-.989.722-2.15 1.973-2.754 4.533-1.438.443-2.853.873-4.162 1.28.826-3.08 3.315-5.728 6.392-5.917z"/>
+            </svg>
+          </div>
+        </div>
         <div class="store-name" id="storeName">Loading...</div>
         <div class="loading-container">
           <div class="spinner"></div>
@@ -59,10 +62,18 @@
       </div>
     </div>
 
-    <!-- Disconnected State: Connect to RabbitLoader -->
+    <!-- Disconnected State -->
     <div id="disconnectedState" class="page-state" style="display: none;">
       <div class="dashboard-card">
-        <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+        <div class="header-section">
+          <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+          <div class="header-title">
+            <h2>Optimizing Shopify Store</h2>
+            <svg class="shopify-icon" viewBox="0 0 24 24" width="32" height="32">
+              <path fill="#95BF47" d="M15.337 2.126c-.397-.047-1.096.093-1.821.489-.204.116-.43.256-.668.42-.674-.627-1.522-.883-2.354-.802-1.998.198-3.967 1.616-5.551 3.996C3.918 7.73 3.25 9.427 3.038 10.85c-1.684.524-2.856.89-2.893.905C-.277 12.026-.315 12.06-.349 12.5c-.023.325-2.664 20.494-2.664 20.494L18.148 36l7.852-1.947S16.337 2.336 15.337 2.126zm-2.822 3.068c-.186.058-.384.119-.593.186V5.17c0-1.028-.14-1.857-.373-2.513.93.07 1.549.91 1.966 2.537zm-2.16-2.816c.233.593.373 1.45.373 2.653v.128c-.895.28-1.868.583-2.83.885.546-2.095 1.59-3.107 2.457-3.666zm-.768-1.094c.186 0 .361.035.524.104-.989.722-2.15 1.973-2.754 4.533-1.438.443-2.853.873-4.162 1.28.826-3.08 3.315-5.728 6.392-5.917z"/>
+            </svg>
+          </div>
+        </div>
         
         <div class="store-info">
           <div class="store-name" id="storeNameDisconnected">Loading...</div>
@@ -79,17 +90,24 @@
         </div>
         
         <div class="footer-links">
-          <a href="#" class="footer-link">Crash Courses</a>
-          <a href="#" class="footer-link">Terms & Conditions</a>
-          <a href="#" class="footer-link">Get Support</a>
+          <a href="https://rabbitloader.com/docs/" target="_blank" class="footer-link">Documentation</a>
+          <a href="https://rabbitloader.com/support/" target="_blank" class="footer-link">Get Support</a>
         </div>
       </div>
     </div>
 
-    <!-- Connected State: Dashboard with Performance Data -->
+    <!-- Connected State: Dashboard -->
     <div id="connectedState" class="page-state" style="display: none;">
-      <div class="dashboard-card">
-        <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+      <div class="dashboard-card-wide">
+        <div class="header-section">
+          <img src="/assets/RLlogo.png" alt="RabbitLoader" class="logo">
+          <div class="header-title">
+            <h2>Optimizing Shopify Store</h2>
+            <svg class="shopify-icon" viewBox="0 0 24 24" width="32" height="32">
+              <path fill="#95BF47" d="M15.337 2.126c-.397-.047-1.096.093-1.821.489-.204.116-.43.256-.668.42-.674-.627-1.522-.883-2.354-.802-1.998.198-3.967 1.616-5.551 3.996C3.918 7.73 3.25 9.427 3.038 10.85c-1.684.524-2.856.89-2.893.905C-.277 12.026-.315 12.06-.349 12.5c-.023.325-2.664 20.494-2.664 20.494L18.148 36l7.852-1.947S16.337 2.336 15.337 2.126zm-2.822 3.068c-.186.058-.384.119-.593.186V5.17c0-1.028-.14-1.857-.373-2.513.93.07 1.549.91 1.966 2.537zm-2.16-2.816c.233.593.373 1.45.373 2.653v.128c-.895.28-1.868.583-2.83.885.546-2.095 1.59-3.107 2.457-3.666zm-.768-1.094c.186 0 .361.035.524.104-.989.722-2.15 1.973-2.754 4.533-1.438.443-2.853.873-4.162 1.28.826-3.08 3.315-5.728 6.392-5.917z"/>
+            </svg>
+          </div>
+        </div>
         
         <div class="store-info">
           <div class="store-name" id="storeNameConnected">Loading...</div>
@@ -100,55 +118,35 @@
         </div>
 
         <div class="connected-section">
-          <h1 class="main-title">Optimization Active</h1>
-          <p class="subtitle">Your store is optimized with RabbitLoader</p>
-          
+          <!-- Store Stats -->
+          <div class="store-stats">
+            <div class="stat-card">
+              <div class="stat-value" id="totalPages">--</div>
+              <div class="stat-label">Total Pages</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="totalTemplates">--</div>
+              <div class="stat-label">Page Types</div>
+            </div>
+            <div class="stat-card">
+              <div class="stat-value" id="optimizationStatus">Active</div>
+              <div class="stat-label">Status</div>
+            </div>
+          </div>
+
           <!-- Quick Actions -->
-          <div class="quick-actions">
-            <a href="https://rabbitloader.com/dashboard/" target="_blank" class="btn btn-primary">View Full Dashboard</a>
-            <a href="https://rabbitloader.com/customize/" target="_blank" class="btn btn-outline">Customize Settings</a>
-            <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
-          </div>
-
-          <!-- Performance data will be dynamically inserted here by script.js -->
-          <!-- The homepage performance loads automatically -->
-          <!-- Template performance (product, collection, blog) loads on-demand -->
-
-          <!-- Template Performance Cards (On-Demand Loading) -->
-          <div class="template-cards">
-            <h2>📊 Page Performance Analysis</h2>
-            <p style="color: #666; margin-bottom: 20px;">Click to load performance data for each page type</p>
-
-            <!-- Product Pages Card -->
-            <div class="template-card">
-              <h4>🛍️ Product Pages</h4>
-              <p style="color: #666; margin: 10px 0;">Performance analysis for product pages</p>
-              <button class="btn btn-outline load-btn" onclick="dashboard.loadTemplatePerformance('product')">
-                Load Product Page Performance
-              </button>
-              <div id="product-performance" style="margin-top: 20px;"></div>
-            </div>
-
-            <!-- Collection Pages Card -->
-            <div class="template-card">
-              <h4>📚 Collection Pages</h4>
-              <p style="color: #666; margin: 10px 0;">Performance analysis for collection pages</p>
-              <button class="btn btn-outline load-btn" onclick="dashboard.loadTemplatePerformance('collection')">
-                Load Collection Page Performance
-              </button>
-              <div id="collection-performance" style="margin-top: 20px;"></div>
-            </div>
-
-            <!-- Blog Posts Card -->
-            <div class="template-card">
-              <h4>📝 Blog Posts</h4>
-              <p style="color: #666; margin: 10px 0;">Performance analysis for blog posts</p>
-              <button class="btn btn-outline load-btn" onclick="dashboard.loadTemplatePerformance('blog')">
-                Load Blog Performance
-              </button>
-              <div id="blog-performance" style="margin-top: 20px;"></div>
+          <div class="quick-actions-section">
+            <h3>Quick Actions</h3>
+            <div class="action-buttons">
+              <a href="https://rabbitloader.com/account/" target="_blank" class="btn btn-primary">
+                Open RabbitLoader Dashboard
+              </a>
+              <button class="btn btn-secondary" id="disconnectBtn">Disconnect</button>
             </div>
           </div>
+
+          <!-- Performance data will be inserted here by script.js -->
+          <div id="performanceDataContainer"></div>
 
         </div>
       </div>
