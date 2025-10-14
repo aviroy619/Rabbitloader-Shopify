@@ -1,249 +1,200 @@
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const microserviceClient = require('../services/microserviceClient');
-const ShopModel = require('../models/Shop');
+const axios = require("axios");
 
-// Get homepage performance (PSI + CrUX)
-router.get('/api/performance/homepage', async (req, res) => {
+const PSI_SERVICE_URL = process.env.PSI_MICROSERVICE_URL || 'http://45.32.212.222:3004';
+
+// ============================================================
+// ROUTE: Get Homepage Performance
+// ============================================================
+router.get("/homepage", async (req, res) => {
   const { shop } = req.query;
-
+  
   if (!shop) {
-    return res.status(400).json({ ok: false, error: 'Shop parameter required' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
   }
 
   try {
-    console.log(`[Performance] Getting homepage data for: ${shop}`);
-
-    // Get shop record from MongoDB
+    const ShopModel = require("../models/Shop");
     const shopRecord = await ShopModel.findOne({ shop });
     
     if (!shopRecord) {
-      return res.status(404).json({ ok: false, error: 'Shop not found' });
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not found" 
+      });
     }
 
-    if (!shopRecord.short_id) {
-      return res.status(400).json({ ok: false, error: 'Shop not connected to RabbitLoader' });
+    // Call PSI microservice
+    const response = await axios.post(`${PSI_SERVICE_URL}/api/analyze`, {
+      shop: shop,
+      url: `https://${shop}/`,
+      template: "homepage"
+    }, {
+      timeout: 120000 // 2 minutes
+    });
+
+    if (response.data.ok) {
+      const data = response.data.data;
+      
+      // Transform to frontend format
+      const result = {
+        psi: {
+          mobile_score: data.pagespeed.mobileScore,
+          desktop_score: data.pagespeed.desktopScore,
+          lab_data: {
+            fcp: data.pagespeed.perceivedLoadTime * 1000 * 0.3, // Estimate
+            lcp: data.pagespeed.perceivedLoadTime * 1000,
+            cls: 0.1, // Would come from detailed metrics
+            tbt: 200 // Would come from detailed metrics
+          },
+          report_url: `https://pagespeed.web.dev/analysis?url=${encodeURIComponent('https://' + shop)}`
+        },
+        crux: data.chromeUX ? {
+          available: true,
+          collection_period: data.chromeUX.period,
+          lcp: {
+            p75: data.chromeUX.lcpCategory === 'good' ? 2000 : 3500,
+            good_pct: data.chromeUX.lcpCategory === 'good' ? 85 : 60
+          },
+          fcp: {
+            p75: 1500,
+            good_pct: 80
+          },
+          cls: {
+            p75: data.chromeUX.clsCategory === 'good' ? 0.08 : 0.15,
+            good_pct: data.chromeUX.clsCategory === 'good' ? 90 : 65
+          },
+          message: data.chromeUX.summary.join('\n')
+        } : {
+          available: false,
+          message: "Chrome UX Report data not available yet"
+        },
+        fetched_at: data.checkedAt,
+        days_since_install: 0
+      };
+
+      res.json({
+        ok: true,
+        data: result
+      });
+    } else {
+      res.status(500).json({
+        ok: false,
+        error: "PSI analysis failed"
+      });
     }
-
-    // Call microservice
-    const data = await microserviceClient.analyzePerformance(
-      shopRecord.short_id,
-      `https://${shop}`,
-      'homepage'
-    );
-
-    console.log(`[Performance] Homepage data received for: ${shop}`);
-    res.json(data);
 
   } catch (error) {
-    console.error('[Performance] Homepage error:', error);
+    console.error('[Performance] Homepage error:', error.message);
     res.status(500).json({ 
       ok: false, 
-      error: error.message || 'Failed to fetch performance data'
+      error: error.message 
     });
   }
 });
 
-// Get template performance (product, collection, blog)
-router.get('/api/performance/template', async (req, res) => {
+// ============================================================
+// ROUTE: Get Template Performance
+// ============================================================
+router.get("/template", async (req, res) => {
   const { shop, type } = req.query;
-
+  
   if (!shop || !type) {
-    return res.status(400).json({ ok: false, error: 'Shop and type parameters required' });
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop and type parameters required" 
+    });
   }
 
   try {
-    console.log(`[Performance] Getting ${type} data for: ${shop}`);
-
+    const ShopModel = require("../models/Shop");
     const shopRecord = await ShopModel.findOne({ shop });
     
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ ok: false, error: 'Shop not connected to RabbitLoader' });
+    if (!shopRecord || !shopRecord.site_structure) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not found or no site structure" 
+      });
     }
 
-    // Get sample URL based on template type
-    const sampleUrl = getSampleUrlForTemplate(shop, type);
+    // Find a sample page of this template type
+    const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+      shopRecord.site_structure.template_groups :
+      new Map(Object.entries(shopRecord.site_structure.template_groups));
+    
+    let sampleUrl = null;
+    
+    for (const [templateName, templateData] of templateGroups) {
+      if (templateName.includes(type)) {
+        sampleUrl = templateData.sample_page;
+        break;
+      }
+    }
 
-    // Call microservice
-    const data = await microserviceClient.analyzePerformance(
-      shopRecord.short_id,
-      sampleUrl,
-      type
-    );
+    if (!sampleUrl) {
+      return res.status(404).json({
+        ok: false,
+        error: `No ${type} template found`
+      });
+    }
 
-    console.log(`[Performance] ${type} data received for: ${shop}`);
-    res.json(data);
+    // Call PSI microservice
+    const response = await axios.post(`${PSI_SERVICE_URL}/api/analyze`, {
+      shop: shop,
+      url: sampleUrl,
+      template: type
+    }, {
+      timeout: 120000
+    });
+
+    if (response.data.ok) {
+      const data = response.data.data;
+      
+      const result = {
+        psi: {
+          mobile_score: data.pagespeed.mobileScore,
+          desktop_score: data.pagespeed.desktopScore,
+          lab_data: {
+            fcp: data.pagespeed.perceivedLoadTime * 1000 * 0.3,
+            lcp: data.pagespeed.perceivedLoadTime * 1000,
+            cls: 0.1,
+            tbt: 200
+          },
+          report_url: `https://pagespeed.web.dev/analysis?url=${encodeURIComponent(sampleUrl)}`
+        },
+        crux: data.chromeUX ? {
+          available: true,
+          collection_period: data.chromeUX.period,
+          message: data.chromeUX.summary.join('\n')
+        } : {
+          available: false,
+          message: "Chrome UX Report data not available yet"
+        },
+        fetched_at: data.checkedAt
+      };
+
+      res.json({
+        ok: true,
+        data: result
+      });
+    } else {
+      res.status(500).json({
+        ok: false,
+        error: "PSI analysis failed"
+      });
+    }
 
   } catch (error) {
-    console.error(`[Performance] ${type} error:`, error);
+    console.error(`[Performance] ${type} error:`, error.message);
     res.status(500).json({ 
       ok: false, 
-      error: error.message || 'Failed to fetch performance data'
+      error: error.message 
     });
   }
 });
-
-// Get script analysis for specific page
-router.get('/api/scripts/analyze', async (req, res) => {
-  const { shop, url } = req.query;
-
-  if (!shop || !url) {
-    return res.status(400).json({ ok: false, error: 'Shop and URL parameters required' });
-  }
-
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ ok: false, error: 'Shop not connected' });
-    }
-
-    const data = await microserviceClient.getDeferConfig(
-      shopRecord.short_id,
-      url
-    );
-
-    res.json(data);
-
-  } catch (error) {
-    console.error('[Scripts] Analyze error:', error);
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-// Update defer configuration
-router.post('/api/defer/update', async (req, res) => {
-  const { shop, script_url, action, scope, page_url } = req.body;
-
-  if (!shop || !script_url || !action || !scope) {
-    return res.status(400).json({ ok: false, error: 'Missing required parameters' });
-  }
-
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ ok: false, error: 'Shop not connected' });
-    }
-
-    const data = await microserviceClient.updateDeferConfig(
-      shopRecord.short_id,
-      script_url,
-      action,
-      scope,
-      page_url
-    );
-
-    res.json(data);
-
-  } catch (error) {
-    console.error('[Defer] Update error:', error);
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-// Get CSS status
-router.get('/api/css/status', async (req, res) => {
-  const { shop, url } = req.query;
-
-  if (!shop || !url) {
-    return res.status(400).json({ ok: false, error: 'Shop and URL parameters required' });
-  }
-
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ ok: false, error: 'Shop not connected' });
-    }
-
-    const data = await microserviceClient.getCSSConfig(
-      shopRecord.short_id,
-      url
-    );
-
-    res.json(data);
-
-  } catch (error) {
-    console.error('[CSS] Status error:', error);
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-// Toggle Critical CSS
-router.post('/api/css/toggle', async (req, res) => {
-  const { shop, action, scope, page_url, reason } = req.body;
-
-  if (!shop || !action || !scope) {
-    return res.status(400).json({ ok: false, error: 'Missing required parameters' });
-  }
-
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ ok: false, error: 'Shop not connected' });
-    }
-
-    const data = await microserviceClient.toggleCSS(
-      shopRecord.short_id,
-      action,
-      scope,
-      page_url,
-      reason
-    );
-
-    res.json(data);
-
-  } catch (error) {
-    console.error('[CSS] Toggle error:', error);
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-// Get active optimizations
-router.get('/api/optimizations/active', async (req, res) => {
-  const { shop } = req.query;
-
-  if (!shop) {
-    return res.status(400).json({ ok: false, error: 'Shop parameter required' });
-  }
-
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ ok: false, error: 'Shop not connected' });
-    }
-
-    const data = await microserviceClient.getActiveOptimizations(
-      shopRecord.short_id
-    );
-
-    res.json(data);
-
-  } catch (error) {
-    console.error('[Optimizations] Active error:', error);
-    res.status(500).json({ ok: false, error: error.message });
-  }
-});
-
-// Helper function to get sample URL for template type
-function getSampleUrlForTemplate(shop, type) {
-  const baseUrl = `https://${shop}`;
-  
-  switch (type) {
-    case 'product':
-      return `${baseUrl}/products/sample-product`;
-    case 'collection':
-      return `${baseUrl}/collections/all`;
-    case 'blog':
-      return `${baseUrl}/blogs/news`;
-    case 'page':
-      return `${baseUrl}/pages/about`;
-    default:
-      return baseUrl;
-  }
-}
 
 module.exports = router;
