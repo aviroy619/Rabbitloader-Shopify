@@ -1168,46 +1168,25 @@ router.get("/analyze-page", async (req, res) => {
       });
     }
 
-    // Call your PSI microservice
-    const psiUrl = `http://psi-microservice:3000/analyze?url=https://${shop}${url}&strategy=mobile,desktop`;
+    const fullUrl = `https://${shop}${url}`;
     
-    console.log(`[Analyze Page] Calling PSI for ${shop}${url}`);
+    // Call Google PageSpeed Insights API directly
+    const PSI_API_KEY = process.env.GOOGLE_PSI_API_KEY || 'YOUR_API_KEY';
     
-    const psiResponse = await fetch(psiUrl, {
-      headers: {
-        'Authorization': `Bearer ${shopRecord.api_token}`
-      }
-    });
-
-    if (!psiResponse.ok) {
-      throw new Error(`PSI service returned ${psiResponse.status}`);
-    }
-
-    const psiData = await psiResponse.json();
+    // Fetch mobile score
+    const mobileUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(fullUrl)}&strategy=mobile&key=${PSI_API_KEY}`;
+    const mobileResponse = await fetch(mobileUrl);
+    const mobileData = await mobileResponse.json();
     
-    // Extract scores
-    const mobileScore = psiData.mobile?.performance_score || 0;
-    const desktopScore = psiData.desktop?.performance_score || 0;
-
-    // Save scores to database
-        await ShopModel.updateOne(
-      { shop },
-      {
-        $push: {
-          history: {
-            event: "page_analyzed",
-            timestamp: new Date(),
-            details: {
-              url: url,
-              mobile_score: mobileScore,
-              desktop_score: desktopScore
-            }
-          }
-        }
-      }
-    );
-
-    console.log(`[Analyze Page] Scores for ${url}: Mobile=${mobileScore}, Desktop=${desktopScore}`);
+    // Fetch desktop score
+    const desktopUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(fullUrl)}&strategy=desktop&key=${PSI_API_KEY}`;
+    const desktopResponse = await fetch(desktopUrl);
+    const desktopData = await desktopResponse.json();
+    
+    const mobileScore = Math.round((mobileData?.lighthouseResult?.categories?.performance?.score || 0) * 100);
+    const desktopScore = Math.round((desktopData?.lighthouseResult?.categories?.performance?.score || 0) * 100);
+    
+    console.log(`[Analyze Page] PSI Scores for ${url}: Mobile=${mobileScore}, Desktop=${desktopScore}`);
 
     res.json({
       ok: true,
