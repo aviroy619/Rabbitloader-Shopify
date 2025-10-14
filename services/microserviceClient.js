@@ -1,166 +1,229 @@
-// HTTP client for calling RabbitLoader microservice
-const fetch = require('node-fetch');
+const axios = require('axios');
 
-class MicroserviceClient {
-  constructor() {
-    this.baseUrl = process.env.MICROSERVICE_URL || 'https://microservice.rabbitloader.com';
-    this.apiKey = process.env.MICROSERVICE_API_KEY;
-  }
+// ✅ CORRECT URLs - Use IP addresses directly
+const CRITICAL_CSS_URL = 'http://45.32.212.222:3000';
+const PSI_URL = 'http://45.32.212.222:3001';
 
-  // Analyze performance (PSI + CrUX)
-  async analyzePerformance(did, url, templateType = 'homepage') {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/v1/performance/analyze`, {
-        method: 'POST',
+// Analyze performance using PSI microservice
+async function analyzePerformance(did, url, template) {
+  try {
+    console.log(`[Microservice] Analyzing performance for ${url} (template: ${template})`);
+    
+    const response = await axios.post(
+      `${PSI_URL}/api/analyze`,
+      {
+        shop: did,
+        url: url,
+        template: template,
+        strategy: 'mobile'
+      },
+      { 
+        timeout: 120000, // 2 minute timeout
         headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          did,
-          url,
-          template_type: templateType,
-          platform: 'shopify'
-        }),
-        timeout: 30000 // 30 second timeout
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Microservice error: ${response.status}`);
+        }
       }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Microservice call failed:', error);
-      throw error;
-    }
-  }
-
-  // Get defer configuration
-  async getDeferConfig(did, url) {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/v1/defer/config?did=${did}&url=${encodeURIComponent(url)}`, {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`
-        },
-        timeout: 10000
-      });
-
-      if (!response.ok) {
-        throw new Error(`Microservice error: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Get defer config failed:', error);
-      throw error;
-    }
-  }
-
-  // Update defer configuration
-  async updateDeferConfig(did, scriptUrl, action, scope, pageUrl = null) {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/v1/defer/update`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          did,
-          script_url: scriptUrl,
-          action,
-          scope,
-          page_url: pageUrl,
-          platform: 'shopify'
-        }),
-        timeout: 10000
-      });
-
-      if (!response.ok) {
-        throw new Error(`Microservice error: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Update defer config failed:', error);
-      throw error;
-    }
-  }
-
-  // Get CSS configuration
-  async getCSSConfig(did, url) {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/v1/css/config?did=${did}&url=${encodeURIComponent(url)}`, {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`
-        },
-        timeout: 10000
-      });
-
-      if (!response.ok) {
-        throw new Error(`Microservice error: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Get CSS config failed:', error);
-      throw error;
-    }
-  }
-
-  // Toggle Critical CSS
-  async toggleCSS(did, action, scope, pageUrl = null, reason = null) {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/v1/css/toggle`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          did,
-          action,
-          scope,
-          page_url: pageUrl,
-          reason,
-          platform: 'shopify'
-        }),
-        timeout: 10000
-      });
-
-      if (!response.ok) {
-        throw new Error(`Microservice error: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Toggle CSS failed:', error);
-      throw error;
-    }
-  }
-
-  // Get active optimizations
-  async getActiveOptimizations(did) {
-    try {
-      const response = await fetch(`${this.baseUrl}/api/v1/optimizations/active?did=${did}`, {
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`
-        },
-        timeout: 10000
-      });
-
-      if (!response.ok) {
-        throw new Error(`Microservice error: ${response.status}`);
-      }
-
-      return await response.json();
-    } catch (error) {
-      console.error('Get active optimizations failed:', error);
-      throw error;
-    }
+    );
+    
+    console.log(`[Microservice] Performance analysis complete for ${template}`);
+    return {
+      ok: true,
+      data: response.data
+    };
+    
+  } catch (error) {
+    console.error('[Microservice] Performance analysis failed:', error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
   }
 }
 
-module.exports = new MicroserviceClient();
+// Get defer rules
+async function getDeferConfig(did, template) {
+  try {
+    console.log(`[Microservice] Getting defer config for ${did}/${template}`);
+    
+    const response = await axios.get(
+      `${PSI_URL}/api/defer-rules/${did}/${template}`,
+      { timeout: 10000 }
+    );
+    
+    return {
+      ok: true,
+      data: response.data
+    };
+    
+  } catch (error) {
+    console.error('[Microservice] Get defer config failed:', error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
+// Get critical CSS
+async function getCSSConfig(did, template) {
+  try {
+    console.log(`[Microservice] Getting CSS config for ${did}/${template}`);
+    
+    const response = await axios.get(
+      `${CRITICAL_CSS_URL}/api/critical-css/${did}/${template}`,
+      { timeout: 10000 }
+    );
+    
+    return {
+      ok: true,
+      data: response.data
+    };
+    
+  } catch (error) {
+    console.error('[Microservice] Get CSS config failed:', error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
+// Generate critical CSS
+async function generateCriticalCSS(shop, template, url) {
+  try {
+    console.log(`[Microservice] Generating critical CSS for ${shop}/${template}`);
+    
+    const response = await axios.post(
+      `${CRITICAL_CSS_URL}/api/critical-css/generate`,
+      {
+        shop: shop,
+        template: template,
+        url: url
+      },
+      { 
+        timeout: 60000,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    return {
+      ok: true,
+      data: response.data
+    };
+    
+  } catch (error) {
+    console.error('[Microservice] CSS generation failed:', error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
+// Update defer config
+async function updateDeferConfig(did, scriptUrl, action, scope, pageUrl) {
+  try {
+    console.log(`[Microservice] Updating defer config for ${did}`);
+    
+    const response = await axios.post(
+      `${PSI_URL}/api/defer/update`,
+      {
+        did: did,
+        script_url: scriptUrl,
+        action: action,
+        scope: scope,
+        page_url: pageUrl
+      },
+      { 
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    return {
+      ok: true,
+      data: response.data
+    };
+    
+  } catch (error) {
+    console.error('[Microservice] Defer config update failed:', error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
+// Toggle CSS
+async function toggleCSS(did, action, scope, pageUrl, reason) {
+  try {
+    console.log(`[Microservice] Toggling CSS for ${did}`);
+    
+    const response = await axios.post(
+      `${CRITICAL_CSS_URL}/api/css/toggle`,
+      {
+        did: did,
+        action: action,
+        scope: scope,
+        page_url: pageUrl,
+        reason: reason
+      },
+      { 
+        timeout: 10000,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    return {
+      ok: true,
+      data: response.data
+    };
+    
+  } catch (error) {
+    console.error('[Microservice] CSS toggle failed:', error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
+// Get active optimizations
+async function getActiveOptimizations(did) {
+  try {
+    console.log(`[Microservice] Getting active optimizations for ${did}`);
+    
+    const response = await axios.get(
+      `${PSI_URL}/api/optimizations/active?did=${did}`,
+      { timeout: 10000 }
+    );
+    
+    return {
+      ok: true,
+      data: response.data
+    };
+    
+  } catch (error) {
+    console.error('[Microservice] Get optimizations failed:', error.message);
+    return {
+      ok: false,
+      error: error.message
+    };
+  }
+}
+
+module.exports = {
+  analyzePerformance,
+  getDeferConfig,
+  getCSSConfig,
+  generateCriticalCSS,
+  updateDeferConfig,
+  toggleCSS,
+  getActiveOptimizations
+};

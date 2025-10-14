@@ -574,7 +574,556 @@ router.get("/debug/:shop", async (req, res) => {
     });
   }
 });
+// ============================================================
+// ROUTE: Get Pages List with Templates
+// ============================================================
+router.get("/pages-list", async (req, res) => {
+  const { shop } = req.query;
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
 
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.site_structure) {
+      return res.json({
+        ok: true,
+        data: {
+          templates: {},
+          all_pages: [],
+          total_pages: 0
+        },
+        message: "No site structure found. Run site analysis first."
+      });
+    }
+
+    const { site_structure } = shopRecord;
+    const templateGroups = site_structure.template_groups instanceof Map ?
+      site_structure.template_groups :
+      new Map(Object.entries(site_structure.template_groups));
+
+    // Build response
+    const templates = {};
+    const allPages = [];
+    
+    for (const [templateName, templateData] of templateGroups) {
+      const pages = templateData.pages || [];
+      
+      templates[templateName] = {
+        count: templateData.count || pages.length,
+        sample_page: templateData.sample_page || (pages[0] ? pages[0].url : '/'),
+        critical_css_enabled: templateData.critical_css_enabled !== false,
+        js_defer_count: (templateData.js_defer_rules || []).length,
+        pages: pages.map(page => ({
+          ...page,
+          critical_css_enabled: page.critical_css_enabled !== false,
+          js_defer_count: (page.js_defer_rules || []).length
+        }))
+      };
+      
+      allPages.push(...templates[templateName].pages);
+    }
+
+    console.log(`[Pages List] Loaded ${allPages.length} pages across ${Object.keys(templates).length} templates for ${shop}`);
+
+    res.json({
+      ok: true,
+      data: {
+        templates: templates,
+        all_pages: allPages,
+        total_pages: allPages.length,
+        total_templates: Object.keys(templates).length
+      }
+    });
+
+  } catch (error) {
+    console.error('[Pages List] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Toggle Critical CSS for Template
+// ============================================================
+router.post("/toggle-template-css", async (req, res) => {
+  const { shop, template, enabled } = req.body;
+  
+  if (!shop || !template) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop and template parameters required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    
+    // Update template-level setting
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $set: {
+          [`site_structure.template_groups.${template}.critical_css_enabled`]: enabled
+        },
+        $push: {
+          history: {
+            event: "toggle_template_css",
+            timestamp: new Date(),
+            details: {
+              template: template,
+              enabled: enabled
+            }
+          }
+        }
+      }
+    );
+
+    console.log(`[Toggle CSS] Template ${template} CSS ${enabled ? 'enabled' : 'disabled'} for ${shop}`);
+
+    res.json({
+      ok: true,
+      message: `Critical CSS ${enabled ? 'enabled' : 'disabled'} for template ${template}`
+    });
+
+  } catch (error) {
+    console.error('[Toggle Template CSS] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Toggle Critical CSS for Single Page
+// ============================================================
+router.post("/toggle-page-css", async (req, res) => {
+  const { shop, page_id, template, enabled } = req.body;
+  
+  if (!shop || !page_id || !template) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop, page_id, and template parameters required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.site_structure) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop site structure not found" 
+      });
+    }
+
+    // Find and update the specific page
+    const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+      shopRecord.site_structure.template_groups :
+      new Map(Object.entries(shopRecord.site_structure.template_groups));
+    
+    const templateData = templateGroups.get(template);
+    
+    if (!templateData) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Template not found" 
+      });
+    }
+
+    const pages = templateData.pages || [];
+    const pageIndex = pages.findIndex(p => p.id === page_id);
+    
+    if (pageIndex === -1) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Page not found" 
+      });
+    }
+
+    // Update the page
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $set: {
+          [`site_structure.template_groups.${template}.pages.${pageIndex}.critical_css_enabled`]: enabled
+        },
+        $push: {
+          history: {
+            event: "toggle_page_css",
+            timestamp: new Date(),
+            details: {
+              page_id: page_id,
+              template: template,
+              enabled: enabled
+            }
+          }
+        }
+      }
+    );
+
+    console.log(`[Toggle CSS] Page ${page_id} CSS ${enabled ? 'enabled' : 'disabled'} for ${shop}`);
+
+    res.json({
+      ok: true,
+      message: `Critical CSS ${enabled ? 'enabled' : 'disabled'} for page`
+    });
+
+  } catch (error) {
+    console.error('[Toggle Page CSS] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Get JS Rules (Template or Page)
+// ============================================================
+router.get("/js-rules", async (req, res) => {
+  const { shop, template, page_id } = req.query;
+  
+  if (!shop || (!template && !page_id)) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop and either template or page_id required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.site_structure) {
+      return res.json({
+        ok: true,
+        rules: []
+      });
+    }
+
+    let rules = [];
+
+    if (template) {
+      // Get template-level rules
+      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+        shopRecord.site_structure.template_groups :
+        new Map(Object.entries(shopRecord.site_structure.template_groups));
+      
+      const templateData = templateGroups.get(template);
+      rules = templateData?.js_defer_rules || [];
+    } else if (page_id) {
+      // Get page-level rules
+      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+        shopRecord.site_structure.template_groups :
+        new Map(Object.entries(shopRecord.site_structure.template_groups));
+      
+      for (const [templateName, templateData] of templateGroups) {
+        const pages = templateData.pages || [];
+        const page = pages.find(p => p.id === page_id);
+        
+        if (page) {
+          rules = page.js_defer_rules || [];
+          break;
+        }
+      }
+    }
+
+    res.json({
+      ok: true,
+      rules: rules
+    });
+
+  } catch (error) {
+    console.error('[Get JS Rules] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Add JS Rule
+// ============================================================
+router.post("/add-js-rule", async (req, res) => {
+  const { shop, template, page_id, pattern, action, delay, reason } = req.body;
+  
+  if (!shop || !pattern || !action) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop, pattern, and action are required" 
+    });
+  }
+
+  if (!['defer', 'async', 'delay', 'block'].includes(action)) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Action must be one of: defer, async, delay, block" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    
+    const newRule = {
+      id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      pattern: pattern,
+      action: action,
+      delay: action === 'delay' ? (delay || 3000) : null,
+      reason: reason || '',
+      created_at: new Date()
+    };
+
+    let updateQuery = {};
+    
+    if (template) {
+      // Add to template
+      updateQuery = {
+        $push: {
+          [`site_structure.template_groups.${template}.js_defer_rules`]: newRule,
+          history: {
+            event: "add_js_rule",
+            timestamp: new Date(),
+            details: {
+              template: template,
+              pattern: pattern,
+              action: action
+            }
+          }
+        }
+      };
+    } else if (page_id) {
+      // Add to specific page - need to find it first
+      const shopRecord = await ShopModel.findOne({ shop });
+      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+        shopRecord.site_structure.template_groups :
+        new Map(Object.entries(shopRecord.site_structure.template_groups));
+      
+      let foundTemplate = null;
+      let pageIndex = -1;
+      
+      for (const [templateName, templateData] of templateGroups) {
+        const pages = templateData.pages || [];
+        pageIndex = pages.findIndex(p => p.id === page_id);
+        
+        if (pageIndex !== -1) {
+          foundTemplate = templateName;
+          break;
+        }
+      }
+      
+      if (!foundTemplate) {
+        return res.status(404).json({ 
+          ok: false, 
+          error: "Page not found" 
+        });
+      }
+      
+      updateQuery = {
+        $push: {
+          [`site_structure.template_groups.${foundTemplate}.pages.${pageIndex}.js_defer_rules`]: newRule,
+          history: {
+            event: "add_js_rule",
+            timestamp: new Date(),
+            details: {
+              page_id: page_id,
+              pattern: pattern,
+              action: action
+            }
+          }
+        }
+      };
+    } else {
+      return res.status(400).json({ 
+        ok: false, 
+        error: "Either template or page_id must be provided" 
+      });
+    }
+
+    await ShopModel.updateOne({ shop }, updateQuery);
+
+    console.log(`[Add JS Rule] Added rule for ${shop}: ${pattern} -> ${action}`);
+
+    res.json({
+      ok: true,
+      message: "JS rule added successfully",
+      rule: newRule
+    });
+
+  } catch (error) {
+    console.error('[Add JS Rule] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Delete JS Rule
+// ============================================================
+router.post("/delete-js-rule", async (req, res) => {
+  const { shop, rule_id } = req.body;
+  
+  if (!shop || !rule_id) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop and rule_id are required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.site_structure) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not found" 
+      });
+    }
+
+    // Find and remove the rule
+    const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+      shopRecord.site_structure.template_groups :
+      new Map(Object.entries(shopRecord.site_structure.template_groups));
+    
+    let ruleFound = false;
+    
+    for (const [templateName, templateData] of templateGroups) {
+      // Check template-level rules
+      if (templateData.js_defer_rules) {
+        const ruleIndex = templateData.js_defer_rules.findIndex(r => r.id === rule_id);
+        if (ruleIndex !== -1) {
+          await ShopModel.updateOne(
+            { shop },
+            {
+              $pull: {
+                [`site_structure.template_groups.${templateName}.js_defer_rules`]: { id: rule_id }
+              }
+            }
+          );
+          ruleFound = true;
+          break;
+        }
+      }
+      
+      // Check page-level rules
+      if (templateData.pages) {
+        for (let i = 0; i < templateData.pages.length; i++) {
+          const page = templateData.pages[i];
+          if (page.js_defer_rules) {
+            const ruleIndex = page.js_defer_rules.findIndex(r => r.id === rule_id);
+            if (ruleIndex !== -1) {
+              await ShopModel.updateOne(
+                { shop },
+                {
+                  $pull: {
+                    [`site_structure.template_groups.${templateName}.pages.${i}.js_defer_rules`]: { id: rule_id }
+                  }
+                }
+              );
+              ruleFound = true;
+              break;
+            }
+          }
+        }
+        if (ruleFound) break;
+      }
+    }
+
+    if (!ruleFound) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Rule not found" 
+      });
+    }
+
+    console.log(`[Delete JS Rule] Deleted rule ${rule_id} for ${shop}`);
+
+    res.json({
+      ok: true,
+      message: "JS rule deleted successfully"
+    });
+
+  } catch (error) {
+    console.error('[Delete JS Rule] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Export Defer Configuration (for loader.js)
+// ============================================================
+router.get("/export-defer-config", async (req, res) => {
+  const { shop } = req.query;
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.site_structure) {
+      return res.json({
+        ok: true,
+        config: {
+          templates: {},
+          global_rules: []
+        }
+      });
+    }
+
+    const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
+      shopRecord.site_structure.template_groups :
+      new Map(Object.entries(shopRecord.site_structure.template_groups));
+    
+    const config = {
+      templates: {},
+      global_rules: []
+    };
+    
+    for (const [templateName, templateData] of templateGroups) {
+      config.templates[templateName] = {
+        critical_css_enabled: templateData.critical_css_enabled !== false,
+        js_defer_rules: templateData.js_defer_rules || []
+      };
+    }
+
+    res.json({
+      ok: true,
+      config: config,
+      shop: shop,
+      generated_at: new Date().toISOString()
+    });
+
+  } catch (error) {
+    console.error('[Export Config] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
 // ============================================================
 // EXPORTS
 // ============================================================
