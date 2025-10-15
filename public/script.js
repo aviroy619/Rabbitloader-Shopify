@@ -1,4 +1,4 @@
-// Frontend Dashboard Logic for RabbitLoader Shopify App - UPDATED VERSION
+// Frontend Dashboard Logic for RabbitLoader Shopify App - FIXED VERSION
 class RabbitLoaderDashboard {
   constructor() {
     this.shop = window.appState.shop || new URLSearchParams(window.location.search).get('shop');
@@ -66,15 +66,15 @@ class RabbitLoaderDashboard {
     }
 
     // Handle trigger_setup flag (disabled - not implemented yet)
-if (urlParams.get('trigger_setup') === '1') {
-  console.log('Setup trigger detected - but setup flow not implemented yet');
-  this.showInfo('⚠️ Connected successfully! Please configure manually from the dashboard.');
-  
-  // Remove the trigger_setup flag from URL
-  const url = new URL(window.location);
-  url.searchParams.delete('trigger_setup');
-  window.history.replaceState({}, '', url);
-}
+    if (urlParams.get('trigger_setup') === '1') {
+      console.log('Setup trigger detected - but setup flow not implemented yet');
+      this.showInfo('⚠️ Connected successfully! Please configure manually from the dashboard.');
+      
+      // Remove the trigger_setup flag from URL
+      const url = new URL(window.location);
+      url.searchParams.delete('trigger_setup');
+      window.history.replaceState({}, '', url);
+    }
   }
 
   async checkStatus() {
@@ -116,7 +116,7 @@ if (urlParams.get('trigger_setup') === '1') {
 
   async loadDashboardData() {
     try {
-const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.shop)}`);
+      const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.shop)}`);
       const data = await response.json();
 
       if (data.ok) {
@@ -563,19 +563,19 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
   }
 
   showConnectedState() {
-  console.log('Showing connected state');
-  if (this.connectedState) {
-    this.connectedState.style.display = 'block';
-    
-    if (this.dashboardData) {
-      this.renderEnhancedDashboard();
-      this.loadPagesAndTemplates();  // ← ADD THIS LINE
+    console.log('Showing connected state');
+    if (this.connectedState) {
+      this.connectedState.style.display = 'block';
+      
+      if (this.dashboardData) {
+        this.renderEnhancedDashboard();
+        this.loadPagesAndTemplates();
+      }
+    }
+    if (this.disconnectedState) {
+      this.disconnectedState.style.display = 'none';
     }
   }
-  if (this.disconnectedState) {
-    this.disconnectedState.style.display = 'none';
-  }
-}
 
   renderEnhancedDashboard() {
     const connectedSection = document.querySelector('#connectedState .connected-section');
@@ -586,62 +586,12 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
     // Update store stats
     this.updateStoreStats();
 
+    // Simple status indicator
     const dashboardHTML = `
       <div class="enhanced-dashboard">
-        <!-- Homepage Performance with N/A structure -->
-        <div class="performance-section">
-          <h3>🏠 Homepage Performance</h3>
-          
-          <div class="score-grid">
-            <div class="score-card">
-              <div class="score-value">N/A</div>
-              <div class="score-label">Mobile Score</div>
-            </div>
-            <div class="score-card">
-              <div class="score-value">N/A</div>
-              <div class="score-label">Desktop Score</div>
-            </div>
-          </div>
-
-          <div style="margin-top: 20px; padding: 15px; background: #fff3cd; border-radius: 6px;">
-            <p><strong>⏳ Performance data will load once microservice is configured</strong></p>
-            <p style="margin-top: 10px; font-size: 14px; color: #856404;">
-              Layout is ready - data will populate automatically when available.
-            </p>
-          </div>
-        </div>
-
-        <!-- Pages Section -->
-        <div class="performance-section">
-          <h3>📄 Pages</h3>
-          <p style="color: #666; margin-bottom: 20px;">Performance analysis for different page types</p>
-          
-          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px;">
-            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-              <h4 style="margin-top: 0;">🛍️ Product Pages</h4>
-              <div class="score-value" style="font-size: 36px; margin: 15px 0;">N/A</div>
-              <p style="color: #666; margin: 0;">Analysis pending</p>
-            </div>
-
-            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-              <h4 style="margin-top: 0;">📚 Collection Pages</h4>
-              <div class="score-value" style="font-size: 36px; margin: 15px 0;">N/A</div>
-              <p style="color: #666; margin: 0;">Analysis pending</p>
-            </div>
-
-            <div style="background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-              <h4 style="margin-top: 0;">📝 Blog Posts</h4>
-              <div class="score-value" style="font-size: 36px; margin: 15px 0;">N/A</div>
-              <p style="color: #666; margin: 0;">Analysis pending</p>
-            </div>
-          </div>
-        </div>
-        
-        <div style="margin-top: 20px; padding: 15px; background: #e3f2fd; border-radius: 6px; text-align: center;">
-          <small>
-            <strong>DID:</strong> ${this.currentDID} | 
-            <strong>Status:</strong> Active
-          </small>
+        <div style="margin: 20px 0; padding: 15px; background: #e8f5e9; border-radius: 8px; border-left: 4px solid #4caf50; text-align: center;">
+          <strong>✅ Connected to RabbitLoader</strong>
+          <p style="margin: 5px 0 0 0; color: #666;">DID: ${this.currentDID}</p>
         </div>
       </div>
     `;
@@ -654,30 +604,31 @@ const response = await fetch(`/rl/dashboard-data?shop=${encodeURIComponent(this.
   // ============================================================
   
   async loadPagesAndTemplates() {
-  try {
-    this.showInfo('Loading pages...');
-    
-    // Load first page
-    const response = await fetch(`/rl/pages-list?shop=${encodeURIComponent(this.shop)}&page=1&limit=100`);
-    const data = await response.json();
-    
-    if (data.ok) {
-      this.pagesData = data.data;
-      this.currentPage = 1;
-      this.hasMorePages = data.data.has_more;
-      this.renderPagesManagement();
+    try {
+      this.showInfo('Loading pages...');
       
-      console.log(`Loaded ${data.data.total_pages} of ${data.data.total_pages_count} pages`);
-    } else {
-      console.error('Failed to load pages:', data.error);
-      this.showError('Failed to load pages: ' + data.error);
+      // Load first page
+      const response = await fetch(`/rl/pages-list?shop=${encodeURIComponent(this.shop)}&page=1&limit=100`);
+      const data = await response.json();
+      
+      if (data.ok) {
+        this.pagesData = data.data;
+        this.currentPage = 1;
+        this.hasMorePages = data.data.has_more;
+        this.renderPagesManagement();
+        
+        console.log(`Loaded ${data.data.total_pages} of ${data.data.total_pages_count} pages`);
+      } else {
+        console.error('Failed to load pages:', data.error);
+        this.showError('Failed to load pages: ' + data.error);
+      }
+    } catch (error) {
+      console.error('Pages load error:', error);
+      this.showError('Failed to load pages');
     }
-  } catch (error) {
-    console.error('Pages load error:', error);
-    this.showError('Failed to load pages');
   }
-}
-renderPagesManagement() {
+
+  renderPagesManagement() {
     const connectedSection = document.querySelector('#connectedState .connected-section');
     if (!connectedSection) return;
     
@@ -748,44 +699,7 @@ renderPagesManagement() {
     connectedSection.insertAdjacentHTML('beforeend', html);
     this.setupPagesEventListeners();
   }
-  
-  renderTemplateCards(templates) {
-    return Object.entries(templates).map(([template, data]) => `
-      <div class="template-card" style="background: white; padding: 20px; border-radius: 8px; margin-bottom: 15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <div>
-            <h4 style="margin: 0 0 5px 0;">${this.getTemplateIcon(template)} ${template}</h4>
-            <p style="color: #666; margin: 0; font-size: 14px;">
-              ${data.pages.length} pages | Sample: <a href="${data.sample_page}" target="_blank" style="color: #007bff;">${data.sample_page}</a>
-            </p>
-          </div>
-          
-          <div style="display: flex; gap: 10px; align-items: center;">
-            <div class="toggle-container">
-              <label style="font-size: 14px; margin-right: 8px;">Critical CSS:</label>
-              <label class="toggle-switch">
-                <input 
-                  type="checkbox" 
-                  ${data.critical_css_enabled !== false ? 'checked' : ''} 
-                  onchange="dashboard.toggleTemplateCriticalCSS('${template}', this.checked)"
-                >
-                <span class="toggle-slider"></span>
-              </label>
-            </div>
-            
-            <button class="btn btn-outline btn-sm" onclick="dashboard.manageTemplateJS('${template}')">
-              ⚙️ JS Rules
-            </button>
-            
-            <button class="btn btn-outline btn-sm" onclick="dashboard.viewTemplatePages('${template}')">
-              📋 View Pages
-            </button>
-          </div>
-        </div>
-      </div>
-    `).join('');
-  }
-  
+
   renderPagesRows(pages) {
     return pages.map((page, index) => {
       const rowId = `page-row-${index}`;
@@ -794,8 +708,8 @@ renderPagesManagement() {
       return `
         <tr id="${rowId}" style="border-bottom: 1px solid #e2e8f0; transition: background 0.2s;" 
             data-template="${page.template}" 
-            data-url="${page.url}"
-            data-page-id="${page.id || index}"
+            data-url="${page._doc?.url || ''}"
+            data-page-id="${page._doc?.id || index}"
             onmouseenter="this.style.background='#f8fafc'" 
             onmouseleave="this.style.background='white'">
           <td style="padding: 16px;">
@@ -806,8 +720,8 @@ renderPagesManagement() {
                 ▶
               </button>
               <div>
-                <div style="font-weight: 500; color: #1a1a1a; font-size: 14px;">${page.title || page.url}</div>
-                <div style="color: #64748b; font-size: 12px; margin-top: 2px;">${page.url}</div>
+                <div style="font-weight: 500; color: #1a1a1a; font-size: 14px;">${page._doc?.title || page._doc?.url || 'Untitled'}</div>
+                <div style="color: #64748b; font-size: 12px; margin-top: 2px;">${page._doc?.url || 'No URL'}</div>
               </div>
             </div>
           </td>
@@ -831,7 +745,7 @@ renderPagesManagement() {
           </td>
           <td style="padding: 16px; text-align: center;">
             <div style="display: flex; gap: 8px; justify-content: center;">
-              <button onclick="dashboard.analyzePage('${page.id || index}', '${page.url}')" 
+              <button onclick="dashboard.analyzePage('${page._doc?.id || index}', '${page._doc?.url || ''}')"
                       style="padding: 6px 12px; background: white; border: 1px solid #e2e8f0; border-radius: 6px; color: #4f46e5; font-size: 12px; font-weight: 500; cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 4px;"
                       onmouseover="this.style.background='#eef2ff'; this.style.borderColor='#4f46e5'"
                       onmouseout="this.style.background='white'; this.style.borderColor='#e2e8f0'">
@@ -856,7 +770,9 @@ renderPagesManagement() {
       `;
     }).join('');
   }
+  
   renderExpandedRowContent(page, index) {
+    // Mock JS files - in production, fetch from API
     const jsFiles = [
       { url: 'cdn.shopify.com/shopifycloud/privacy-banner.js', currentAction: 'defer' },
       { url: 'cdn.shopify.com/s/files/theme.js', currentAction: 'load' },
@@ -919,128 +835,7 @@ renderPagesManagement() {
       </div>
     `;
   }
-  setupPagesEventListeners() {
-    // Search
-    const searchInput = document.getElementById('pageSearch');
-    if (searchInput) {
-      searchInput.addEventListener('input', (e) => {
-        this.filterPages(e.target.value, document.getElementById('templateFilter').value);
-      });
-    }
-    
-    // Template filter
-    const templateFilter = document.getElementById('templateFilter');
-    if (templateFilter) {
-      templateFilter.addEventListener('change', (e) => {
-        this.filterPages(document.getElementById('pageSearch').value, e.target.value);
-      });
-    }
-  }
-  
-  filterPages(searchTerm, templateFilter) {
-    const rows = document.querySelectorAll('#pagesTableBody tr');
-    let visibleCount = 0;
-    
-    rows.forEach(row => {
-      const url = row.dataset.url.toLowerCase();
-      const template = row.dataset.template;
-      const title = row.querySelector('strong').textContent.toLowerCase();
-      
-      const matchesSearch = !searchTerm || 
-        url.includes(searchTerm.toLowerCase()) || 
-        title.includes(searchTerm.toLowerCase());
-      
-      const matchesTemplate = !templateFilter || template === templateFilter;
-      
-      if (matchesSearch && matchesTemplate) {
-        row.style.display = '';
-        visibleCount++;
-      } else {
-        row.style.display = 'none';
-      }
-    });
-    
-    console.log(`Filtered: ${visibleCount} pages visible`);
-  }
-  
-  clearFilters() {
-    document.getElementById('pageSearch').value = '';
-    document.getElementById('templateFilter').value = '';
-    this.filterPages('', '');
-  }
-  
-  getTemplateIcon(template) {
-    const icons = {
-      'index': '🏠',
-      'product': '🛍️',
-      'collection': '📚',
-      'article': '📝',
-      'blog': '✍️',
-      'page': '📄',
-      'cart': '🛒',
-      'search': '🔍'
-    };
-    
-    for (const [key, icon] of Object.entries(icons)) {
-      if (template.includes(key)) return icon;
-    }
-    return '📄';
-  }
-  
-  // Toggle Critical CSS for entire template
-  async toggleTemplateCriticalCSS(template, enabled) {
-    try {
-      this.showInfo(`${enabled ? 'Enabling' : 'Disabling'} Critical CSS for ${template}...`);
-      
-      const response = await fetch('/rl/toggle-template-css', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shop: this.shop,
-          template: template,
-          enabled: enabled
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.ok) {
-        this.showSuccess(`Critical CSS ${enabled ? 'enabled' : 'disabled'} for ${template}`);
-      } else {
-        this.showError(`Failed: ${data.error}`);
-      }
-    } catch (error) {
-      console.error('Toggle template CSS error:', error);
-      this.showError('Failed to update CSS setting');
-    }
-  }
-  
-  // Toggle Critical CSS for single page
-  async togglePageCriticalCSS(pageId, template, enabled) {
-    try {
-      const response = await fetch('/rl/toggle-page-css', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shop: this.shop,
-          page_id: pageId,
-          template: template,
-          enabled: enabled
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.ok) {
-        this.showSuccess(`CSS ${enabled ? 'enabled' : 'disabled'} for page`);
-      } else {
-        this.showError(`Failed: ${data.error}`);
-      }
-    } catch (error) {
-      console.error('Toggle page CSS error:', error);
-      this.showError('Failed to update CSS setting');
-    }
-  }
+
   toggleRowExpand(rowId, expandedId) {
     const expandedRow = document.getElementById(expandedId);
     const icon = document.getElementById(`expand-icon-${rowId}`);
@@ -1054,6 +849,7 @@ renderPagesManagement() {
       icon.textContent = '▶';
     }
   }
+
   async analyzePage(pageId, url) {
     this.showInfo(`🔍 Analyzing ${url}...`);
     
@@ -1089,7 +885,7 @@ renderPagesManagement() {
       this.showError(`Failed to analyze ${url}: ${error.message}`);
     }
   }
-
+  
   getScoreColor(score) {
     if (score >= 90) return '#10b981';
     if (score >= 50) return '#f59e0b';
@@ -1240,303 +1036,70 @@ renderPagesManagement() {
       this.showError(`Failed to apply changes: ${error.message}`);
     }
   }
-  // Manage JS for template
-  manageTemplateJS(template) {
-    this.openJSManagementModal(template, null);
+
+  setupPagesEventListeners() {
+    const searchInput = document.getElementById('pageSearch');
+    if (searchInput) {
+      searchInput.addEventListener('input', (e) => {
+        this.filterPages(e.target.value);
+      });
+    }
   }
   
-  // Manage JS for single page
-  managePageJS(pageId, url) {
-    this.openJSManagementModal(null, { id: pageId, url: url });
-  }
-  
-  openJSManagementModal(template, page) {
-    const title = template ? `JS Rules for Template: ${template}` : `JS Rules for Page`;
-    const subtitle = template ? 
-      `Apply defer/async rules to all pages using this template` : 
-      `Apply defer/async rules to this specific page: ${page.url}`;
+  filterPages(searchTerm) {
+    const rows = document.querySelectorAll('#pagesTableBody tr[data-url]');
+    let visibleCount = 0;
     
-    const modalHTML = `
-      <div class="modal-overlay" onclick="dashboard.closeJSModal()">
-        <div class="modal-content" onclick="event.stopPropagation()" style="max-width: 800px; max-height: 90vh; overflow-y: auto;">
-          <div class="modal-header">
-            <h3>${title}</h3>
-            <p style="color: #666; margin-top: 5px;">${subtitle}</p>
-            <button class="modal-close" onclick="dashboard.closeJSModal()">×</button>
-          </div>
-          
-          <div class="modal-body">
-            <!-- Add New Rule -->
-            <div class="add-rule-section" style="background: #f8f9fa; padding: 20px; border-radius: 6px; margin-bottom: 20px;">
-              <h4>Add New JS Rule</h4>
-              <div style="display: grid; gap: 10px; margin-top: 15px;">
-                <input 
-                  type="text" 
-                  id="jsUrlPattern" 
-                  placeholder="Script URL pattern (e.g., cdn.shopify.com/s/files/*/script.js)"
-                  style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px;"
-                >
-                
-                <select id="jsAction" style="padding: 10px; border: 1px solid #ddd; border-radius: 4px;">
-                  <option value="defer">Defer - Load after page content</option>
-                  <option value="async">Async - Load in parallel</option>
-                  <option value="delay">Delay - Load after user interaction</option>
-                  <option value="block">Block - Don't load at all</option>
-                </select>
-                
-                <input 
-                  type="number" 
-                  id="delayTime" 
-                  placeholder="Delay time (ms) - only for 'delay' action"
-                  style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; display: none;"
-                  value="3000"
-                >
-                
-                <textarea 
-                  id="jsReason" 
-                  placeholder="Reason (optional)"
-                  style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; min-height: 60px;"
-                ></textarea>
-                
-                <button class="btn btn-primary" onclick="dashboard.addJSRule('${template}', ${page ? `'${page.id}'` : 'null'})">
-                  Add Rule
-                </button>
-              </div>
-            </div>
-            
-            <!-- Existing Rules -->
-            <div class="existing-rules-section">
-              <h4>Existing Rules</h4>
-              <div id="existingRulesList" style="margin-top: 15px;">
-                <p style="color: #666;">Loading existing rules...</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-    
-    // Remove existing modal
-    const existing = document.querySelector('.modal-overlay');
-    if (existing) existing.remove();
-    
-    // Add modal
-    document.body.insertAdjacentHTML('beforeend', modalHTML);
-    
-    // Setup event listeners
-    document.getElementById('jsAction').addEventListener('change', (e) => {
-      const delayInput = document.getElementById('delayTime');
-      delayInput.style.display = e.target.value === 'delay' ? 'block' : 'none';
+    rows.forEach(row => {
+      const url = row.dataset.url.toLowerCase();
+      const titleEl = row.querySelector('div[style*="font-weight: 500"]');
+      const title = titleEl ? titleEl.textContent.toLowerCase() : '';
+      
+      const matchesSearch = !searchTerm || 
+        url.includes(searchTerm.toLowerCase()) || 
+        title.includes(searchTerm.toLowerCase());
+      
+      if (matchesSearch) {
+        row.style.display = '';
+        visibleCount++;
+      } else {
+        row.style.display = 'none';
+        const nextRow = row.nextElementSibling;
+        if (nextRow && nextRow.id && nextRow.id.startsWith('page-expanded-')) {
+          nextRow.style.display = 'none';
+        }
+      }
     });
     
-    // Load existing rules
-    this.loadExistingJSRules(template, page);
+    console.log(`Filtered: ${visibleCount} pages visible`);
   }
-  
-  async loadExistingJSRules(template, page) {
-    try {
-      const url = template ? 
-        `/rl/js-rules?shop=${this.shop}&template=${template}` :
-        `/rl/js-rules?shop=${this.shop}&page_id=${page.id}`;
-      
-      const response = await fetch(url);
-      const data = await response.json();
-      
-      const container = document.getElementById('existingRulesList');
-      
-      if (data.ok && data.rules && data.rules.length > 0) {
-        container.innerHTML = data.rules.map((rule, index) => `
-          <div class="rule-item" style="background: white; padding: 15px; border-radius: 6px; margin-bottom: 10px; border-left: 4px solid ${this.getActionColor(rule.action)};">
-            <div style="display: flex; justify-content: space-between; align-items: start;">
-              <div style="flex: 1;">
-                <div style="font-weight: 600; margin-bottom: 5px;">${rule.pattern}</div>
-                <div style="font-size: 14px; color: #666;">
-                  Action: <span style="color: ${this.getActionColor(rule.action)}; font-weight: 600;">${rule.action.toUpperCase()}</span>
-                  ${rule.delay ? ` | Delay: ${rule.delay}ms` : ''}
-                </div>
-                ${rule.reason ? `<div style="font-size: 12px; color: #999; margin-top: 5px;">Reason: ${rule.reason}</div>` : ''}
-              </div>
-              <button 
-                class="btn btn-sm" 
-                onclick="dashboard.deleteJSRule('${rule.id}', '${template}', ${page ? `'${page.id}'` : 'null'})"
-                style="background: #dc3545; color: white; padding: 6px 12px;"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        `).join('');
-      } else {
-        container.innerHTML = `
-          <p style="color: #666; text-align: center; padding: 20px;">
-            No JS defer rules configured yet. Add your first rule above!
-          </p>
-        `;
-      }
-    } catch (error) {
-      console.error('Load JS rules error:', error);
-      document.getElementById('existingRulesList').innerHTML = `
-        <p style="color: #dc3545;">Failed to load existing rules</p>
-      `;
-    }
-  }
-  
-  async addJSRule(template, pageId) {
-    const pattern = document.getElementById('jsUrlPattern').value;
-    const action = document.getElementById('jsAction').value;
-    const reason = document.getElementById('jsReason').value;
-    const delayTime = document.getElementById('delayTime').value;
-    
-    if (!pattern) {
-      this.showError('Please enter a script URL pattern');
-      return;
-    }
-    
-    try {
-      this.showInfo('Adding JS rule...');
-      
-      const response = await fetch('/rl/add-js-rule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shop: this.shop,
-          template: template,
-          page_id: pageId,
-          pattern: pattern,
-          action: action,
-          delay: action === 'delay' ? parseInt(delayTime) : null,
-          reason: reason
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.ok) {
-        this.showSuccess('JS rule added successfully!');
-        
-        // Clear form
-        document.getElementById('jsUrlPattern').value = '';
-        document.getElementById('jsReason').value = '';
-        
-        // Reload rules
-        this.loadExistingJSRules(template, pageId ? { id: pageId } : null);
-      } else {
-        this.showError(`Failed: ${data.error}`);
-      }
-    } catch (error) {
-      console.error('Add JS rule error:', error);
-      this.showError('Failed to add JS rule');
-    }
-  }
-  
-  async deleteJSRule(ruleId, template, pageId) {
-    if (!confirm('Are you sure you want to delete this JS rule?')) {
-      return;
-    }
-    
-    try {
-      const response = await fetch('/rl/delete-js-rule', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          shop: this.shop,
-          rule_id: ruleId
-        })
-      });
-      
-      const data = await response.json();
-      
-      if (data.ok) {
-        this.showSuccess('JS rule deleted');
-        this.loadExistingJSRules(template, pageId ? { id: pageId } : null);
-      } else {
-        this.showError(`Failed: ${data.error}`);
-      }
-    } catch (error) {
-      console.error('Delete JS rule error:', error);
-      this.showError('Failed to delete JS rule');
-    }
-  }
-  
-  closeJSModal() {
-    const modal = document.querySelector('.modal-overlay');
-    if (modal) modal.remove();
-  }
-  
-  getActionColor(action) {
-    const colors = {
-      'defer': '#28a745',
-      'async': '#17a2b8',
-      'delay': '#ffc107',
-      'block': '#dc3545'
-    };
-    return colors[action] || '#6c757d';
-  }
-  
-  viewTemplatePages(template) {
-    document.getElementById('templateFilter').value = template;
-    document.getElementById('pageSearch').value = '';
-    this.filterPages('', template);
-    
-    // Scroll to pages table
-    document.getElementById('pagesTableContainer').scrollIntoView({ behavior: 'smooth' });
-  }
-  
+
   async loadMorePages() {
-  try {
-    this.showInfo('Loading more pages...');
-    
-    const nextPage = this.currentPage + 1;
-    const response = await fetch(`/rl/pages-list?shop=${encodeURIComponent(this.shop)}&page=${nextPage}&limit=100`);
-    const data = await response.json();
-    
-    if (data.ok) {
-      // Append new pages to existing ones
-      this.pagesData.all_pages.push(...data.data.all_pages);
-      this.pagesData.total_pages = this.pagesData.all_pages.length;
-      this.pagesData.has_more = data.data.has_more;
-      this.currentPage = nextPage;
+    try {
+      this.showInfo('Loading more pages...');
       
-      // Re-render just the table
-      const tbody = document.getElementById('pagesTableBody');
-      if (tbody) {
-        tbody.innerHTML = this.renderPagesRows(this.pagesData.all_pages);
-      }
+      const nextPage = this.currentPage + 1;
+      const response = await fetch(`/rl/pages-list?shop=${encodeURIComponent(this.shop)}&page=${nextPage}&limit=100`);
+      const data = await response.json();
       
-      // Update pagination info
-      const container = document.getElementById('pagesTableContainer');
-      if (container) {
-        const h4 = container.querySelector('h4');
-        if (h4) {
-          h4.textContent = `All Pages (Page ${this.currentPage} - Showing ${this.pagesData.all_pages.length} of ${this.pagesData.total_pages_count})`;
+      if (data.ok) {
+        this.pagesData.all_pages.push(...data.data.all_pages);
+        this.pagesData.total_pages = this.pagesData.all_pages.length;
+        this.pagesData.has_more = data.data.has_more;
+        this.currentPage = nextPage;
+        
+        const tbody = document.getElementById('pagesTableBody');
+        if (tbody) {
+          tbody.innerHTML = this.renderPagesRows(this.pagesData.all_pages);
         }
         
-        // Update button
-        const buttonContainer = container.querySelector('div[style*="text-align: center"]');
-        if (buttonContainer) {
-          if (this.pagesData.has_more) {
-            buttonContainer.innerHTML = `
-              <button class="btn btn-primary" onclick="dashboard.loadMorePages()">
-                Load More Pages (${this.pagesData.all_pages.length} of ${this.pagesData.total_pages_count} loaded)
-              </button>
-            `;
-          } else {
-            buttonContainer.innerHTML = `
-              <div style="color: #666;">
-                All ${this.pagesData.total_pages_count} pages loaded
-              </div>
-            `;
-          }
-        }
+        this.showSuccess(`Loaded ${data.data.all_pages.length} more pages`);
       }
-      
-      this.showSuccess(`Loaded ${data.data.all_pages.length} more pages`);
+    } catch (error) {
+      console.error('Load more pages error:', error);
+      this.showError('Failed to load more pages');
     }
-  } catch (error) {
-    console.error('Load more pages error:', error);
-    this.showError('Failed to load more pages');
   }
-}
 
   getScoreClass(score) {
     if (score >= 90) return 'good';
@@ -1544,62 +1107,59 @@ renderPagesManagement() {
     return 'poor';
   }
 
-  // NEW: Update store stats from MongoDB
-async updateStoreStats() {
-  try {
-    const response = await fetch(`/rl/status?shop=${encodeURIComponent(this.shop)}`);
-    const data = await response.json();
+  async updateStoreStats() {
+    try {
+      const response = await fetch(`/rl/status?shop=${encodeURIComponent(this.shop)}`);
+      const data = await response.json();
 
-    // If site_structure is not available, try to fetch from site-analysis API
-    if (data.ok && !data.site_structure) {
-      console.log('Site structure not in status response, will try site-analysis endpoint if needed');
+      if (data.ok && !data.site_structure) {
+        console.log('Site structure not in status response');
+        
+        const totalPagesEl = document.getElementById('totalPages');
+        const totalTemplatesEl = document.getElementById('totalTemplates');
+        
+        if (totalPagesEl) totalPagesEl.textContent = '--';
+        if (totalTemplatesEl) totalTemplatesEl.textContent = '--';
+        
+        return;
+      }
+
+      if (data.ok && data.site_structure) {
+        const { site_structure } = data;
+        
+        let totalPages = 0;
+        let totalTemplates = 0;
+
+        if (site_structure.template_groups) {
+          const templates = site_structure.template_groups instanceof Map ?
+            Array.from(site_structure.template_groups.entries()) :
+            Object.entries(site_structure.template_groups);
+
+          totalTemplates = templates.length;
+          templates.forEach(([template, group]) => {
+            totalPages += group.count || 0;
+          });
+        }
+
+        const totalPagesEl = document.getElementById('totalPages');
+        const totalTemplatesEl = document.getElementById('totalTemplates');
+
+        if (totalPagesEl) totalPagesEl.textContent = totalPages || '--';
+        if (totalTemplatesEl) totalTemplatesEl.textContent = totalTemplates || '--';
+
+        console.log(`Store stats updated: ${totalPages} pages, ${totalTemplates} templates`);
+      }
+    } catch (error) {
+      console.error('Failed to load store stats:', error);
       
-      // Set default values
       const totalPagesEl = document.getElementById('totalPages');
       const totalTemplatesEl = document.getElementById('totalTemplates');
       
       if (totalPagesEl) totalPagesEl.textContent = '--';
       if (totalTemplatesEl) totalTemplatesEl.textContent = '--';
-      
-      return;
     }
-
-    if (data.ok && data.site_structure) {
-      const { site_structure } = data;
-      
-      let totalPages = 0;
-      let totalTemplates = 0;
-
-      if (site_structure.template_groups) {
-        const templates = site_structure.template_groups instanceof Map ?
-          Array.from(site_structure.template_groups.entries()) :
-          Object.entries(site_structure.template_groups);
-
-        totalTemplates = templates.length;
-        templates.forEach(([template, group]) => {
-          totalPages += group.count || 0;
-        });
-      }
-
-      const totalPagesEl = document.getElementById('totalPages');
-      const totalTemplatesEl = document.getElementById('totalTemplates');
-
-      if (totalPagesEl) totalPagesEl.textContent = totalPages || '--';
-      if (totalTemplatesEl) totalTemplatesEl.textContent = totalTemplates || '--';
-
-      console.log(`Store stats updated: ${totalPages} pages, ${totalTemplates} templates`);
-    }
-  } catch (error) {
-    console.error('Failed to load store stats:', error);
-    
-    // Set default values on error
-    const totalPagesEl = document.getElementById('totalPages');
-    const totalTemplatesEl = document.getElementById('totalTemplates');
-    
-    if (totalPagesEl) totalPagesEl.textContent = '--';
-    if (totalTemplatesEl) totalTemplatesEl.textContent = '--';
   }
-}
+
   showScriptInstructions() {
     this.getManualInstructions();
   }
@@ -1689,12 +1249,10 @@ async updateStoreStats() {
       this.showInfo('Attempting automatic script injection...');
 
       const response = await fetch('/rl/inject-script', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({ shop: this.shop })
-});
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop: this.shop })
+      });
 
       const data = await response.json();
 
@@ -1722,12 +1280,10 @@ async updateStoreStats() {
       this.showInfo('Disconnecting...');
 
       const response = await fetch('/rl/disconnect', {
-  method: 'POST',
-  headers: {
-    'Content-Type': 'application/json',
-  },
-  body: JSON.stringify({ shop: this.shop })
-});
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ shop: this.shop })
+      });
 
       const data = await response.json();
 
@@ -1752,115 +1308,6 @@ async updateStoreStats() {
     } catch (error) {
       console.error('Disconnect error:', error);
       this.showError('Failed to disconnect');
-    }
-  }
-async triggerCompleteSetup() {
-  console.warn('[Setup] Complete setup flow not yet implemented');
-  this.showInfo('Setup flow is under development. Please use manual setup for now.');
-  return;
-  
-  // TODO: Implement setup flow with these endpoints:
-  // POST /api/start-setup
-  // GET /api/setup-status
-}
-  showProgressBar() {
-    const connectedSection = document.querySelector('#connectedState .connected-section');
-    if (!connectedSection) return;
-    
-    const existing = document.querySelector('.setup-progress');
-    if (existing) existing.remove();
-    
-    const progressHTML = `
-      <div class="setup-progress" style="margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 8px;">
-        <h3>🔧 Optimizing Your Store...</h3>
-        <div style="margin: 15px 0;">
-          <div style="background: #e0e0e0; height: 30px; border-radius: 15px; overflow: hidden;">
-            <div id="progress-bar" style="background: linear-gradient(90deg, #4CAF50, #8BC34A); height: 100%; width: 0%; transition: width 0.5s;"></div>
-          </div>
-          <p id="progress-text" style="margin-top: 10px; font-weight: bold;">Starting... 0%</p>
-        </div>
-        <div id="progress-steps" style="margin-top: 15px; font-size: 14px;"></div>
-        <p style="color: #666; margin-top: 10px;">⏱️ This will take 5-10 minutes. Don't close this page.</p>
-      </div>
-    `;
-    
-    connectedSection.insertAdjacentHTML('afterbegin', progressHTML);
-  }
-
-  hideProgressBar() {
-    const progressBar = document.querySelector('.setup-progress');
-    if (progressBar) progressBar.remove();
-  }
-
-  async pollSetupProgress() {
-    let attempts = 0;
-    const maxAttempts = 120;
-    
-    while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      
-      try {
-        const response = await fetch(`/api/setup-status?shop=${encodeURIComponent(this.shop)}`);
-        const data = await response.json();
-        
-        if (!data.ok) {
-          throw new Error(data.error || 'Failed to get status');
-        }
-        
-        this.updateProgressBar(data.progress, data.current_step, data.completed_steps);
-        
-        if (data.progress >= 100 || data.status === 'complete') {
-          this.showSuccess('✅ Store optimization complete!');
-          this.hideProgressBar();
-          
-          if (data.warnings && data.warnings.length > 0) {
-            data.warnings.forEach(w => this.showInfo(w));
-          }
-          
-          setTimeout(() => {
-            this.checkStatus();
-            this.updateUI();
-          }, 2000);
-          
-          return;
-        }
-        
-        if (data.status === 'failed') {
-          throw new Error('Setup failed: ' + (data.error || 'Unknown error'));
-        }
-        
-      } catch (error) {
-        console.error('Poll error:', error);
-        this.showError('Progress check failed: ' + error.message);
-        this.hideProgressBar();
-        return;
-      }
-      
-      attempts++;
-    }
-    
-    this.showError('Setup is taking longer than expected. Check back in a few minutes.');
-    this.hideProgressBar();
-  }
-
-  updateProgressBar(progress, currentStep, completedSteps) {
-    const progressBar = document.getElementById('progress-bar');
-    const progressText = document.getElementById('progress-text');
-    const progressSteps = document.getElementById('progress-steps');
-    
-    if (progressBar) {
-      progressBar.style.width = progress + '%';
-    }
-    
-    if (progressText) {
-      progressText.textContent = `${currentStep || 'Processing'}... ${progress}%`;
-    }
-    
-    if (progressSteps && completedSteps) {
-      const stepsHTML = completedSteps.map(step => 
-        `<div style="color: #4CAF50;">✅ ${step}</div>`
-      ).join('');
-      progressSteps.innerHTML = stepsHTML;
     }
   }
 
