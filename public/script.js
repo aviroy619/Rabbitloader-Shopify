@@ -209,32 +209,64 @@ class RabbitLoaderDashboard {
   }
 
   async loadHomepagePerformance() {
-    try {
-      const cached = this.getCachedPerformance('homepage');
-      
-      if (cached) {
-        this.performanceData.homepage = cached;
-        this.displayHomepagePerformance(cached);
-        return;
-      }
-
-      console.log('📡 Fetching homepage performance from API...');
-
-      const response = await fetch(`/api/performance/homepage?shop=${encodeURIComponent(this.shop)}`);
-      const result = await response.json();
-
-      if (result.ok) {
-        this.setCachedPerformance('homepage', result.data);
-        this.performanceData.homepage = result.data;
-        this.displayHomepagePerformance(result.data);
-      } else {
-        console.error('Failed to load homepage performance:', result.error);
-      }
-
-    } catch (error) {
-      console.error('Homepage performance load error:', error);
+  try {
+    const cached = this.getCachedPerformance('homepage');
+    
+    if (cached) {
+      this.performanceData.homepage = cached;
+      this.displayHomepagePerformance(cached);
+      return;
     }
+
+    console.log('📡 Fetching homepage performance from API...');
+
+    const response = await fetch(`/api/performance/homepage?shop=${encodeURIComponent(this.shop)}`);
+    const result = await response.json();
+
+    if (result.ok && result.data) {
+      this.setCachedPerformance('homepage', result.data);
+      this.performanceData.homepage = result.data;
+      this.displayHomepagePerformance(result.data);
+    } else {
+      console.warn('Homepage performance not available, checking analysis status...');
+      
+      // Check if homepage is being analyzed
+      const analysisResponse = await fetch(`/rl/get-page-performance?shop=${encodeURIComponent(this.shop)}&url=%2F`);
+      const analysisData = await analysisResponse.json();
+      
+      if (analysisData.status === 'completed' && analysisData.scores) {
+        // Analysis complete but not in homepage API - use the scores
+        const mockData = {
+          psi: {
+            mobile_score: analysisData.scores.mobile,
+            desktop_score: analysisData.scores.desktop,
+            report_url: `https://pagespeed.web.dev/analysis?url=${encodeURIComponent('https://' + this.shop)}`
+          },
+          crux: {
+            available: false,
+            message: "Chrome UX Report data not yet available"
+          },
+          fetched_at: analysisData.analyzed_at
+        };
+        this.performanceData.homepage = mockData;
+        this.displayHomepagePerformance(mockData);
+      } else if (analysisData.status === 'processing' || analysisData.status === 'pending') {
+        // Still analyzing
+        this.showInfo('⏳ Homepage analysis in progress. Refresh in 60 seconds.');
+      } else {
+        // Not analyzed yet - queue it
+        console.log('Homepage not analyzed, queueing analysis...');
+        this.showInfo('📊 Analyzing homepage performance...');
+        await fetch(`/rl/analyze-page?shop=${encodeURIComponent(this.shop)}&url=%2F`);
+        this.showInfo('⏳ Homepage analysis queued. Refresh page in 90 seconds to see results.');
+      }
+    }
+
+  } catch (error) {
+    console.error('Homepage performance load error:', error);
+    this.showError('Failed to load homepage performance. Please try refreshing the page.');
   }
+}
 
   async loadTemplatePerformance(templateType) {
     try {
