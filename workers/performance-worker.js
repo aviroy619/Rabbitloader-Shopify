@@ -82,13 +82,30 @@ async function processQueue() {
       console.log(`[Worker] ✅ Scores: Mobile=${mobileScore}, Desktop=${desktopScore}`);
 
       // Save results
-      await PagePerformance.create({
-        shop: item.shop,
-        url: item.url,
-        mobile_score: mobileScore,
-        desktop_score: desktopScore,
-        analyzed_at: new Date()
-      });
+await PagePerformance.create({
+  shop: item.shop,
+  url: item.url,
+  mobile_score: mobileScore,
+  desktop_score: desktopScore,
+  analyzed_at: new Date()
+});
+
+// Mark as completed (DON'T delete - let frontend poll succeed first)
+item.status = 'completed';
+item.updated_at = new Date();
+await item.save();
+
+console.log(`[Worker] ✅ Completed: ${item.url}`);
+
+// Delete after 5 minutes to keep queue clean
+setTimeout(async () => {
+  try {
+    await AnalysisQueue.deleteOne({ _id: item._id });
+    console.log(`[Worker] 🗑️ Cleaned up queue for: ${item.url}`);
+  } catch (err) {
+    console.error('[Worker] Queue cleanup error:', err);
+  }
+}, 300000); // 5 minutes
 
       // Mark as completed and delete from queue
       await AnalysisQueue.deleteOne({ _id: item._id });
