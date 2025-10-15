@@ -1154,7 +1154,7 @@ router.get("/export-defer-config", async (req, res) => {
   }
 });
 // ============================================================
-// ROUTE: Analyze Page Performance
+// ROUTE: Analyze Page Performance (ASYNC WITH QUEUE)
 // ============================================================
 router.get("/analyze-page", async (req, res) => {
   const { shop, url } = req.query;
@@ -1177,38 +1177,143 @@ router.get("/analyze-page", async (req, res) => {
       });
     }
 
-    const fullUrl = `https://${shop}${url}`;
+    // Check for cached results (last 1 hour)
+    const PagePerformance = require("../models/PagePerformance");
+    const oneHourAgo = new Date(Date.now() - 3600000);
     
-    // Call Google PageSpeed Insights API directly
-    const PSI_API_KEY = process.env.GOOGLE_PSI_API_KEY || 'YOUR_API_KEY';
+    const cached = await PagePerformance.findOne({
+      shop: shop,
+      url: url,
+      analyzed_at: { $gte: oneHourAgo }
+    });
     
-   // Fetch mobile score
-// Fetch mobile score
-const mobileUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(fullUrl)}&strategy=mobile&key=${PSI_API_KEY}`;
-const mobileResponse = await fetch(mobileUrl);
-const mobileData = await mobileResponse.json();
+    if (cached) {
+      console.log(`[Analyze Page] ✅ Returning cached scores for ${url}`);
+      return res.json({
+        ok: true,
+        scores: {
+          mobile: cached.mobile_score,
+          desktop: cached.desktop_score
+        },
+        url: url,
+        analyzed_at: cached.analyzed_at,
+        cached: true
+      });
+    }
 
-// Fetch desktop score
-const desktopUrl = `https://www.googleapis.com/pagespeedonline/v5/runPagespeed?url=${encodeURIComponent(fullUrl)}&strategy=desktop&key=${PSI_API_KEY}`;
-const desktopResponse = await fetch(desktopUrl);
-const desktopData = await desktopResponse.json();
+    // Check if analysis is already in progress
+    const AnalysisQueue = require("../models/AnalysisQueue");
+    const pending = await AnalysisQueue.findOne({
+      shop: shop,
+      url: url,
+      status: { $in: ['pending', 'processing'] }
+    });
+    
+    if (pending) {
+      console.log(`[Analyze Page] ⏳ Analysis already queued for ${url}`);
+      return res.json({
+        ok: true,
+        status: 'analyzing',
+        queued_at: pending.created_at,
+        message: 'Analysis in progress. Check back in 60 seconds.'
+      });
+    }
 
-const mobileScore = Math.round((mobileData?.lighthouseResult?.categories?.performance?.score || 0) * 100);
-const desktopScore = Math.round((desktopData?.lighthouseResult?.categories?.performance?.score || 0) * 100);
+    // Queue new analysis
+    await AnalysisQueue.create({
+      shop: shop,
+      url: url,
+      full_url: `https://${shop}${url}`,
+      status: 'pending',
+      created_at: new Date()
+    });
 
-console.log(`[Analyze Page] PSI Scores for ${url}: Mobile=${mobileScore}, Desktop=${desktopScore}`);
+    console.log(`[Analyze Page] 🔄 Queued analysis for ${url}`);
+
     res.json({
       ok: true,
-      scores: {
-        mobile: mobileScore,
-        desktop: desktopScore
-      },
-      url: url,
-      analyzed_at: new Date().toISOString()
+      status: 'queued',
+      message: 'Analysis queued. Results will be available in ~60 seconds.',
+      poll_url: `/rl/get-page-performance?shop=${shop}&url=${encodeURIComponent(url)}`
     });
 
   } catch (error) {
     console.error('[Analyze Page] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Get Page Performance Results
+// ============================================================
+router.get("/get-page-performance", async (req, res) => {
+  const { shop, url } = req.query;
+  
+  if (!shop || !url) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop and url parameters required" 
+    });
+  }
+
+  try {
+    const PagePerformance = require("../models/PagePerformance");
+    
+    // Get latest result
+    const result = await PagePerformance.findOne({
+      shop: shop,
+      url: url
+    }).sort({ analyzed_at: -1 });
+    
+    if (result) {
+      return res.json({
+        ok: true,
+        status: 'completed',
+        scores: {
+          mobile: result.mobile_score,
+          desktop: result.desktop_score
+        },
+        url: url,
+        analyzed_at: result.analyzed_at
+      });
+    }
+
+    // Check queue status
+    const AnalysisQueue = require("../models/AnalysisQueue");
+    const queued = await AnalysisQueue.findOne({
+      shop: shop,
+      url: url
+    }).sort({ created_at: -1 });
+    
+    if (queued) {
+      if (queued.status === 'failed') {
+        return res.json({
+          ok: false,
+          status: 'failed',
+          error: queued.error || 'Analysis failed'
+        });
+      }
+      
+      return res.json({
+        ok: true,
+        status: queued.status,
+        message: queued.status === 'processing' 
+          ? 'Analysis in progress...' 
+          : 'Analysis queued...'
+      });
+    }
+
+    res.json({
+      ok: true,
+      status: 'not_found',
+      message: 'No analysis found. Request a new analysis.'
+    });
+
+  } catch (error) {
+    console.error('[Get Performance] Error:', error);
     res.status(500).json({ 
       ok: false, 
       error: error.message 
