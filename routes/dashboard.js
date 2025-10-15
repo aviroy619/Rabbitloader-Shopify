@@ -620,29 +620,47 @@ router.get("/pages-list", async (req, res) => {
       site_structure.template_groups :
       new Map(Object.entries(site_structure.template_groups));
 
+    // Get global defer rules from deferConfig
+    const globalDeferRules = shopRecord.deferConfig?.rules 
+      ? shopRecord.deferConfig.rules.filter(r => r.enabled !== false).length 
+      : 0;
+
+    console.log(`[Pages List] Global defer rules count: ${globalDeferRules}`);
+
     // Build templates summary (lightweight - no pages array)
     const templates = {};
     let allPages = [];
-    
+
     for (const [templateName, templateData] of templateGroups) {
       const pages = templateData.pages || [];
+      
+      // Get template-level defer rules count
+      const templateJsRules = (templateData.js_defer_rules || []).length;
       
       // Summary only for templates object
       templates[templateName] = {
         count: templateData.count || pages.length,
         sample_page: templateData.sample_page || (pages[0] ? pages[0].url : '/'),
         critical_css_enabled: templateData.critical_css_enabled !== false,
-        js_defer_count: (templateData.js_defer_rules || []).length
-        // DON'T include full pages array here
+        js_defer_count: templateJsRules + globalDeferRules
       };
       
       // Collect all pages for pagination
-      allPages.push(...pages.map(page => ({
-        ...page,
-        template: templateName,
-        critical_css_enabled: page.critical_css_enabled !== false,
-        js_defer_count: (page.js_defer_rules || []).length
-      })));
+      allPages.push(...pages.map(page => {
+        // Calculate total defer rules: page-level + template-level + global
+        const pageJsRules = (page.js_defer_rules || []).length;
+        const totalJsRules = pageJsRules + templateJsRules + globalDeferRules;
+        
+        return {
+          ...page,
+          template: templateName,
+          critical_css_enabled: page.critical_css_enabled !== false,
+          js_defer_count: totalJsRules,
+          page_level_rules: pageJsRules,
+          template_level_rules: templateJsRules,
+          global_defer_rules: globalDeferRules
+        };
+      }));
     }
 
     // Paginate
@@ -655,7 +673,7 @@ router.get("/pages-list", async (req, res) => {
     const totalPages = allPages.length;
     const hasMore = endIndex < totalPages;
 
-    console.log(`[Pages List] Loaded page ${pageNum} (${paginatedPages.length} pages) of ${totalPages} total for ${shop}`);
+    console.log(`[Pages List] Loaded page ${pageNum} (${paginatedPages.length} pages) of ${totalPages} total for ${shop}, global rules: ${globalDeferRules}`);
 
     res.json({
       ok: true,
@@ -667,7 +685,8 @@ router.get("/pages-list", async (req, res) => {
         total_templates: Object.keys(templates).length,
         page: pageNum,
         limit: pageLimit,
-        has_more: hasMore
+        has_more: hasMore,
+        global_defer_rules: globalDeferRules
       }
     });
 
@@ -879,6 +898,36 @@ router.get("/js-rules", async (req, res) => {
       ok: false, 
       error: error.message 
     });
+  }
+});
+// ============================================================
+// ROUTE: Debug Defer Rules
+// ============================================================
+router.get("/debug-defer/:shop", async (req, res) => {
+  const { shop } = req.params;
+  
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord) {
+      return res.json({ found: false });
+    }
+    
+    res.json({
+      found: true,
+      shop: shop,
+      defer_config: shopRecord.deferConfig || null,
+      defer_rules_count: shopRecord.deferConfig?.rules?.length || 0,
+      site_structure_templates: shopRecord.site_structure?.template_groups 
+        ? Object.keys(shopRecord.site_structure.template_groups).map(template => ({
+            template: template,
+            js_defer_rules: (shopRecord.site_structure.template_groups[template].js_defer_rules || []).length
+          }))
+        : []
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 

@@ -319,10 +319,20 @@ router.get("/config.json", validateShopAndUpdateUsage, async (req, res) => {
 // Serve critical CSS for a shop
 router.get("/critical.css", async (req, res) => {
   const shop = req.query.shop;
+  const referer = req.headers.referer || req.headers.referrer || '';
   
   if (!shop) {
     res.setHeader('Content-Type', 'text/css');
     return res.status(400).send('/* Error: Missing shop parameter */');
+  }
+
+  // CHECK FOR ?norl PARAMETER IN REFERRER URL
+  if (referer && referer.includes('norl')) {
+    console.log(`[Critical CSS] Disabled via ?norl parameter for ${shop}`);
+    res.setHeader('Content-Type', 'text/css');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    return res.send('/* RabbitLoader Critical CSS disabled via ?norl parameter */');
   }
 
   try {
