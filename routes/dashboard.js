@@ -45,7 +45,7 @@ async function injectDeferScript(shop, did, accessToken) {
     
     if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
         themeContent.includes(deferLoaderUrl) ||
-        themeContent.includes('RabbitLoader Defer Configuration')) {
+        themeContent.includes('RabbitLoader Configuration')) {
       console.log(`[RL] Defer script already exists in theme for ${shop}`);
       return { success: true, message: "Defer script already exists", already_exists: true };
     }
@@ -54,16 +54,38 @@ async function injectDeferScript(shop, did, accessToken) {
     const firstJSPattern = /(<script[^>]*>)/;
     const jsMatch = themeContent.match(firstJSPattern);
     
- const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
+    const scriptTag = `  <!-- RabbitLoader Configuration -->
   <script>
-    // Check for ?norl parameter to disable RabbitLoader
-    if (!window.location.search.includes('norl')) {
-      var s = document.createElement('script');
-      s.src = '${deferLoaderUrl}';
-      document.head.appendChild(s);
-    } else {
-      console.log('RabbitLoader disabled via ?norl parameter');
-    }
+    (function() {
+      // Check for ?norl parameter to disable RabbitLoader
+      var search = window.location.search || '';
+      var disabled = search.indexOf('norl') !== -1;
+      
+      if (disabled) {
+        console.log('🚫 RabbitLoader disabled via ?norl parameter');
+        window.RABBITLOADER_DISABLED = true;
+        return;
+      }
+      
+      console.log('✅ RabbitLoader enabled');
+      
+      // Load Defer Configuration Script
+      var deferScript = document.createElement('script');
+      deferScript.src = '${deferLoaderUrl}';
+      deferScript.onerror = function() { console.error('Failed to load defer script'); };
+      document.head.appendChild(deferScript);
+      
+      // Load Critical CSS
+      var criticalCSS = document.createElement('link');
+      criticalCSS.rel = 'stylesheet';
+      criticalCSS.href = '${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}';
+      criticalCSS.onload = function() { 
+        var template = window.location.pathname.split('/')[1] || 'index';
+        console.log('💚 Critical CSS loaded: ' + template); 
+      };
+      criticalCSS.onerror = function() { console.error('Failed to load critical CSS'); };
+      document.head.appendChild(criticalCSS);
+    })();
   </script>
 `;
     
@@ -385,7 +407,143 @@ router.get("/manual-instructions", async (req, res) => {
     }
   });
 });
+// ============================================================
+// ROUTE: Remove Old Script
+// ============================================================
+router.post("/remove-script", async (req, res) => {
+  const { shop } = req.body;
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
 
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.accessToken) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: 'Shop not found or access token missing' 
+      });
+    }
+
+    console.log(`[RL] Removing old RabbitLoader script for ${shop}`);
+
+    // Get active theme
+    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!themesResponse.ok) {
+      throw new Error(`Failed to fetch themes: ${themesResponse.status}`);
+    }
+
+    const themesData = await themesResponse.json();
+    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
+    
+    if (!activeTheme) {
+      throw new Error("No active theme found");
+    }
+
+    // Get theme.liquid file
+    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!assetResponse.ok) {
+      throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status}`);
+    }
+
+    const assetData = await assetResponse.json();
+    let themeContent = assetData.asset.value;
+
+    // Remove all RabbitLoader script blocks
+    const patterns = [
+      /<!-- RabbitLoader Defer Configuration -->[\s\S]*?<\/script>\s*/g,
+      /<!-- RabbitLoader Configuration -->[\s\S]*?<\/script>\s*/g,
+      /<!-- RabbitLoader Critical CSS -->[\s\S]*?<\/style>\s*/g
+    ];
+
+    let removed = false;
+    patterns.forEach(pattern => {
+      if (pattern.test(themeContent)) {
+        themeContent = themeContent.replace(pattern, '');
+        removed = true;
+      }
+    });
+
+    if (!removed) {
+      console.log(`[RL] No RabbitLoader scripts found in theme for ${shop}`);
+      return res.json({ 
+        ok: true, 
+        message: "No RabbitLoader scripts found to remove"
+      });
+    }
+
+    // Update theme file
+    const updateResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
+      method: 'PUT',
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        asset: {
+          key: 'layout/theme.liquid',
+          value: themeContent
+        }
+      })
+    });
+
+    if (!updateResponse.ok) {
+      const errorData = await updateResponse.json();
+      throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
+    }
+
+    // Update shop record
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $set: {
+          script_injected: false
+        },
+        $push: {
+          history: {
+            event: "script_removal",
+            timestamp: new Date(),
+            details: {
+              theme_id: activeTheme.id
+            }
+          }
+        }
+      }
+    );
+
+    console.log(`[RL] ✅ Old RabbitLoader script removed successfully for ${shop}`);
+    
+    res.json({ 
+      ok: true, 
+      message: "Old RabbitLoader script removed successfully"
+    });
+
+  } catch (error) {
+    console.error('[Remove Script] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
 // ============================================================
 // ROUTE: Auto-Inject Script
 // ============================================================

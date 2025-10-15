@@ -1344,37 +1344,50 @@ displayPageScores(url, scores) {
     }
   }
 
-  async autoInjectScript() {
-    if (!this.shop) {
-      this.showError('Shop parameter is required');
-      return;
-    }
-
-    try {
-      this.showInfo('Attempting automatic script injection...');
-
-      const response = await fetch('/rl/inject-script', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ shop: this.shop })
-      });
-
-      const data = await response.json();
-
-      if (data.ok) {
-        this.showSuccess(`Script injection successful! ${data.message}`);
-        
-        setTimeout(() => {
-          this.checkStatus();
-        }, 2000);
-      } else {
-        this.showError(`Script injection failed: ${data.error}`);
-      }
-    } catch (error) {
-      console.error('Auto inject error:', error);
-      this.showError('Failed to inject script automatically');
-    }
+ async autoInjectScript() {
+  if (!this.shop) {
+    this.showError('Shop parameter is required');
+    return;
   }
+
+  try {
+    // Step 1: Remove old script first
+    this.showInfo('Removing old script...');
+
+    const removeResponse = await fetch('/rl/remove-script', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: this.shop })
+    });
+
+    const removeData = await removeResponse.json();
+    console.log('Remove result:', removeData);
+
+    // Step 2: Inject new script
+    this.showInfo('Injecting new script...');
+
+    const injectResponse = await fetch('/rl/inject-script', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ shop: this.shop })
+    });
+
+    const injectData = await injectResponse.json();
+
+    if (injectData.ok) {
+      this.showSuccess(`✅ Script updated successfully! ${injectData.message}`);
+      
+      setTimeout(() => {
+        this.checkStatus();
+      }, 2000);
+    } else {
+      this.showError(`Script injection failed: ${injectData.error}`);
+    }
+  } catch (error) {
+    console.error('Auto inject error:', error);
+    this.showError('Failed to update script automatically');
+  }
+}
 
   async disconnect() {
     if (!confirm('Are you sure you want to disconnect RabbitLoader from your store?')) {
