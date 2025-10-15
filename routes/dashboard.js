@@ -54,8 +54,17 @@ async function injectDeferScript(shop, did, accessToken) {
     const firstJSPattern = /(<script[^>]*>)/;
     const jsMatch = themeContent.match(firstJSPattern);
     
-    const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>
+ const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
+  <script>
+    // Check for ?norl parameter to disable RabbitLoader
+    if (!window.location.search.includes('norl')) {
+      var s = document.createElement('script');
+      s.src = '${deferLoaderUrl}';
+      document.head.appendChild(s);
+    } else {
+      console.log('🐰 RabbitLoader disabled via ?norl parameter');
+    }
+  </script>
 `;
     
     if (jsMatch) {
