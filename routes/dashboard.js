@@ -393,6 +393,16 @@ router.get("/status", async (req, res) => {
       });
     }
     
+    // 🎯 ADD THIS: Register webhook if not already registered
+    if (shopRecord && shopRecord.access_token && shopRecord.api_token) {
+      try {
+        console.log('[Webhook] Checking/registering uninstall webhook...');
+        await registerUninstallWebhook(shop, shopRecord.access_token);
+      } catch (webhookError) {
+        console.error(`[Webhook] ⚠️ Registration check failed (non-fatal):`, webhookError.message);
+      }
+    }
+    
     res.json({
       ok: true,
       connected: !!shopRecord.api_token,
