@@ -76,10 +76,6 @@ async function registerUninstallWebhook(shop, accessToken) {
 
 // Helper function to inject defer script
 async function injectDeferScript(shop, did, accessToken) {
-
-
-// Helper function to inject defer script
-async function injectDeferScript(shop, did, accessToken) {
   console.log(`[RL] Attempting auto defer script injection for ${shop} with DID: ${did}`);
 
   try {
