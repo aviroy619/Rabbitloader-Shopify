@@ -283,13 +283,12 @@ router.get("/rl-callback", async (req, res) => {
 console.log(`[RL] Connection saved for shop: ${shop}`);
 
 // Register uninstall webhook
-if (shopRecord && shopRecord.accessToken) {
+if (shopRecord && shopRecord.access_token) {  // ✅ Fixed!
   try {
-    await registerUninstallWebhook(shop, shopRecord.accessToken);
-    console.log(`[RL]  Uninstall webhook registered for ${shop}`);
+    await registerUninstallWebhook(shop, shopRecord.access_token);  // ✅ Fixed!
+    console.log(`[RL] ✅ Uninstall webhook registered for ${shop}`);
   } catch (webhookError) {
-    console.error(`[RL]  Webhook registration failed (non-fatal):`, webhookError.message);
-    // Continue anyway - webhook is not critical for connection
+    console.error(`[RL] ⚠️ Webhook registration failed (non-fatal):`, webhookError.message);
   }
 }
 

@@ -263,6 +263,13 @@ const shopRecord = await ShopModel.findOneAndUpdate(
 );
 
 console.log(`✅ Shopify OAuth completed for ${shop}`);
+// Register uninstall webhook
+try {
+  await registerUninstallWebhook(shop, tokenData.access_token);
+  console.log(`[Webhook] ✅ Uninstall webhook registered for ${shop}`);
+} catch (webhookError) {
+  console.error(`[Webhook] ⚠️ Webhook registration failed (non-fatal):`, webhookError.message);
+}
 
 if (isReinstall) {
   console.log(`📦 Reinstallation detected for ${shop} - will trigger setup`);
