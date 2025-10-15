@@ -568,6 +568,58 @@ router.post("/inject-script", async (req, res) => {
       });
     }
 
+    // STEP 1: Remove old script FIRST
+    console.log(`[RL] Removing old script before injection for ${shop}`);
+    
+    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const themesData = await themesResponse.json();
+    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
+    
+    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const assetData = await assetResponse.json();
+    let themeContent = assetData.asset.value;
+
+    // Remove ALL RabbitLoader scripts
+    const patterns = [
+      /<!-- RabbitLoader Defer Configuration -->[\s\S]*?<\/script>\s*/g,
+      /<!-- RabbitLoader Configuration -->[\s\S]*?<\/script>\s*/g,
+      /<!-- RabbitLoader Critical CSS -->[\s\S]*?<\/style>\s*/g
+    ];
+
+    patterns.forEach(pattern => {
+      themeContent = themeContent.replace(pattern, '');
+    });
+
+    // Update theme with cleaned content
+    await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
+      method: 'PUT',
+      headers: {
+        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        asset: {
+          key: 'layout/theme.liquid',
+          value: themeContent
+        }
+      })
+    });
+
+    console.log(`[RL] ✅ Old script removed, now injecting new script for ${shop}`);
+
+    // STEP 2: Now inject the NEW script
     const result = await injectDeferScript(
       shop, 
       shopRecord.short_id, 
@@ -588,7 +640,8 @@ router.post("/inject-script", async (req, res) => {
             details: {
               success: result.success,
               position: result.position,
-              theme_id: result.themeId
+              theme_id: result.themeId,
+              replaced_old: true
             }
           }
         }
@@ -597,7 +650,7 @@ router.post("/inject-script", async (req, res) => {
 
     res.json({ 
       ok: true, 
-      message: result.message,
+      message: "Script updated successfully with ?norl support",
       ...result
     });
 
@@ -609,7 +662,6 @@ router.post("/inject-script", async (req, res) => {
     });
   }
 });
-
 // ============================================================
 // ROUTE: Disconnect
 // ============================================================
