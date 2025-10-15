@@ -1,16 +1,13 @@
 const mongoose = require('mongoose');
 require('dotenv').config();
 
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/shopify-app';
+const MONGODB_URI = process.env.MONGO_URI || 'mongodb+srv://rlplatforms_user:Wills619@shopify.6c0ab2b.mongodb.net/RLPlatforms?retryWrites=true&w=majority&appName=shopify';
 const PSI_API_KEY = process.env.GOOGLE_PSI_API_KEY;
 
 let isProcessing = false;
 
 // Connect to MongoDB
-mongoose.connect(MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => {
+mongoose.connect(MONGODB_URI).then(() => {
   console.log('[Worker] ✅ Connected to MongoDB');
   startWorker();
 }).catch(err => {
