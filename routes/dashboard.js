@@ -1539,6 +1539,72 @@ router.post("/apply-css-setting", async (req, res) => {
     });
   }
 });
+
+// ============================================================
+// ROUTE: Analyze/Refresh Site Structure
+// ============================================================
+router.post("/analyze-site", async (req, res) => {
+  const { shop } = req.body;
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.accessToken) {
+      return res.status(400).json({ 
+        ok: false, 
+        error: 'Shop not found or access token missing' 
+      });
+    }
+
+    const { analyzeSite } = require("../workers/site-analyzer");
+    const siteStructure = await analyzeSite(shop, shopRecord.accessToken);
+
+    res.json({
+      ok: true,
+      message: "Site structure analyzed successfully",
+      total_pages: siteStructure.total_pages
+    });
+
+  } catch (error) {
+    console.error('[Analyze Site] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+// ============================================================
+// WEBHOOK: Product Created/Updated
+// ============================================================
+router.post("/webhooks/products/update", async (req, res) => {
+  const shop = req.get('X-Shopify-Shop-Domain');
+  
+  console.log(`[Webhook] Product updated for ${shop}`);
+  
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (shopRecord && shopRecord.accessToken) {
+      const { analyzeSite } = require("../workers/site-analyzer");
+      await analyzeSite(shop, shopRecord.accessToken);
+      console.log(`[Webhook] ✅ Site structure refreshed for ${shop}`);
+    }
+    
+    res.status(200).send('OK');
+  } catch (error) {
+    console.error('[Webhook] Error:', error);
+    res.status(500).send('Error');
+  }
+});
 // ============================================================
 // EXPORTS
 // ============================================================
