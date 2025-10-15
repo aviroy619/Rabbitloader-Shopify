@@ -850,7 +850,7 @@ class RabbitLoaderDashboard {
     }
   }
 
-  async analyzePage(pageId, url) {
+async analyzePage(pageId, url) {
   this.showInfo(`🔍 Analyzing ${url}...`);
   
   try {
@@ -865,16 +865,21 @@ class RabbitLoaderDashboard {
     // If cached result, display immediately
     if (data.status === 'completed' || data.scores) {
       this.displayPageScores(url, data.scores);
-      this.showSuccess(`✅ Analysis complete! Mobile: ${data.scores.mobile}, Desktop: ${data.scores.desktop}`);
+      this.showSuccess(`✅ Analysis complete! Mobile: ${data.scores.mobile}, Desktop: ${data.scores.desktop}${data.cached ? ' (cached)' : ''}`);
       return;
     }
     
     // If queued or analyzing, start polling
     if (data.status === 'queued' || data.status === 'analyzing') {
-      this.showInfo(`⏳ Analysis queued. Checking for results every 5 seconds...`);
+      this.showInfo(`⏳ Analysis queued. This may take 60-90 seconds...`);
       
-      // Poll every 5 seconds for up to 2 minutes
+      let pollCount = 0;
+      const maxPolls = 36; // 3 minutes (36 * 5 seconds)
+      
+      // Poll every 5 seconds
       const pollInterval = setInterval(async () => {
+        pollCount++;
+        
         try {
           const pollResponse = await fetch(`/rl/get-page-performance?shop=${encodeURIComponent(this.shop)}&url=${encodeURIComponent(url)}`);
           const pollData = await pollResponse.json();
@@ -887,23 +892,51 @@ class RabbitLoaderDashboard {
             clearInterval(pollInterval);
             this.showError(`❌ Analysis failed: ${pollData.error}`);
           } else {
-            console.log(`⏳ Still analyzing... Status: ${pollData.status}`);
+            // Show progress messages
+            if (pollCount % 6 === 0) { // Every 30 seconds
+              const elapsed = pollCount * 5;
+              this.showInfo(`⏳ Still analyzing... (${elapsed}s elapsed)`);
+            }
+            console.log(`⏳ Poll ${pollCount}: Status = ${pollData.status}`);
+          }
+          
+          // Timeout after max polls
+          if (pollCount >= maxPolls) {
+            clearInterval(pollInterval);
+            this.showError('⏱️ Analysis is taking longer than expected. Results will be cached once complete. Please check back in a minute or refresh the page.');
           }
         } catch (pollError) {
           console.error('Polling error:', pollError);
+          if (pollCount >= maxPolls) {
+            clearInterval(pollInterval);
+          }
         }
       }, 5000);
-      
-      // Stop polling after 2 minutes
-      setTimeout(() => {
-        clearInterval(pollInterval);
-        this.showError('⏱️ Analysis timeout. Please try again.');
-      }, 120000);
     }
   } catch (error) {
     console.error('Analysis error:', error);
     this.showError(`Failed to analyze ${url}: ${error.message}`);
   }
+}
+
+displayPageScores(url, scores) {
+  const row = document.querySelector(`tr[data-url="${url}"]`);
+  if (!row) return;
+  
+  const mobileTd = row.children[1];
+  const desktopTd = row.children[2];
+  
+  mobileTd.innerHTML = `
+    <span style="display: inline-block; padding: 4px 12px; background: ${this.getScoreColor(scores.mobile)}; color: white; border-radius: 6px; font-size: 13px; font-weight: 500;">
+      ${scores.mobile}
+    </span>
+  `;
+  
+  desktopTd.innerHTML = `
+    <span style="display: inline-block; padding: 4px 12px; background: ${this.getScoreColor(scores.desktop)}; color: white; border-radius: 6px; font-size: 13px; font-weight: 500;">
+      ${scores.desktop}
+    </span>
+  `;
 }
 
 displayPageScores(url, scores) {
