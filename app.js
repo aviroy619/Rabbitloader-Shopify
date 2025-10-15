@@ -40,6 +40,8 @@ const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use('/webhooks/app/uninstalled', express.raw({ type: 'application/json' }));
+
 
 // ====== Session Support for OAuth ======
 const session = require('express-session');
@@ -2434,41 +2436,133 @@ app.use((req, res, next) => {
   next();
 });
 
-// ====== Webhook Handler ======
-app.post("/webhooks/app/uninstalled", express.raw({ type: 'application/json' }), async (req, res) => {
+// ====== Enhanced Webhook Handler with Code Cleanup ======
+app.post("/webhooks/app/uninstalled", async (req, res) => {
   try {
     const shop = req.get('X-Shopify-Shop-Domain');
-    console.log(`App uninstalled for shop: ${shop}`);
+    console.log(`[Webhook] App uninstalled for ${shop}`);
+    
+    // Verify webhook (optional but recommended)
+    const crypto = require('crypto');
+    const hmac = req.get('X-Shopify-Hmac-Sha256');
+    const hash = crypto
+      .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
+      .update(req.body, 'utf8')
+      .digest('base64');
+    
+    if (hash !== hmac) {
+      console.error('[Webhook] Verification failed');
+      return res.status(401).send('Unauthorized');
+    }
     
     if (shop) {
-      await ShopModel.updateOne(
-        { shop },
-        { 
-          $unset: { 
-            access_token: "", 
-            api_token: "", 
-            short_id: "",
-            script_injected: "",
-            script_injection_attempted: ""
-          },
-          $set: { connected_at: null },
-          $push: {
-            history: {
-              event: "uninstalled",
-              timestamp: new Date(),
-              details: { via: "webhook" }
-            }
-          }
+      const shopData = await ShopModel.findOne({ shop });
+      
+      if (shopData?.access_token) {
+        // Remove RabbitLoader code from theme
+        try {
+          await removeRabbitLoaderCode(shop, shopData.access_token);
+          console.log(`[Webhook] ✅ Code removed from ${shop}`);
+        } catch (cleanupError) {
+          console.error(`[Webhook] Code cleanup failed: ${cleanupError.message}`);
+          // Continue anyway - still mark as uninstalled
         }
-      );
+      }
+      
+      // Remove shop from database
+      await ShopModel.deleteOne({ shop });
+      console.log(`[Webhook] ✅ Shop data deleted for ${shop}`);
     }
     
     res.status(200).send('OK');
   } catch (err) {
-    console.error('Webhook error:', err);
+    console.error('[Webhook] Error:', err);
     res.status(500).send('Error');
   }
 });
+
+// Helper function to remove RabbitLoader code from theme
+async function removeRabbitLoaderCode(shop, accessToken) {
+  console.log(`[Cleanup] Removing RabbitLoader code from ${shop}`);
+  
+  try {
+    // Get active theme
+    const themesResponse = await axios.get(
+      `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    const activeTheme = themesResponse.data.themes.find(theme => theme.role === 'main');
+    
+    if (!activeTheme) {
+      throw new Error("No active theme found");
+    }
+
+    // Get theme.liquid file
+    const assetResponse = await axios.get(
+      `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    let themeContent = assetResponse.data.asset.value;
+
+    // Remove ALL RabbitLoader code blocks
+    const patterns = [
+      /<!-- RabbitLoader Defer Configuration -->[\s\S]*?<\/script>\s*/g,
+      /<!-- RabbitLoader Configuration -->[\s\S]*?<\/script>\s*/g,
+      /<!-- RabbitLoader Critical CSS -->[\s\S]*?(?:<link[^>]*>|<\/script>)\s*/g,
+      /<!-- Critical CSS Injection by RabbitLoader -->[\s\S]*?<\/script>\s*/g
+    ];
+
+    let wasModified = false;
+    patterns.forEach(pattern => {
+      if (pattern.test(themeContent)) {
+        themeContent = themeContent.replace(pattern, '');
+        wasModified = true;
+      }
+    });
+
+    if (!wasModified) {
+      console.log(`[Cleanup] No RabbitLoader code found in theme`);
+      return { success: true, message: "No code to remove" };
+    }
+
+    // Update theme file
+    await axios.put(
+      `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json`,
+      {
+        asset: {
+          key: 'layout/theme.liquid',
+          value: themeContent
+        }
+      },
+      {
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    console.log(`[Cleanup] ✅ RabbitLoader code removed successfully`);
+    return { success: true, message: "Code removed successfully" };
+
+  } catch (error) {
+    console.error(`[Cleanup] Failed:`, error.message);
+    throw error;
+  }
+}
+
 
 // NEW: Webhook handler for app installation/reinstallation
 app.post("/webhooks/app/installed", express.raw({ type: 'application/json' }), async (req, res) => {

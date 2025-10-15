@@ -1,6 +1,83 @@
 const express = require("express");
 const router = express.Router();
 
+// Helper function to register uninstall webhook
+async function registerUninstallWebhook(shop, accessToken) {
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
+
+  const webhookUrl = `${process.env.APP_URL}/webhooks/app/uninstalled`;
+  
+  console.log(`[Webhook] Registering uninstall webhook for ${shop}: ${webhookUrl}`);
+  
+  try {
+    // Check if webhook already exists
+    const existingWebhooksResponse = await fetch(
+      `https://${shop}/admin/api/2025-01/webhooks.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (existingWebhooksResponse.ok) {
+      const existingWebhooks = await existingWebhooksResponse.json();
+      const uninstallWebhook = existingWebhooks.webhooks?.find(
+        w => w.topic === 'app/uninstalled' && w.address === webhookUrl
+      );
+      
+      if (uninstallWebhook) {
+        console.log(`[Webhook] Uninstall webhook already exists for ${shop}`);
+        return { success: true, message: 'Webhook already exists' };
+      }
+    }
+
+    // Register new webhook
+    const response = await fetch(
+      `https://${shop}/admin/api/2025-01/webhooks.json`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          webhook: {
+            topic: 'app/uninstalled',
+            address: webhookUrl,
+            format: 'json'
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Webhook registration failed: ${JSON.stringify(errorData)}`);
+    }
+
+    const webhookData = await response.json();
+    console.log(`[Webhook] ✅ Uninstall webhook registered successfully for ${shop}`);
+    
+    return { 
+      success: true, 
+      webhook: webhookData.webhook,
+      message: 'Webhook registered successfully' 
+    };
+
+  } catch (error) {
+    console.error(`[Webhook] Registration error for ${shop}:`, error.message);
+    throw error;
+  }
+}
+
+// Helper function to inject defer script
+async function injectDeferScript(shop, did, accessToken) {
+
+
 // Helper function to inject defer script
 async function injectDeferScript(shop, did, accessToken) {
   console.log(`[RL] Attempting auto defer script injection for ${shop} with DID: ${did}`);
@@ -201,13 +278,24 @@ router.get("/rl-callback", async (req, res) => {
       updateData.$set.account_id = decoded.account_id;
     }
 
-    await ShopModel.findOneAndUpdate(
-      { shop },
-      updateData,
-      { upsert: true, new: true }
-    );
+    const shopRecord = await ShopModel.findOneAndUpdate(
+  { shop },
+  updateData,
+  { upsert: true, new: true }
+);
 
-    console.log(`[RL] Connection saved for shop: ${shop}`);
+console.log(`[RL] Connection saved for shop: ${shop}`);
+
+// Register uninstall webhook
+if (shopRecord && shopRecord.accessToken) {
+  try {
+    await registerUninstallWebhook(shop, shopRecord.accessToken);
+    console.log(`[RL]  Uninstall webhook registered for ${shop}`);
+  } catch (webhookError) {
+    console.error(`[RL]  Webhook registration failed (non-fatal):`, webhookError.message);
+    // Continue anyway - webhook is not critical for connection
+  }
+}
 
     const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
     const hostParam = req.query.host || shopBase64;

@@ -5,7 +5,78 @@ const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 
+// Helper function to register uninstall webhook
+async function registerUninstallWebhook(shop, accessToken) {
+  if (!accessToken) {
+    throw new Error('No access token available');
+  }
 
+  const webhookUrl = `${process.env.APP_URL}/webhooks/app/uninstalled`;
+  
+  console.log(`[Webhook] Registering uninstall webhook for ${shop}: ${webhookUrl}`);
+  
+  try {
+    // Check if webhook already exists
+    const existingWebhooksResponse = await fetch(
+      `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/webhooks.json`,
+      {
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+
+    if (existingWebhooksResponse.ok) {
+      const existingWebhooks = await existingWebhooksResponse.json();
+      const uninstallWebhook = existingWebhooks.webhooks?.find(
+        w => w.topic === 'app/uninstalled' && w.address === webhookUrl
+      );
+      
+      if (uninstallWebhook) {
+        console.log(`[Webhook] Uninstall webhook already exists for ${shop}`);
+        return { success: true, message: 'Webhook already exists' };
+      }
+    }
+
+    // Register new webhook
+    const response = await fetch(
+      `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/webhooks.json`,
+      {
+        method: 'POST',
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          webhook: {
+            topic: 'app/uninstalled',
+            address: webhookUrl,
+            format: 'json'
+          }
+        })
+      }
+    );
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(`Webhook registration failed: ${JSON.stringify(errorData)}`);
+    }
+
+    const webhookData = await response.json();
+    console.log(`[Webhook] ✅ Uninstall webhook registered successfully for ${shop}`);
+    
+    return { 
+      success: true, 
+      webhook: webhookData.webhook,
+      message: 'Webhook registered successfully' 
+    };
+
+  } catch (error) {
+    console.error(`[Webhook] Registration error for ${shop}:`, error.message);
+    throw error;
+  }
+}
 // ====== SHOPIFY OAUTH FLOW ======
 
 // Start Shopify OAuth
@@ -190,6 +261,23 @@ const shopRecord = await ShopModel.findOneAndUpdate(
   },
   { upsert: true, new: true }
 );
+
+console.log(`✅ Shopify OAuth completed for ${shop}`);
+
+if (isReinstall) {
+  console.log(`📦 Reinstallation detected for ${shop} - will trigger setup`);
+} else {
+  console.log(`🆕 First-time installation for ${shop}`);
+}
+
+// Register uninstall webhook
+try {
+  await registerUninstallWebhook(shop, tokenData.access_token);
+  console.log(`[Webhook] ✅ Uninstall webhook registered for ${shop}`);
+} catch (webhookError) {
+  console.error(`[Webhook] ⚠️ Webhook registration failed (non-fatal):`, webhookError.message);
+  // Continue anyway - webhook is not critical for initial setup
+}
 
 if (isReinstall) {
   console.log(`Reinstallation detected for ${shop} - will trigger setup`);
