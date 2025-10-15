@@ -62,7 +62,7 @@ async function injectDeferScript(shop, did, accessToken) {
       s.src = '${deferLoaderUrl}';
       document.head.appendChild(s);
     } else {
-      console.log('🐰 RabbitLoader disabled via ?norl parameter');
+      console.log('RabbitLoader disabled via ?norl parameter');
     }
   </script>
 `;
@@ -99,7 +99,7 @@ async function injectDeferScript(shop, did, accessToken) {
       throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
     }
 
-    console.log(`[RL] ✅ Defer script auto-injected successfully for ${shop}`);
+    console.log(`[RL] Defer script auto-injected successfully for ${shop}`);
     return { 
       success: true, 
       message: "Defer script injected successfully",
@@ -109,7 +109,7 @@ async function injectDeferScript(shop, did, accessToken) {
     };
 
   } catch (error) {
-    console.error(`[RL] ❌ Auto-injection failed for ${shop}:`, error);
+    console.error(`[RL] Auto-injection failed for ${shop}:`, error);
     throw error;
   }
 }
