@@ -1865,6 +1865,50 @@ router.post("/webhooks/products/update", async (req, res) => {
   }
 });
 // ============================================================
+// ROUTE: Check what's actually injected in theme.liquid
+// ============================================================
+router.get("/check-injection/:shop", async (req, res) => {
+  const { shop } = req.params;
+  
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.accessToken) {
+      return res.json({ error: 'Shop not found' });
+    }
+
+    // Get theme content
+    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
+      headers: { 'X-Shopify-Access-Token': shopRecord.accessToken }
+    });
+    const themesData = await themesResponse.json();
+    const activeTheme = themesData.themes.find(t => t.role === 'main');
+    
+    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
+      headers: { 'X-Shopify-Access-Token': shopRecord.accessToken }
+    });
+    const assetData = await assetResponse.json();
+    
+    // Extract just the RabbitLoader section
+    const content = assetData.asset.value;
+    const rlMatch = content.match(/<!-- RabbitLoader[\s\S]{0,2000}?<\/script>/);
+    
+    res.json({
+      found: !!rlMatch,
+      script: rlMatch ? rlMatch[0] : 'Not found',
+      hasNorlCheck: content.includes('norl'),
+      hasWindowLocationSearch: content.includes('window.location.search'),
+      hasDisabledVariable: content.includes('disabled'),
+      hasRabbitLoaderDisabled: content.includes('RABBITLOADER_DISABLED')
+    });
+    
+  } catch (error) {
+    res.json({ error: error.message });
+  }
+});
+
+// ============================================================
 // EXPORTS
 // ============================================================
 module.exports = {
