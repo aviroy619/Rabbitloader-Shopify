@@ -283,7 +283,7 @@ router.get("/rl-callback", async (req, res) => {
 console.log(`[RL] Connection saved for shop: ${shop}`);
 
 // Register uninstall webhook
-if (shopRecord && shopRecord.access_token) {  // ✅ Fixed!
+if (shopRecord && shopRecord.access_token) { 
   try {
     await registerUninstallWebhook(shop, shopRecord.access_token);  // ✅ Fixed!
     console.log(`[RL] ✅ Uninstall webhook registered for ${shop}`);
@@ -507,7 +507,7 @@ router.post("/remove-script", async (req, res) => {
     const ShopModel = require("../models/Shop");
     const shopRecord = await ShopModel.findOne({ shop });
     
-    if (!shopRecord || !shopRecord.accessToken) {
+    if (!shopRecord || !shopRecord.access_token) {
       return res.status(400).json({ 
         ok: false, 
         error: 'Shop not found or access token missing' 
@@ -519,7 +519,7 @@ router.post("/remove-script", async (req, res) => {
     // Get active theme
     const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
       headers: {
-        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'X-Shopify-Access-Token': shopRecord.access_token,
         'Content-Type': 'application/json'
       }
     });
@@ -538,7 +538,7 @@ router.post("/remove-script", async (req, res) => {
     // Get theme.liquid file
     const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
       headers: {
-        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'X-Shopify-Access-Token': shopRecord.access_token,
         'Content-Type': 'application/json'
       }
     });
@@ -577,7 +577,7 @@ router.post("/remove-script", async (req, res) => {
     const updateResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
       method: 'PUT',
       headers: {
-        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'X-Shopify-Access-Token': shopRecord.access_token,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -644,7 +644,7 @@ router.post("/inject-script", async (req, res) => {
     const ShopModel = require("../models/Shop");
     const shopRecord = await ShopModel.findOne({ shop });
     
-    if (!shopRecord || !shopRecord.accessToken) {
+    if (!shopRecord || !shopRecord.access_token) { 
       return res.status(400).json({ 
         ok: false, 
         error: 'Shop not found or access token missing' 
@@ -656,7 +656,7 @@ router.post("/inject-script", async (req, res) => {
     
     const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
       headers: {
-        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'X-Shopify-Access-Token': shopRecord.access_token,
         'Content-Type': 'application/json'
       }
     });
@@ -666,7 +666,7 @@ router.post("/inject-script", async (req, res) => {
     
     const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
       headers: {
-        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'X-Shopify-Access-Token': shopRecord.access_token,
         'Content-Type': 'application/json'
       }
     });
@@ -689,7 +689,7 @@ router.post("/inject-script", async (req, res) => {
     await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
       method: 'PUT',
       headers: {
-        'X-Shopify-Access-Token': shopRecord.accessToken,
+        'X-Shopify-Access-Token': shopRecord.access_token,
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
@@ -703,11 +703,7 @@ router.post("/inject-script", async (req, res) => {
     console.log(`[RL] ✅ Old script removed, now injecting new script for ${shop}`);
 
     // STEP 2: Now inject the NEW script
-    const result = await injectDeferScript(
-      shop, 
-      shopRecord.short_id, 
-      shopRecord.accessToken
-    );
+    await injectDeferScript(shop, shopRecord.short_id, shopRecord.access_token);
 
     await ShopModel.updateOne(
       { shop },
@@ -1899,7 +1895,7 @@ router.post("/analyze-site", async (req, res) => {
     const ShopModel = require("../models/Shop");
     const shopRecord = await ShopModel.findOne({ shop });
     
-    if (!shopRecord || !shopRecord.accessToken) {
+    if (!shopRecord || !shopRecord.access_token) {
       return res.status(400).json({ 
         ok: false, 
         error: 'Shop not found or access token missing' 
@@ -1907,7 +1903,7 @@ router.post("/analyze-site", async (req, res) => {
     }
 
     const { analyzeSite } = require("../workers/site-analyzer");
-    const siteStructure = await analyzeSite(shop, shopRecord.accessToken);
+    const siteStructure = await analyzeSite(shop, shopRecord.access_token);
 
     res.json({
       ok: true,
@@ -1935,9 +1931,9 @@ router.post("/webhooks/products/update", async (req, res) => {
     const ShopModel = require("../models/Shop");
     const shopRecord = await ShopModel.findOne({ shop });
     
-    if (shopRecord && shopRecord.accessToken) {
+    if (shopRecord && shopRecord.access_token) {
       const { analyzeSite } = require("../workers/site-analyzer");
-      await analyzeSite(shop, shopRecord.accessToken);
+      await analyzeSite(shop, shopRecord.access_token);
       console.log(`[Webhook] ✅ Site structure refreshed for ${shop}`);
     }
     
@@ -1957,19 +1953,19 @@ router.get("/check-injection/:shop", async (req, res) => {
     const ShopModel = require("../models/Shop");
     const shopRecord = await ShopModel.findOne({ shop });
     
-    if (!shopRecord || !shopRecord.accessToken) {
+    if (!shopRecord || !shopRecord.access_token) {
       return res.json({ error: 'Shop not found' });
     }
 
     // Get theme content
     const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
-      headers: { 'X-Shopify-Access-Token': shopRecord.accessToken }
+      headers: { 'X-Shopify-Access-Token': shopRecord.access_token }
     });
     const themesData = await themesResponse.json();
     const activeTheme = themesData.themes.find(t => t.role === 'main');
     
     const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-      headers: { 'X-Shopify-Access-Token': shopRecord.accessToken }
+      headers: { 'X-Shopify-Access-Token': shopRecord.access_token }
     });
     const assetData = await assetResponse.json();
     
