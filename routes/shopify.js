@@ -109,20 +109,15 @@ router.get("/auth/callback", async (req, res) => {
   console.log("Timestamp:", timestamp);
   console.log("State:", state);
   console.log("Full query params:", JSON.stringify(req.query, null, 2));
-  console.log("Referer:", req.headers.referer || 'none');
+  console.log("Referer:", req.headers.referer || "none");
   console.log("=================================================");
 
-  // Handle RabbitLoader callback (when coming back from RL)
- if (rlToken && shop) {
-    console.log("=================================================");
+  // 🐰 RabbitLoader Callback handler
+  if (rlToken && shop) {
     console.log("🐰 RabbitLoader Callback Processing");
-    console.log("=================================================");
-    console.log("Shop:", shop);
-    console.log("RL Token present:", !!rlToken);
-    console.log("Host param:", req.query.host || 'none');
     try {
       const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
-      
+
       await ShopModel.findOneAndUpdate(
         { shop },
         {
@@ -130,167 +125,145 @@ router.get("/auth/callback", async (req, res) => {
             short_id: decoded.did || decoded.short_id,
             api_token: decoded.api_token,
             account_id: decoded.account_id,
-            connected_at: new Date()
+            connected_at: new Date(),
           },
           $push: {
             history: {
               event: "connect",
               timestamp: new Date(),
-              details: { via: "rl-callback" }
-            }
-          }
+              details: { via: "rl-callback" },
+            },
+          },
         },
         { upsert: true }
       );
 
-      console.log(`RabbitLoader token saved for ${shop}`, {
-        did: decoded.did || decoded.short_id,
-        hasApiToken: !!decoded.api_token
-      });
+      console.log(`RabbitLoader token saved for ${shop}`);
 
-      // Generate proper host parameter for Shopify embedded app
-      const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
+      // 🔍 Trigger site analysis immediately after RL connection
+      try {
+        const { analyzeSite } = require("../workers/site-analyzer");
+        const shopRecord = await ShopModel.findOne({ shop });
+        if (shopRecord && shopRecord.access_token) {
+          console.log(`[RL] Triggering site analysis for ${shop}`);
+          await analyzeSite(shop, shopRecord.access_token);
+        } else {
+          console.warn(`[RL] ⚠️ No access token found for ${shop}, skipping site analysis`);
+        }
+      } catch (analysisError) {
+        console.error(`[RL] ❌ Site analysis failed for ${shop}:`, analysisError.message);
+      }
+
+      // Redirect to dashboard
+      const shopBase64 = Buffer.from(`${shop}/admin`).toString("base64");
       const hostParam = req.query.host || shopBase64;
-      
-      // Redirect back to embedded app with proper host parameter
-      const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1`;
-      
-      console.log("=================================================");
-      console.log("🔀 REDIRECTING AFTER RL CONNECTION:");
-      console.log("=================================================");
-      console.log("Shop:", shop);
-      console.log("Host param:", hostParam);
-      console.log("Full redirect URL:", redirectUrl);
-      console.log("Full URL with domain:", `${process.env.APP_URL}${redirectUrl}`);
-      console.log("=================================================");
-      
+      const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1&trigger_setup=1`;
+
+      console.log(`[RL] Redirecting to: ${redirectUrl}`);
       return res.redirect(redirectUrl);
-      
     } catch (err) {
       console.error("RL callback error:", err);
       return res.status(400).send("Failed to process RabbitLoader token");
     }
   }
 
-  // Handle Shopify OAuth callback (when coming back from Shopify)
+  // 🛍️ Shopify OAuth callback
   if (!code || !shop) {
     return res.status(400).send("Missing authorization code or shop");
   }
 
   try {
-    // HMAC verification
+    // Verify HMAC
     const queryObj = { ...req.query };
     delete queryObj.hmac;
     delete queryObj.signature;
 
     const queryString = Object.keys(queryObj)
       .sort()
-      .map(key => `${key}=${queryObj[key]}`)
-      .join('&');
+      .map((key) => `${key}=${queryObj[key]}`)
+      .join("&");
 
     const calculatedHmac = crypto
-      .createHmac('sha256', process.env.SHOPIFY_API_SECRET)
+      .createHmac("sha256", process.env.SHOPIFY_API_SECRET)
       .update(queryString)
-      .digest('hex');
+      .digest("hex");
 
     if (calculatedHmac !== hmac) {
       console.error("HMAC verification failed");
       return res.status(401).send("Invalid HMAC - Security verification failed");
     }
 
-    console.log("HMAC verification passed");
+    console.log("✅ HMAC verification passed");
 
     // Exchange code for access token
     const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         client_id: process.env.SHOPIFY_API_KEY,
         client_secret: process.env.SHOPIFY_API_SECRET,
-        code: code
-      })
+        code,
+      }),
     });
 
     const tokenData = await tokenResponse.json();
+    if (!tokenData.access_token) throw new Error("Failed to get access token from Shopify");
 
-    if (!tokenData.access_token) {
-      throw new Error("Failed to get access token from Shopify");
+    const existingShop = await ShopModel.findOne({ shop });
+    const isReinstall = existingShop && !existingShop.access_token && existingShop.short_id;
+
+    // Save access token
+    const shopRecord = await ShopModel.findOneAndUpdate(
+      { shop },
+      {
+        $set: {
+          shop,
+          access_token: tokenData.access_token,
+          connected_at: new Date(),
+          reauth_required: false,
+          needs_setup: isReinstall ? true : false,
+        },
+        $push: {
+          history: {
+            event: "shopify_auth",
+            timestamp: new Date(),
+            details: { via: "oauth", reinstall: isReinstall || false },
+          },
+        },
+      },
+      { upsert: true, new: true }
+    );
+
+    console.log(`✅ Shopify OAuth completed for ${shop}`);
+
+    // Register uninstall webhook
+    try {
+      await registerUninstallWebhook(shop, tokenData.access_token);
+      console.log(`[Webhook] ✅ Uninstall webhook registered for ${shop}`);
+    } catch (webhookError) {
+      console.error(`[Webhook] ⚠️ Webhook registration failed:`, webhookError.message);
     }
 
-    // Check if this is a reinstallation BEFORE saving
-const existingShop = await ShopModel.findOne({ shop });
-const isReinstall = existingShop && !existingShop.access_token && existingShop.short_id;
-
-// Save shop with access token (use $set + $push to avoid conflicts)
-const shopRecord = await ShopModel.findOneAndUpdate(
-  { shop },
-  {
-    $set: {
-      shop,
-      access_token: tokenData.access_token,
-      connected_at: new Date(),
-      reauth_required: false, // Clear reauth flag on successful auth
-      // If this is a reinstall, mark for setup
-      needs_setup: isReinstall ? true : false
-    },
-    $push: {
-      history: {
-        event: "shopify_auth",
-        timestamp: new Date(),
-        details: { 
-          via: "oauth",
-          reinstall: isReinstall || false
-        }
+    // 🔍 Trigger site analysis after Shopify connection
+    try {
+      const { analyzeSite } = require("../workers/site-analyzer");
+      if (shopRecord && shopRecord.access_token) {
+        console.log(`[Shopify] Triggering site analysis for ${shop}`);
+        await analyzeSite(shop, shopRecord.access_token);
       }
+    } catch (analysisError) {
+      console.error(`[Shopify] ❌ Failed to analyze site for ${shop}:`, analysisError.message);
     }
-  },
-  { upsert: true, new: true }
-);
 
-console.log(`✅ Shopify OAuth completed for ${shop}`);
-
-// Register uninstall webhook
-try {
-  await registerUninstallWebhook(shop, tokenData.access_token);
-  console.log(`[Webhook] ✅ Uninstall webhook registered for ${shop}`);
-} catch (webhookError) {
-  console.error(`[Webhook] ⚠️ Webhook registration failed (non-fatal):`, webhookError.message);
-  // Continue anyway - webhook is not critical for initial setup
-}
-
-if (isReinstall) {
-  console.log(`Reinstallation detected for ${shop} - will trigger setup`);
-} else {
-  console.log(`Shopify OAuth completed for ${shop}`);
-}
-
-   console.log(`✅ Shopify OAuth completed for ${shop}`);
-
-    // Generate proper host parameter for Shopify OAuth redirect
-    const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
+    // Redirect to embedded dashboard
+    const shopBase64 = Buffer.from(`${shop}/admin`).toString("base64");
     const hostParam = req.query.host || shopBase64;
-
-    // Build redirect URL - add trigger_setup for reinstalls
     let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&shopify_auth=1`;
 
-    // If this is a reinstall, trigger the complete setup flow
-    if (isReinstall) {
-      redirectUrl += '&trigger_setup=1';
-      console.log("🔄 REINSTALL DETECTED - Triggering complete setup");
-    }
+    if (isReinstall) redirectUrl += "&trigger_setup=1";
 
-    console.log("=================================================");
-    console.log("🔀 REDIRECTING AFTER OAUTH:");
-    console.log("=================================================");
-    console.log("Shop:", shop);
-    console.log("Host param (base64):", hostParam);
-    console.log("Is reinstall:", isReinstall || false);
-    console.log("Full redirect URL:", redirectUrl);
-    console.log("Full URL with domain:", `${process.env.APP_URL}${redirectUrl}`);
-    console.log("=================================================");
-    
+    console.log(`[Shopify] Redirecting after OAuth: ${redirectUrl}`);
     res.redirect(redirectUrl);
-
   } catch (err) {
     console.error("OAuth callback error:", err);
     res.status(500).send(`Authentication failed: ${err.message}`);

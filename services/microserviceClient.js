@@ -90,35 +90,51 @@ async function getCSSConfig(did, template) {
 
 // Generate critical CSS
 async function generateCriticalCSS(shop, template, url) {
+  const ShopModel = require("../models/Shop");
   try {
-    console.log(`[Microservice] Generating critical CSS for ${shop}/${template}`);
-    
+    console.log(`[CriticalCSS] Generating critical CSS for ${shop}/${template}`);
+
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord || !shopRecord.api_token) {
+      throw new Error(`[CriticalCSS] Missing API token for ${shop}`);
+    }
+
     const response = await axios.post(
       `${CRITICAL_CSS_URL}/api/critical-css/generate`,
       {
-        shop: shop,
-        template: template,
-        url: url
+        shop,
+        did: shopRecord.short_id,
+        api_token: shopRecord.api_token,
+        template,
+        url,
       },
-      { 
-        timeout: 60000,
-        headers: {
-          'Content-Type': 'application/json'
-        }
+      {
+        timeout: 90000,
+        headers: { "Content-Type": "application/json" },
       }
     );
-    
-    return {
-      ok: true,
-      data: response.data
-    };
-    
+
+    console.log(`[CriticalCSS] Response:`, response.data);
+
+    if (response.data.success) {
+      await ShopModel.updateOne(
+        { shop },
+        {
+          $set: {
+            critical_css_injected: true,
+            last_critical_css_at: new Date(),
+          },
+        }
+      );
+      console.log(`[CriticalCSS] ✅ Injected Critical CSS for ${shop}/${template}`);
+    } else {
+      console.warn(`[CriticalCSS] ⚠️ Failed: ${response.data.message}`);
+    }
+
+    return { ok: true, data: response.data };
   } catch (error) {
-    console.error('[Microservice] CSS generation failed:', error.message);
-    return {
-      ok: false,
-      error: error.message
-    };
+    console.error(`[CriticalCSS] ❌ Error:`, error.message);
+    return { ok: false, error: error.message };
   }
 }
 

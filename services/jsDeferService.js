@@ -130,102 +130,129 @@ class JsDeferService {
   /**
    * Process and save analysis result to main app database
    */
-  async saveAnalysisToDatabase(analysisResult) {
-    const { shop, template, js_files, defer_recommendations, psi_metrics, summary } = analysisResult;
+ async saveAnalysisToDatabase(analysisResult) {
+  const { shop, template, js_files, defer_recommendations, psi_metrics, summary } = analysisResult;
 
-    try {
-      // Extract defer recommendations by action type
-      const deferRules = [];
-      
-      // Process async recommendations (high priority)
-      if (defer_recommendations.async?.files) {
-        defer_recommendations.async.files.forEach((file, idx) => {
-          deferRules.push({
-            id: `${template}-async-${idx}`,
-            src_regex: this.urlToRegex(file.url),
-            action: 'defer', // Map 'async' to 'defer' for our system
-            priority: 8,
-            enabled: true,
-            conditions: { page_types: [template] },
-            generated_from: {
-              template,
-              original_file: file.url,
-              reason: file.reason,
-              confidence: file.confidence
-            }
-          });
+  try {
+    // Extract defer recommendations by action type
+    const deferRules = [];
+
+    // Process async recommendations (high priority)
+    if (defer_recommendations.async?.files) {
+      defer_recommendations.async.files.forEach((file, idx) => {
+        deferRules.push({
+          id: `${template}-async-${idx}`,
+          src_regex: this.urlToRegex(file.url),
+          action: "defer", // Map 'async' to 'defer' for our system
+          priority: 8,
+          enabled: true,
+          conditions: { page_types: [template] },
+          generated_from: {
+            template,
+            original_file: file.url,
+            reason: file.reason,
+            confidence: file.confidence,
+          },
         });
-      }
-
-      // Process defer recommendations
-      if (defer_recommendations.defer?.files) {
-        defer_recommendations.defer.files.forEach((file, idx) => {
-          deferRules.push({
-            id: `${template}-defer-${idx}`,
-            src_regex: this.urlToRegex(file.url),
-            action: 'defer',
-            priority: 6,
-            enabled: true,
-            conditions: { page_types: [template] },
-            generated_from: {
-              template,
-              original_file: file.url,
-              reason: file.reason,
-              confidence: file.confidence
-            }
-          });
-        });
-      }
-
-      // Process delay recommendations
-      if (defer_recommendations.delay?.files) {
-        defer_recommendations.delay.files.forEach((file, idx) => {
-          deferRules.push({
-            id: `${template}-delay-${idx}`,
-            src_regex: this.urlToRegex(file.url),
-            action: 'defer',
-            priority: 4,
-            enabled: true,
-            conditions: { page_types: [template] },
-            generated_from: {
-              template,
-              original_file: file.url,
-              reason: file.reason,
-              confidence: file.confidence
-            }
-          });
-        });
-      }
-
-      // Update shop record with analysis data
-      await ShopModel.findOneAndUpdate(
-        { shop },
-        {
-          $set: {
-            [`site_structure.template_groups.${template}.psi_analyzed`]: true,
-            [`site_structure.template_groups.${template}.js_files`]: js_files.map(f => f.url),
-            [`site_structure.template_groups.${template}.defer_recommendations`]: defer_recommendations,
-            [`site_structure.template_groups.${template}.last_psi_analysis`]: new Date(),
-            [`site_structure.template_groups.${template}.psi_metrics`]: psi_metrics,
-            [`site_structure.template_groups.${template}.analysis_summary`]: summary
-          }
-        }
-      );
-
-      // Apply defer rules to deferConfig if we have recommendations
-      if (deferRules.length > 0) {
-        await this.applyDeferRules(shop, template, deferRules);
-      }
-
-      console.log(`[JS Defer] ✅ Analysis saved for ${shop}/${template}: ${deferRules.length} rules`);
-
-      return { success: true, rulesApplied: deferRules.length };
-
-    } catch (error) {
-      console.error(`[JS Defer] ❌ Save failed:`, error.message);
-      return { success: false, error: error.message };
+      });
     }
+
+    // Process defer recommendations (medium priority)
+    if (defer_recommendations.defer?.files) {
+      defer_recommendations.defer.files.forEach((file, idx) => {
+        deferRules.push({
+          id: `${template}-defer-${idx}`,
+          src_regex: this.urlToRegex(file.url),
+          action: "defer",
+          priority: 6,
+          enabled: true,
+          conditions: { page_types: [template] },
+          generated_from: {
+            template,
+            original_file: file.url,
+            reason: file.reason,
+            confidence: file.confidence,
+          },
+        });
+      });
+    }
+
+    // Process delay recommendations (low priority)
+    if (defer_recommendations.delay?.files) {
+      defer_recommendations.delay.files.forEach((file, idx) => {
+        deferRules.push({
+          id: `${template}-delay-${idx}`,
+          src_regex: this.urlToRegex(file.url),
+          action: "defer",
+          priority: 4,
+          enabled: true,
+          conditions: { page_types: [template] },
+          generated_from: {
+            template,
+            original_file: file.url,
+            reason: file.reason,
+            confidence: file.confidence,
+          },
+        });
+      });
+    }
+
+    // 🧠 Update shop record with PSI data
+    await ShopModel.findOneAndUpdate(
+      { shop },
+      {
+        $set: {
+          [`site_structure.template_groups.${template}.psi_analyzed`]: true,
+          [`site_structure.template_groups.${template}.js_files`]: js_files.map((f) => f.url),
+          [`site_structure.template_groups.${template}.defer_recommendations`]: defer_recommendations,
+          [`site_structure.template_groups.${template}.last_psi_analysis`]: new Date(),
+          [`site_structure.template_groups.${template}.psi_metrics`]: psi_metrics,
+          [`site_structure.template_groups.${template}.analysis_summary`]: summary,
+        },
+      },
+      { upsert: true }
+    );
+
+    // Apply defer rules to config
+    if (deferRules.length > 0) {
+      await this.applyDeferRules(shop, template, deferRules);
+      console.log(`[JS Defer] ✅ Applied ${deferRules.length} rules for ${shop}/${template}`);
+    } else {
+      console.warn(`[JS Defer] ⚠️ No defer rules found for ${shop}/${template}`);
+    }
+
+    // --- Trigger theme injection after rules applied ---
+    try {
+      const { injectDeferScript } = require("../utils/shopifyApi");
+      const shopRecord = await ShopModel.findOne({ shop });
+
+      if (shopRecord && shopRecord.access_token) {
+        await injectDeferScript(shop, shopRecord.short_id, shopRecord.access_token);
+        await ShopModel.updateOne(
+          { shop },
+          {
+            $set: {
+              script_injected: true,
+              last_script_injection_at: new Date(),
+            },
+          }
+        );
+        console.log(`[JS Defer] 🔄 Triggered theme script injection for ${shop}`);
+      } else {
+        console.warn(`[JS Defer] ⚠️ No access token available for ${shop}, skipping theme injection`);
+      }
+    } catch (injectionError) {
+      console.error(`[JS Defer] ❌ Theme injection failed for ${shop}:`, injectionError.message);
+    }
+
+    console.log(`[JS Defer] ✅ Analysis saved successfully for ${shop}/${template}`);
+    return { success: true, rulesApplied: deferRules.length };
+  } catch (error) {
+    console.error(`[JS Defer] ❌ Save failed for ${shop}/${template}:`, error.message);
+    return { success: false, error: error.message };
   }
+}
+
 
   /**
    * Apply defer rules to shop's deferConfig
