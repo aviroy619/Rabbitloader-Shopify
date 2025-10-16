@@ -4,6 +4,7 @@ const { shopifyRequest } = require("../utils/shopifyApi");
 
 
 // Helper function to inject defer script
+// Helper function to inject defer script
 async function injectDeferScript(shop, did, accessToken) {
   console.log(`[RL] Attempting auto defer script injection for ${shop} with DID: ${did}`);
 
@@ -20,13 +21,12 @@ async function injectDeferScript(shop, did, accessToken) {
     }
 
     const activeTheme = themesData.themes?.find(theme => theme.role === 'main');
-    
     if (!activeTheme) {
       throw new Error("No active theme found");
     }
 
     // Get theme.liquid file
-    const assetData = await shopifyRequest(shop, 
+    const assetData = await shopifyRequest(shop,
       `themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`
     );
     if (!assetData.ok && assetData.error === "TOKEN_EXPIRED") {
@@ -41,10 +41,12 @@ async function injectDeferScript(shop, did, accessToken) {
 
     // Check if defer script already exists
     const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
-    
-    if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
-        themeContent.includes(deferLoaderUrl) ||
-        themeContent.includes('RabbitLoader Defer Configuration')) {
+
+    if (
+      themeContent.includes(`defer-config/loader.js?shop=${shop}`) ||
+      themeContent.includes(deferLoaderUrl) ||
+      themeContent.includes('RabbitLoader Defer Configuration')
+    ) {
       console.log(`[RL] Defer script already exists in theme for ${shop}`);
       return { success: true, message: "Defer script already exists", already_exists: true };
     }
@@ -52,11 +54,14 @@ async function injectDeferScript(shop, did, accessToken) {
     // Find first <script> tag to inject BEFORE it
     const firstJSPattern = /(<script[^>]*>)/;
     const jsMatch = themeContent.match(firstJSPattern);
-    
-    const scriptTag = `  <!-- RabbitLoader Defer Configuration -->
-  <script src="${deferLoaderUrl}"></script>
+
+  const scriptTag = `
+  <!-- RabbitLoader Defer Configuration -->
+  <link rel="stylesheet" href="${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}" />
+  <script src="${deferLoaderUrl}" defer></script>
 `;
-    
+
+
     if (jsMatch) {
       // Inject BEFORE first JS script
       themeContent = themeContent.replace(firstJSPattern, scriptTag + '$1');
@@ -72,8 +77,8 @@ async function injectDeferScript(shop, did, accessToken) {
     }
 
     // Update theme file
-    const updateResult = await shopifyRequest(shop, 
-      `themes/${activeTheme.id}/assets.json`, 
+    const updateResult = await shopifyRequest(shop,
+      `themes/${activeTheme.id}/assets.json`,
       "PUT",
       {
         asset: {
@@ -82,7 +87,7 @@ async function injectDeferScript(shop, did, accessToken) {
         }
       }
     );
-    
+
     if (!updateResult.ok && updateResult.error === "TOKEN_EXPIRED") {
       return {
         success: false,
@@ -91,20 +96,15 @@ async function injectDeferScript(shop, did, accessToken) {
       };
     }
 
-    console.log(`[RL] ✅ Defer script auto-injected successfully for ${shop}`);
-    return { 
-      success: true, 
-      message: "Defer script injected successfully",
-      deferLoaderUrl,
-      themeId: activeTheme.id,
-      position: jsMatch ? 'before-first-js' : 'after-head'
-    };
+    console.log(`[RL] ✅ Defer script injected successfully for ${shop}`);
+    return { success: true, message: "Defer script injected successfully" };
 
   } catch (error) {
-    console.error(`[RL] ❌ Auto-injection failed for ${shop}:`, error);
-    throw error;
+    console.error(`[RL] ❌ Script injection failed for ${shop}:`, error.message);
+    return { success: false, error: error.message };
   }
 }
+
 // Handle RabbitLoader callbacks
 router.get("/rl-callback", async (req, res) => {
   const { shop, "rl-token": rlToken } = req.query;

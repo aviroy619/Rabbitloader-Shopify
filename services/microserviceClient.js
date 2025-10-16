@@ -2,7 +2,7 @@ const axios = require('axios');
 
 // ✅ CORRECT URLs - Use IP addresses directly
 const CRITICAL_CSS_URL = 'http://45.32.212.222:3000';
-const PSI_URL = 'http://45.32.212.222:3001';
+const PSI_URL = 'http://45.32.212.222:3002';
 
 // Analyze performance using PSI microservice
 async function analyzePerformance(did, url, template) {
