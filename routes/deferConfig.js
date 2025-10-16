@@ -22,8 +22,8 @@ async function validateShopAndUpdateUsage(req, res, next) {
     });
   }
 
-  // Validate shop format
-  if (!shop.includes('.myshopify.com')) {
+  // Validate shop format - extra safety check for type and format
+  if (typeof shop !== 'string' || !shop.includes('.myshopify.com')) {
     return res.status(400).json({ 
       error: "Invalid shop format",
       ok: false 
