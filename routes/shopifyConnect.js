@@ -1,5 +1,7 @@
 const express = require("express");
 const router = express.Router();
+const { shopifyRequest } = require("../utils/shopifyApi");
+
 
 // Helper function to inject defer script
 async function injectDeferScript(shop, did, accessToken) {
@@ -7,37 +9,34 @@ async function injectDeferScript(shop, did, accessToken) {
 
   try {
     // Get active theme
-    const themesResponse = await fetch(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes.json`, {
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!themesResponse.ok) {
-      throw new Error(`Failed to fetch themes: ${themesResponse.status}`);
+    const themesData = await shopifyRequest(shop, "themes.json");
+    if (!themesData.ok && themesData.error === "TOKEN_EXPIRED") {
+      console.log(`[RL] Token expired for ${shop}, marking for reauth`);
+      return {
+        success: false,
+        error: "TOKEN_EXPIRED",
+        message: "Access token expired - shop needs to re-authenticate"
+      };
     }
 
-    const themesData = await themesResponse.json();
-    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
+    const activeTheme = themesData.themes?.find(theme => theme.role === 'main');
     
     if (!activeTheme) {
       throw new Error("No active theme found");
     }
 
     // Get theme.liquid file
-    const assetResponse = await fetch(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!assetResponse.ok) {
-      throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status}`);
+    const assetData = await shopifyRequest(shop, 
+      `themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`
+    );
+    if (!assetData.ok && assetData.error === "TOKEN_EXPIRED") {
+      return {
+        success: false,
+        error: "TOKEN_EXPIRED",
+        message: "Access token expired - shop needs to re-authenticate"
+      };
     }
 
-    const assetData = await assetResponse.json();
     let themeContent = assetData.asset.value;
 
     // Check if defer script already exists
@@ -73,23 +72,23 @@ async function injectDeferScript(shop, did, accessToken) {
     }
 
     // Update theme file
-    const updateResponse = await fetch(`https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/themes/${activeTheme.id}/assets.json`, {
-      method: 'PUT',
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+    const updateResult = await shopifyRequest(shop, 
+      `themes/${activeTheme.id}/assets.json`, 
+      "PUT",
+      {
         asset: {
           key: 'layout/theme.liquid',
           value: themeContent
         }
-      })
-    });
-
-    if (!updateResponse.ok) {
-      const errorData = await updateResponse.json();
-      throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
+      }
+    );
+    
+    if (!updateResult.ok && updateResult.error === "TOKEN_EXPIRED") {
+      return {
+        success: false,
+        error: "TOKEN_EXPIRED",
+        message: "Access token expired - shop needs to re-authenticate"
+      };
     }
 
     console.log(`[RL] ✅ Defer script auto-injected successfully for ${shop}`);
@@ -106,7 +105,6 @@ async function injectDeferScript(shop, did, accessToken) {
     throw error;
   }
 }
-
 // Handle RabbitLoader callbacks
 router.get("/rl-callback", async (req, res) => {
   const { shop, "rl-token": rlToken } = req.query;
@@ -316,7 +314,7 @@ router.get("/health", (req, res) => {
     service: "rabbitloader-connect",
     timestamp: new Date().toISOString(),
     routes: ["rl-callback", "rl-connect", "rl-disconnect", "health", "debug"],
-    features: ["connection-only", "setup-via-frontend"]
+    features: ["connection-only", "setup-via-frontend", "token-expiry-handling"]
   });
 });
 
@@ -337,6 +335,7 @@ router.get("/debug/:shop", async (req, res) => {
       shop: shopRecord.shop,
       connected: !!shopRecord.api_token,
       needs_setup: shopRecord.needs_setup || false,
+      needs_reauth: shopRecord.needs_reauth || false,
       setup_completed: shopRecord.setup_completed || false,
       script_injected: shopRecord.script_injected || false,
       critical_css_injected: shopRecord.critical_css_injected || false,

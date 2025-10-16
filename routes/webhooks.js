@@ -52,30 +52,31 @@ async function removeRabbitLoaderCode(shop, accessToken) {
   console.log(`[Cleanup] Removing RabbitLoader code from ${shop}`);
   
   try {
+    const { shopifyRequest } = require("../utils/shopifyApi");
+    
     // Get active theme
-    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      }
-    });
+    const themesData = await shopifyRequest(shop, "themes.json");
+    
+    if (!themesData.ok && themesData.error === "TOKEN_EXPIRED") {
+      console.log(`[Cleanup] Token expired for ${shop}, skipping cleanup`);
+      return { success: false, error: "TOKEN_EXPIRED" };
+    }
 
-    const themesData = await themesResponse.json();
-    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
+    const activeTheme = themesData.themes?.find(theme => theme.role === 'main');
     
     if (!activeTheme) {
       throw new Error("No active theme found");
     }
 
     // Get theme.liquid file
-    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      }
-    });
+    const assetData = await shopifyRequest(shop,
+      `themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`
+    );
+    
+    if (!assetData.ok && assetData.error === "TOKEN_EXPIRED") {
+      return { success: false, error: "TOKEN_EXPIRED" };
+    }
 
-    const assetData = await assetResponse.json();
     let themeContent = assetData.asset.value;
 
     // Remove ALL RabbitLoader code blocks
@@ -100,22 +101,19 @@ async function removeRabbitLoaderCode(shop, accessToken) {
     }
 
     // Update theme file
-    const updateResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
-      method: 'PUT',
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
+    const updateResult = await shopifyRequest(shop,
+      `themes/${activeTheme.id}/assets.json`,
+      "PUT",
+      {
         asset: {
           key: 'layout/theme.liquid',
           value: themeContent
         }
-      })
-    });
-
-    if (!updateResponse.ok) {
-      throw new Error(`Theme update failed: ${updateResponse.status}`);
+      }
+    );
+    
+    if (!updateResult.ok && updateResult.error === "TOKEN_EXPIRED") {
+      return { success: false, error: "TOKEN_EXPIRED" };
     }
 
     console.log(`[Cleanup] ✅ RabbitLoader code removed from ${shop}`);
@@ -123,8 +121,7 @@ async function removeRabbitLoaderCode(shop, accessToken) {
 
   } catch (error) {
     console.error(`[Cleanup] Failed to remove code from ${shop}:`, error);
-    throw error;
+    return { success: false, error: error.message };
   }
 }
-
 module.exports = router;

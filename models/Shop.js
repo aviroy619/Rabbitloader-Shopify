@@ -150,7 +150,8 @@ const ShopSchema = new mongoose.Schema({
     currency: String,
     plan_name: String
   },
-  
+  // NEW: Track when reauth is needed
+  reauth_required: { type: Boolean, default: false },
   // NEW: Webhook processing tracking (for debouncing)
   last_webhook_processed: {
     type: Date,

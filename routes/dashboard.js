@@ -12,68 +12,52 @@ async function registerUninstallWebhook(shop, accessToken) {
   console.log(`[Webhook] Registering uninstall webhook for ${shop}: ${webhookUrl}`);
   
   try {
-    // Check if webhook already exists
-    const existingWebhooksResponse = await fetch(
-      `https://${shop}/admin/api/2025-01/webhooks.json`,
-      {
-        headers: {
-          'X-Shopify-Access-Token': accessToken,
-          'Content-Type': 'application/json'
-        }
-      }
+    // Use the centralized API handler
+    const { shopifyRequest } = require("../utils/shopifyApi");
+    
+    // Check existing webhooks
+    const existingWebhooks = await shopifyRequest(shop, "webhooks.json");
+    
+    if (existingWebhooks.error === "TOKEN_EXPIRED") {
+      console.error(`[Webhook] Token expired for ${shop}, skipping webhook registration`);
+      return { success: false, error: "TOKEN_EXPIRED" };
+    }
+    
+    const uninstallWebhook = existingWebhooks.webhooks?.find(
+      w => w.topic === 'app/uninstalled' && w.address === webhookUrl
     );
-
-    if (existingWebhooksResponse.ok) {
-      const existingWebhooks = await existingWebhooksResponse.json();
-      const uninstallWebhook = existingWebhooks.webhooks?.find(
-        w => w.topic === 'app/uninstalled' && w.address === webhookUrl
-      );
-      
-      if (uninstallWebhook) {
-        console.log(`[Webhook] Uninstall webhook already exists for ${shop}`);
-        return { success: true, message: 'Webhook already exists' };
-      }
+    
+    if (uninstallWebhook) {
+      console.log(`[Webhook] Uninstall webhook already exists for ${shop}`);
+      return { success: true, message: 'Webhook already exists' };
     }
 
     // Register new webhook
-    const response = await fetch(
-      `https://${shop}/admin/api/2025-01/webhooks.json`,
-      {
-        method: 'POST',
-        headers: {
-          'X-Shopify-Access-Token': accessToken,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          webhook: {
-            topic: 'app/uninstalled',
-            address: webhookUrl,
-            format: 'json'
-          }
-        })
+    const result = await shopifyRequest(shop, "webhooks.json", "POST", {
+      webhook: {
+        topic: 'app/uninstalled',
+        address: webhookUrl,
+        format: 'json'
       }
-    );
+    });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Webhook registration failed: ${JSON.stringify(errorData)}`);
+    if (result.error === "TOKEN_EXPIRED") {
+      return { success: false, error: "TOKEN_EXPIRED" };
     }
 
-    const webhookData = await response.json();
     console.log(`[Webhook] ✅ Uninstall webhook registered successfully for ${shop}`);
-    
     return { 
       success: true, 
-      webhook: webhookData.webhook,
+      webhook: result.webhook,
       message: 'Webhook registered successfully' 
     };
 
   } catch (error) {
     console.error(`[Webhook] Registration error for ${shop}:`, error.message);
-    throw error;
+    // Don't throw - return error gracefully
+    return { success: false, error: error.message };
   }
 }
-
 // Helper function to inject defer script
 async function injectDeferScript(shop, did, accessToken) {
   console.log(`[RL] Attempting auto defer script injection for ${shop} with DID: ${did}`);
@@ -283,13 +267,19 @@ router.get("/rl-callback", async (req, res) => {
 console.log(`[RL] Connection saved for shop: ${shop}`);
 
 // Register uninstall webhook
-if (shopRecord && shopRecord.access_token) { 
-  try {
-    await registerUninstallWebhook(shop, shopRecord.access_token);  // ✅ Fixed!
-    console.log(`[RL] ✅ Uninstall webhook registered for ${shop}`);
-  } catch (webhookError) {
-    console.error(`[RL] ⚠️ Webhook registration failed (non-fatal):`, webhookError.message);
-  }
+// Register uninstall webhook (non-blocking)
+if (shopRecord && shopRecord.access_token) {
+  registerUninstallWebhook(shop, shopRecord.access_token)
+    .then(result => {
+      if (result.success) {
+        console.log(`[RL] ✅ Webhook registered for ${shop}`);
+      } else if (result.error === "TOKEN_EXPIRED") {
+        console.log(`[RL] ⚠️ Token expired for ${shop}, needs re-auth`);
+      }
+    })
+    .catch(err => {
+      console.error(`[RL] ⚠️ Webhook registration failed:`, err.message);
+    });
 }
 
     const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
@@ -372,8 +362,6 @@ router.get("/rl-connect", async (req, res) => {
 router.get("/status", async (req, res) => {
   const { shop } = req.query;
   
-  console.log(`[RL] Status check for: ${shop}`);
-  
   if (!shop) {
     return res.status(400).json({ 
       ok: false, 
@@ -393,14 +381,21 @@ router.get("/status", async (req, res) => {
       });
     }
     
-    // 🎯 ADD THIS: Register webhook if not already registered
-    if (shopRecord && shopRecord.access_token && shopRecord.api_token) {
-      try {
-        console.log('[Webhook] Checking/registering uninstall webhook...');
-        await registerUninstallWebhook(shop, shopRecord.access_token);
-      } catch (webhookError) {
-        console.error(`[Webhook] ⚠️ Registration check failed (non-fatal):`, webhookError.message);
-      }
+    // Check if needs re-authentication
+    if (shopRecord.needs_reauth) {
+      return res.json({
+        ok: true,
+        connected: false,
+        needs_reauth: true,
+        reauth_url: `/shopify/auth?shop=${encodeURIComponent(shop)}`,
+        message: "Access token expired. Please re-authenticate."
+      });
+    }
+    
+    // Register webhook if needed (non-blocking)
+    if (shopRecord.access_token && shopRecord.api_token) {
+      registerUninstallWebhook(shop, shopRecord.access_token)
+        .catch(err => console.error(`[Status] Webhook check failed:`, err.message));
     }
     
     res.json({
@@ -423,7 +418,6 @@ router.get("/status", async (req, res) => {
     });
   }
 });
-
 // ============================================================
 // ROUTE: Get Dashboard Data
 // ============================================================
@@ -469,7 +463,215 @@ router.get("/dashboard-data", async (req, res) => {
     });
   }
 });
+// ============================================================
+// ROUTE: Get Cached Homepage Performance Data
+// ============================================================
+router.get("/api/performance/homepage", async (req, res) => {
+  const { shop } = req.query;
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
 
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not found" 
+      });
+    }
+
+    // Check if we have PSI data in site_structure for index template
+    const templateGroups = shopRecord.site_structure?.template_groups;
+    if (!templateGroups) {
+      return res.json({ 
+        ok: false,
+        message: "No site structure data available"
+      });
+    }
+
+    // Handle both Map and Object formats
+    const indexTemplate = templateGroups instanceof Map 
+      ? templateGroups.get('index')
+      : templateGroups['index'];
+    
+    if (!indexTemplate || !indexTemplate.psi_metrics) {
+      return res.json({ 
+        ok: false,
+        message: "No PSI data available for homepage. Run analysis first."
+      });
+    }
+
+    // Calculate scores from metrics (0-1 to 0-100 scale)
+    const mobileScore = Math.round((indexTemplate.psi_metrics.performance_score || 0) * 100);
+    const desktopScore = Math.round((indexTemplate.psi_metrics.performance_score || 0) * 100);
+
+    // Return in the format your frontend expects
+    res.json({
+      ok: true,
+      data: {
+        psi: {
+          mobile_score: mobileScore,
+          desktop_score: desktopScore,
+          report_url: `https://pagespeed.web.dev/analysis?url=${encodeURIComponent('https://' + shop)}`,
+          lab_data: {
+            fcp: indexTemplate.psi_metrics.fcp_time || 0,
+            lcp: indexTemplate.psi_metrics.lcp_time || 0,
+            cls: indexTemplate.psi_metrics.cls_score || 0,
+            tbt: indexTemplate.psi_metrics.tbt_time || 0,
+            fid: indexTemplate.psi_metrics.fid_time || 0
+          }
+        },
+        crux: {
+          available: false,
+          message: "Chrome UX Report data not yet available",
+          days_until_available: 28
+        },
+        fetched_at: indexTemplate.psi_metrics.created_at || indexTemplate.last_psi_analysis,
+        days_since_install: Math.round((Date.now() - new Date(shopRecord.connected_at || Date.now())) / 86400000)
+      }
+    });
+    
+  } catch (error) {
+    console.error('[Homepage Performance] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+
+// ============================================================
+// ROUTE: Get Template Performance Data  
+// ============================================================
+router.get("/api/performance/template", async (req, res) => {
+  const { shop, type } = req.query;
+  
+  if (!shop || !type) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop and type parameters required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord || !shopRecord.site_structure) {
+      return res.json({ 
+        ok: false,
+        message: "No site structure data available"
+      });
+    }
+
+    const templateGroups = shopRecord.site_structure.template_groups;
+    const template = templateGroups instanceof Map 
+      ? templateGroups.get(type)
+      : templateGroups[type];
+    
+    if (!template || !template.psi_metrics) {
+      return res.json({ 
+        ok: false,
+        message: `No PSI data available for ${type} template`
+      });
+    }
+
+    const mobileScore = Math.round((template.psi_metrics.performance_score || 0) * 100);
+    const desktopScore = Math.round((template.psi_metrics.performance_score || 0) * 100);
+
+    res.json({
+      ok: true,
+      data: {
+        psi: {
+          mobile_score: mobileScore,
+          desktop_score: desktopScore,
+          report_url: template.psi_metrics.url_analyzed 
+            ? `https://pagespeed.web.dev/analysis?url=${encodeURIComponent(template.psi_metrics.url_analyzed)}`
+            : null
+        },
+        crux: {
+          available: false,
+          message: "Chrome UX Report data not yet available"
+        },
+        fetched_at: template.psi_metrics.created_at || template.last_psi_analysis
+      }
+    });
+    
+  } catch (error) {
+    console.error(`[${type} Performance] Error:`, error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
+// ============================================================
+// ROUTE: Get Cached PSI Data for Homepage
+// ============================================================
+router.get("/psi-data", async (req, res) => {
+  const { shop } = req.query;
+  
+  if (!shop) {
+    return res.status(400).json({ 
+      ok: false, 
+      error: "Shop parameter required" 
+    });
+  }
+
+  try {
+    const ShopModel = require("../models/Shop");
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord) {
+      return res.status(404).json({ 
+        ok: false, 
+        error: "Shop not found" 
+      });
+    }
+
+    // Check if we have PSI data in site_structure for index template
+    const indexTemplate = shopRecord.site_structure?.template_groups?.get?.('index') || 
+                          shopRecord.site_structure?.template_groups?.['index'];
+    
+    if (!indexTemplate || !indexTemplate.psi_metrics) {
+      return res.json({ 
+        ok: true,
+        has_data: false,
+        message: "No PSI data available for homepage"
+      });
+    }
+
+    // Return the cached PSI metrics
+    res.json({
+      ok: true,
+      has_data: true,
+      psi_metrics: {
+        performance_score: indexTemplate.psi_metrics.performance_score,
+        lcp_time: indexTemplate.psi_metrics.lcp_time,
+        fid_time: indexTemplate.psi_metrics.fid_time, 
+        cls_score: indexTemplate.psi_metrics.cls_score,
+        created_at: indexTemplate.psi_metrics.created_at,
+        url_analyzed: indexTemplate.psi_metrics.url_analyzed
+      },
+      last_analyzed: indexTemplate.last_psi_analysis,
+      template: 'index'
+    });
+    
+  } catch (error) {
+    console.error('[PSI Data] Error:', error);
+    res.status(500).json({ 
+      ok: false, 
+      error: error.message 
+    });
+  }
+});
 // ============================================================
 // ROUTE: Get Manual Instructions
 // ============================================================
@@ -713,7 +915,7 @@ router.post("/inject-script", async (req, res) => {
     console.log(`[RL] ✅ Old script removed, now injecting new script for ${shop}`);
 
     // STEP 2: Now inject the NEW script
-    await injectDeferScript(shop, shopRecord.short_id, shopRecord.access_token);
+    const result = await injectDeferScript(shop, shopRecord.short_id, shopRecord.access_token);
 
     await ShopModel.updateOne(
       { shop },

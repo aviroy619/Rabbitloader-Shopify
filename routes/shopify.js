@@ -16,65 +16,49 @@ async function registerUninstallWebhook(shop, accessToken) {
   console.log(`[Webhook] Registering uninstall webhook for ${shop}: ${webhookUrl}`);
   
   try {
+    const { shopifyRequest } = require("../utils/shopifyApi");
+    
     // Check if webhook already exists
-    const existingWebhooksResponse = await fetch(
-      `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/webhooks.json`,
-      {
-        headers: {
-          'X-Shopify-Access-Token': accessToken,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
+    const existingWebhooks = await shopifyRequest(shop, "webhooks.json");
+    
+    if (existingWebhooks.error === "TOKEN_EXPIRED") {
+      console.error(`[Webhook] Token expired for ${shop}, skipping webhook registration`);
+      return { success: false, error: "TOKEN_EXPIRED" };
+    }
 
-    if (existingWebhooksResponse.ok) {
-      const existingWebhooks = await existingWebhooksResponse.json();
-      const uninstallWebhook = existingWebhooks.webhooks?.find(
-        w => w.topic === 'app/uninstalled' && w.address === webhookUrl
-      );
-      
-      if (uninstallWebhook) {
-        console.log(`[Webhook] Uninstall webhook already exists for ${shop}`);
-        return { success: true, message: 'Webhook already exists' };
-      }
+    const uninstallWebhook = existingWebhooks.webhooks?.find(
+      w => w.topic === 'app/uninstalled' && w.address === webhookUrl
+    );
+    
+    if (uninstallWebhook) {
+      console.log(`[Webhook] Uninstall webhook already exists for ${shop}`);
+      return { success: true, message: 'Webhook already exists' };
     }
 
     // Register new webhook
-    const response = await fetch(
-      `https://${shop}/admin/api/${process.env.SHOPIFY_API_VERSION || '2025-01'}/webhooks.json`,
-      {
-        method: 'POST',
-        headers: {
-          'X-Shopify-Access-Token': accessToken,
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          webhook: {
-            topic: 'app/uninstalled',
-            address: webhookUrl,
-            format: 'json'
-          }
-        })
+    const result = await shopifyRequest(shop, "webhooks.json", "POST", {
+      webhook: {
+        topic: 'app/uninstalled',
+        address: webhookUrl,
+        format: 'json'
       }
-    );
+    });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(`Webhook registration failed: ${JSON.stringify(errorData)}`);
+    if (result.error === "TOKEN_EXPIRED") {
+      return { success: false, error: "TOKEN_EXPIRED" };
     }
 
-    const webhookData = await response.json();
     console.log(`[Webhook] ✅ Uninstall webhook registered successfully for ${shop}`);
-    
     return { 
       success: true, 
-      webhook: webhookData.webhook,
+      webhook: result.webhook,
       message: 'Webhook registered successfully' 
     };
 
   } catch (error) {
     console.error(`[Webhook] Registration error for ${shop}:`, error.message);
-    throw error;
+    // Don't throw - return error gracefully
+    return { success: false, error: error.message };
   }
 }
 // ====== SHOPIFY OAUTH FLOW ======
@@ -245,6 +229,7 @@ const shopRecord = await ShopModel.findOneAndUpdate(
       shop,
       access_token: tokenData.access_token,
       connected_at: new Date(),
+      reauth_required: false, // Clear reauth flag on successful auth
       // If this is a reinstall, mark for setup
       needs_setup: isReinstall ? true : false
     },
@@ -263,19 +248,6 @@ const shopRecord = await ShopModel.findOneAndUpdate(
 );
 
 console.log(`✅ Shopify OAuth completed for ${shop}`);
-// Register uninstall webhook
-try {
-  await registerUninstallWebhook(shop, tokenData.access_token);
-  console.log(`[Webhook] ✅ Uninstall webhook registered for ${shop}`);
-} catch (webhookError) {
-  console.error(`[Webhook] ⚠️ Webhook registration failed (non-fatal):`, webhookError.message);
-}
-
-if (isReinstall) {
-  console.log(`📦 Reinstallation detected for ${shop} - will trigger setup`);
-} else {
-  console.log(`🆕 First-time installation for ${shop}`);
-}
 
 // Register uninstall webhook
 try {
