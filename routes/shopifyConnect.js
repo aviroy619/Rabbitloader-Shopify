@@ -1,7 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const { shopifyRequest } = require("../utils/shopifyApi");
-
+const jwt = require("jsonwebtoken");
+const ShopModel = require("../models/Shop");
 
 // Helper function to inject defer script
 // Helper function to inject defer script
@@ -294,7 +295,8 @@ router.get("/debug/:shop", async (req, res) => {
   
   try {
     const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop: shop + '.myshopify.com' });
+const shopDomain = shop.endsWith(".myshopify.com") ? shop : `${shop}.myshopify.com`;
+const shopRecord = await ShopModel.findOne({ shop: shopDomain });
     
     if (!shopRecord) {
       return res.json({ found: false, shop });
