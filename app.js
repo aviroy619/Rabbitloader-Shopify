@@ -130,7 +130,6 @@ const { router: dashboardRouter } = require("./routes/dashboard");
 const performanceRoutes = require("./routes/performance");
 
 // ====== Mount Routes ======
-app.use("/shopify", shopifyRoutes);
 app.use("/defer-config", deferConfigRoutes);
 app.use("/rl", dashboardRouter);  // 
 app.use('/api/performance', performanceRoutes);

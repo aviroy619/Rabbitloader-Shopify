@@ -324,5 +324,6 @@ const shopRecord = await ShopModel.findOne({ shop: shopDomain });
 });
 
 // Export router as default, attach helper function as property
+router.injectDeferScript = injectDeferScript;
+router.injectCriticalCSSIntoTheme = injectCriticalCSSIntoTheme;
 module.exports = router;
-module.exports.injectDeferScript = injectDeferScript;

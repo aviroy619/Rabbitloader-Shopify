@@ -92,4 +92,6 @@ async function injectCriticalCSSIntoTheme(shop, did, accessToken) {
   return { success: true, message: "Critical CSS injected" };
 }
 
-module.exports = { shopifyRequest, injectDeferScript, injectCriticalCSSIntoTheme };
+router.installApp = installApp;
+router.authCallback = authCallback;
+module.exports = router;
