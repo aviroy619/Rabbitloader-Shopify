@@ -361,6 +361,8 @@ router.get("/rl-connect", async (req, res) => {
 // ============================================================
 router.get("/status", async (req, res) => {
   const { shop } = req.query;
+
+  console.log(`[RL] Status check for: ${shop}`);
   
   if (!shop) {
     return res.status(400).json({ 
@@ -372,52 +374,45 @@ router.get("/status", async (req, res) => {
   try {
     const ShopModel = require("../models/Shop");
     const shopRecord = await ShopModel.findOne({ shop });
-    
+
     if (!shopRecord) {
+      console.log(`[RL] No record found for ${shop}`);
       return res.json({ 
         ok: true, 
         connected: false,
         message: "Shop not found"
       });
     }
-    
-    // Check if needs re-authentication
-    if (shopRecord.needs_reauth) {
-      return res.json({
-        ok: true,
-        connected: false,
-        needs_reauth: true,
-        reauth_url: `/shopify/auth?shop=${encodeURIComponent(shop)}`,
-        message: "Access token expired. Please re-authenticate."
-      });
-    }
-    
-    // Register webhook if needed (non-blocking)
-    if (shopRecord.access_token && shopRecord.api_token) {
-      registerUninstallWebhook(shop, shopRecord.access_token)
-        .catch(err => console.error(`[Status] Webhook check failed:`, err.message));
-    }
-    
-    res.json({
+
+    // ✅ Unified response for frontend
+    const connected = !!shopRecord.api_token;
+    const did = shopRecord.short_id || null;
+
+    console.log(`[RL] Status result for ${shop}: connected=${connected}, did=${did}`);
+
+    return res.json({
       ok: true,
-      connected: !!shopRecord.api_token,
-      did: shopRecord.short_id,
+      connected,
+      did,
+      shop,
+      api_token_present: !!shopRecord.api_token,
+      short_id_present: !!shopRecord.short_id,
       script_injected: shopRecord.script_injected || false,
       critical_css_injected: shopRecord.critical_css_injected || false,
       needs_setup: shopRecord.needs_setup || false,
       setup_completed: shopRecord.setup_completed || false,
       connected_at: shopRecord.connected_at,
-      site_structure: shopRecord.site_structure || null
     });
-    
+
   } catch (error) {
-    console.error(`[RL] Status check error:`, error);
-    res.status(500).json({ 
+    console.error(`[RL] Status check error for ${shop}:`, error);
+    return res.status(500).json({ 
       ok: false, 
       error: error.message 
     });
   }
 });
+
 // ============================================================
 // ROUTE: Get Dashboard Data
 // ============================================================
