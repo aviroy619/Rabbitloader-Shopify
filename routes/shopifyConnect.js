@@ -105,111 +105,83 @@ async function injectDeferScript(shop, did, accessToken) {
   }
 }
 
-// Handle RabbitLoader callbacks
+// ====== RL CALLBACK ======
 router.get("/rl-callback", async (req, res) => {
-  const { shop, "rl-token": rlToken } = req.query;
-
-  console.log("[RL] Callback received:", {
-    hasRlToken: !!rlToken,
-    shop,
-    allParams: Object.keys(req.query),
-    referer: req.headers.referer
-  });
-
-  if (!rlToken || !shop) {
-    console.error("[RL] Missing rl-token or shop parameter in callback");
-    return res.status(400).send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Callback Error</title>
-        <style>body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }</style>
-      </head>
-      <body>
-        <h2>RabbitLoader Callback Error</h2>
-        <p>Missing required parameters. Please try connecting again.</p>
-        <a href="/?shop=${encodeURIComponent(shop || '')}" style="color: #007bff;">Return to App</a>
-      </body>
-      </html>
-    `);
-  }
-
   try {
-    const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
-    console.log("[RL] Decoded token:", {
-      hasDid: !!(decoded.did || decoded.short_id),
-      hasApiToken: !!decoded.api_token,
-      platform: decoded.platform,
-      accountId: decoded.account_id
+    const { shop, host, 'rl-token': rlToken } = req.query;
+    console.log("[RL] Callback received:", {
+      hasRlToken: !!rlToken,
+      shop,
+      allParams: Object.keys(req.query),
+      referer: req.headers.referer,
     });
-    
-    const ShopModel = require("../models/Shop");
-    
-    const updateData = {
-      $set: {
-        short_id: decoded.did || decoded.short_id,
-        api_token: decoded.api_token,
-        connected_at: new Date(),
-        needs_setup: true
-      },
-      $push: {
-        history: {
-          event: "connect",
-          timestamp: new Date(),
-          details: { 
-            via: "rl-callback",
-            platform: decoded.platform || 'shopify'
-          }
-        }
-      }
-    };
 
-    if (decoded.account_id) {
-      updateData.$set.account_id = decoded.account_id;
+    if (!shop || !rlToken) {
+      console.log("[RL] Missing shop or rl-token in callback");
+      return res.status(400).send("Invalid callback parameters");
     }
+
+    const decoded = jwt.decode(rlToken);
+    console.log("[RL] Decoded token:", {
+      hasDid: !!decoded?.did,
+      hasApiToken: !!decoded?.api_token,
+      platform: decoded?.platform,
+      accountId: decoded?.account_id,
+    });
+
+    // ✅ Save or update shop connection details
+    const updateData = {
+      api_token: decoded.api_token,
+      short_id: decoded.short_id,
+      did: decoded.did,
+      needs_setup: true,
+      connected_at: new Date(),
+    };
 
     const updatedShop = await ShopModel.findOneAndUpdate(
       { shop },
-      updateData,
-      { upsert: true, new: true }
+      { $set: updateData },
+      { new: true, upsert: true }
     );
 
-    console.log(`[RL] Connection saved for shop: ${shop}`, {
-      did: decoded.did || decoded.short_id,
-      hasApiToken: !!decoded.api_token,
-      needsSetup: true
-    });
+    console.log(`[RL] Connection saved for shop: ${shop}`);
 
-    console.log(`[RL] Skipping auto-injection - will be triggered by complete setup flow`);
+    // ✅ Trigger automatic theme injection
+    console.log(`[RL] Triggering auto-injection for ${shop}`);
+    try {
+      const injectResult = await injectDeferScript(
+        shop,
+        decoded.did || decoded.short_id,
+        updatedShop.access_token
+      );
+      if (injectResult.success) {
+  await ShopModel.updateOne(
+    { shop },
+    { 
+      $set: { 
+        script_injected: true,
+        critical_css_injected: true,
+        script_injection_attempted: true
+      }
+    }
+  );
+}
 
-    const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
-    const hostParam = req.query.host || shopBase64;
-    
-    let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1&trigger_setup=1`;
-    
-    console.log("[RL] Redirecting to dashboard with trigger_setup flag:", redirectUrl);
+    } catch (injectErr) {
+      console.error(`[RL] Auto-injection failed for ${shop}:`, injectErr.message);
+    }
+
+    // ✅ Redirect back to embedded dashboard with flags
+    const redirectUrl = `/?shop=${shop}&host=${host}&embedded=1&connected=1&trigger_setup=1`;
+    console.log(`[RL] Redirecting to dashboard with trigger_setup flag: ${redirectUrl}`);
     res.redirect(redirectUrl);
 
   } catch (error) {
-    console.error("[RL] Callback processing error:", error);
-    
-    res.status(500).send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Connection Error</title>
-        <style>body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }</style>
-      </head>
-      <body>
-        <h2>RabbitLoader Connection Error</h2>
-        <p>Failed to process the connection. Please try again.</p>
-        <p><strong>Error:</strong> ${error.message}</p>
-        <a href="/?shop=${encodeURIComponent(shop || '')}" style="color: #007bff;">Return to App</a>
-      </body>
-      </html>
-    `);
+    console.error("[RL] Callback processing error:", error.message);
+    res.status(500).send("Callback failed: " + error.message);
   }
 });
+
 
 // Connect to RabbitLoader
 router.get("/rl-connect", async (req, res) => {
