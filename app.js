@@ -36,10 +36,15 @@ const app = express();
 app.use(compression());
 const PORT = process.env.PORT || 3000;
 
+// ====== Routes that must not be JSON-parsed ======
+app.use('/defer-config', require('./routes/deferConfig'));
+
 // ====== Middleware ======
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
+
+// Webhook raw body must come after parsers
 app.use('/webhooks/app/uninstalled', express.raw({ type: 'application/json' }));
 
 
