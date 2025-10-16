@@ -407,7 +407,7 @@ router.get("/critical.css", async (req, res) => {
         else if (path.startsWith("/products/")) template = "product";
         else if (path.startsWith("/collections/")) template = "collection";
         else if (path.startsWith("/pages/")) template = "page";
-        else if (path.startsWith("/blogs/") || path.match(/\\/\\d{4}\\/\\d{2}\\//))
+        else if (path.startsWith("/blogs/") || path.match(/\/\d{4}\/\d{2}\//))
           template = "article";
         else if (path.startsWith("/cart")) template = "cart";
       } catch (parseErr) {
