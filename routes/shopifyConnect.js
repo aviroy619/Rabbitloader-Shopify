@@ -3,6 +3,7 @@ const router = express.Router();
 const { shopifyRequest } = require("../utils/shopifyApi");
 const jwt = require("jsonwebtoken");
 const ShopModel = require("../models/Shop");
+const { injectDeferScript, injectCriticalCSSIntoTheme } = require("../utils/shopifyApi");
 
 // Helper function to inject defer script
 // Helper function to inject defer script
@@ -144,6 +145,7 @@ router.get("/rl-callback", async (req, res) => {
       { $set: updateData },
       { new: true, upsert: true }
     );
+console.log("[Debug] About to call injectDeferScript", typeof injectDeferScript);
 
       // ✅ Trigger automatic theme injection
     console.log(`[RL] Triggering auto-injection for ${shop}`);
