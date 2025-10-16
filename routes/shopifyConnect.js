@@ -144,9 +144,7 @@ router.get("/rl-callback", async (req, res) => {
       { new: true, upsert: true }
     );
 
-    console.log(`[RL] Connection saved for shop: ${shop}`);
-
-    // ✅ Trigger automatic theme injection
+      // ✅ Trigger automatic theme injection
     console.log(`[RL] Triggering auto-injection for ${shop}`);
     try {
       const injectResult = await injectDeferScript(
