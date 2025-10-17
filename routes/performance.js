@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const axios = require("axios");
 
-const PSI_SERVICE_URL = process.env.PSI_MICROSERVICE_URL || 'http://45.32.212.222:3004';
+const PSI_SERVICE_URL = process.env.PSI_MICROSERVICE_URL || 'http://45.32.212.222:3008';
 const CACHE_DURATION = 3600000; // 1 hour in milliseconds
 
 // ============================================================
