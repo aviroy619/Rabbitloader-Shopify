@@ -235,6 +235,22 @@ router.get("/auth/callback", async (req, res) => {
     );
 
     console.log(`✅ Shopify OAuth completed for ${shop}`);
+    // Sync shop to rl-core
+try {
+  const { syncShopToCore } = require('../utils/rlCoreApi');
+  await syncShopToCore({
+    shop,
+    access_token: tokenData.access_token,
+    api_token: shopRecord.api_token,
+    short_id: shopRecord.short_id,
+    account_id: shopRecord.account_id,
+    rl_token: shopRecord.rl_token
+  });
+  console.log(`✅ Shop synced to rl-core: ${shop}`);
+} catch (syncError) {
+  console.error(`⚠️ Failed to sync shop to rl-core:`, syncError.message);
+  // Don't fail OAuth if sync fails
+}
 
     // Register uninstall webhook
     try {
