@@ -1,3 +1,5 @@
+
+const cors = require('cors');
 const compression = require("compression");
 require("dotenv").config();
 
@@ -104,6 +106,13 @@ app.use((req, res, next) => {
   
   next();
 });
+
+app.use('/rl', cors({
+  origin: ['http://localhost:3006', 'http://45.32.212.222:3006'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Platform', 'X-Shop']
+}));
 
 // ====== MongoDB Connection ======
 mongoose.connect(process.env.MONGO_URI);
@@ -3194,12 +3203,7 @@ app.use((req, res) => {
     });
   }
 });
-app.use('/rl', cors({
-  origin: ['http://localhost:3006', 'http://45.32.212.222:3006'],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Platform', 'X-Shop']
-}));
+
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
