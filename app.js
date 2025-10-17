@@ -3194,6 +3194,13 @@ app.use((req, res) => {
     });
   }
 });
+app.use('/rl', cors({
+  origin: ['http://localhost:3006', 'http://45.32.212.222:3006'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Platform', 'X-Shop']
+}));
+
 // Graceful shutdown
 process.on('SIGINT', async () => {
   console.log('\n🛑 Shutting down gracefully...');
