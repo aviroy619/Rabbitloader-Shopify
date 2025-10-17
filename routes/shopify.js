@@ -100,7 +100,7 @@ router.get("/auth/callback", async (req, res) => {
   const { "rl-token": rlToken } = req.query;
 
   console.log("=================================================");
-  console.log("📥 OAuth Callback received:");
+  console.log("🔥 OAuth Callback received:");
   console.log("=================================================");
   console.log("Shop:", shop);
   console.log("Has code:", !!code);
@@ -118,7 +118,7 @@ router.get("/auth/callback", async (req, res) => {
     try {
       const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
 
-      await ShopModel.findOneAndUpdate(
+      const shopRecord = await ShopModel.findOneAndUpdate(
         { shop },
         {
           $set: {
@@ -135,15 +135,32 @@ router.get("/auth/callback", async (req, res) => {
             },
           },
         },
-        { upsert: true }
+        { upsert: true, new: true }
       );
 
       console.log(`RabbitLoader token saved for ${shop}`);
 
+      // Sync to rl-core after RL connection
+      try {
+        const { syncShopToCore } = require('../utils/rlCoreApi');
+        await syncShopToCore({
+          shop,
+          access_token: shopRecord.access_token,
+          api_token: decoded.api_token,
+          short_id: decoded.did || decoded.short_id,
+          did: decoded.did || decoded.short_id,
+          account_id: decoded.account_id,
+          rl_token: decoded.api_token,
+          needs_setup: true
+        });
+        console.log(`✅ Shop synced to rl-core after RL connection: ${shop}`);
+      } catch (syncError) {
+        console.error(`⚠️ Failed to sync shop to rl-core:`, syncError.message);
+      }
+
       // 🔍 Trigger site analysis immediately after RL connection
       try {
         const { analyzeSite } = require("../workers/site-analyzer");
-        const shopRecord = await ShopModel.findOne({ shop });
         if (shopRecord && shopRecord.access_token) {
           console.log(`[RL] Triggering site analysis for ${shop}`);
           await analyzeSite(shop, shopRecord.access_token);
@@ -235,22 +252,26 @@ router.get("/auth/callback", async (req, res) => {
     );
 
     console.log(`✅ Shopify OAuth completed for ${shop}`);
+    
     // Sync shop to rl-core
-try {
-  const { syncShopToCore } = require('../utils/rlCoreApi');
-  await syncShopToCore({
-    shop,
-    access_token: tokenData.access_token,
-    api_token: shopRecord.api_token,
-    short_id: shopRecord.short_id,
-    account_id: shopRecord.account_id,
-    rl_token: shopRecord.rl_token
-  });
-  console.log(`✅ Shop synced to rl-core: ${shop}`);
-} catch (syncError) {
-  console.error(`⚠️ Failed to sync shop to rl-core:`, syncError.message);
-  // Don't fail OAuth if sync fails
-}
+    try {
+      const { syncShopToCore } = require('../utils/rlCoreApi');
+      await syncShopToCore({
+        shop,
+        access_token: tokenData.access_token,
+        api_token: shopRecord.api_token,
+        short_id: shopRecord.short_id,
+        did: shopRecord.short_id,
+        account_id: shopRecord.account_id,
+        rl_token: shopRecord.api_token,
+        needs_setup: isReinstall,
+        reauth_required: false
+      });
+      console.log(`✅ Shop synced to rl-core: ${shop}`);
+    } catch (syncError) {
+      console.error(`⚠️ Failed to sync shop to rl-core:`, syncError.message);
+      // Don't fail OAuth if sync fails
+    }
 
     // Register uninstall webhook
     try {
@@ -299,7 +320,7 @@ router.post("/store-token", async (req, res) => {
   try {
     const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
 
-    await ShopModel.updateOne(
+    const shopRecord = await ShopModel.findOneAndUpdate(
       { shop },
       {
         $set: {
@@ -316,10 +337,28 @@ router.post("/store-token", async (req, res) => {
           }
         }
       },
-      { upsert: true }
+      { upsert: true, new: true }
     );
 
     console.log(`Stored RL token for ${shop}`);
+
+    // Sync to rl-core
+    try {
+      const { syncShopToCore } = require('../utils/rlCoreApi');
+      await syncShopToCore({
+        shop,
+        access_token: shopRecord.access_token,
+        api_token: decoded.api_token,
+        short_id: decoded.did || decoded.short_id,
+        did: decoded.did || decoded.short_id,
+        account_id: decoded.account_id,
+        rl_token: decoded.api_token
+      });
+      console.log(`✅ Shop synced to rl-core via store-token: ${shop}`);
+    } catch (syncError) {
+      console.error(`⚠️ Failed to sync to rl-core:`, syncError.message);
+    }
+
     res.json({ ok: true, message: "RL token stored" });
   } catch (err) {
     console.error("store-token error:", err);
@@ -387,7 +426,7 @@ router.post("/disconnect", async (req, res) => {
   }
 });
 
-// Manual theme injection route - FIXED
+// Manual theme injection route
 router.post("/inject-script", async (req, res) => {
   const { shop } = req.body;
   if (!shop) {
@@ -407,7 +446,7 @@ router.post("/inject-script", async (req, res) => {
       throw new Error("No access token found for shop");
     }
 
-    // Import injection functions from shopifyConnect (both are there)
+    // Import injection functions from shopifyConnect
     const shopifyConnectModule = require('./shopifyConnect');
     const { injectCriticalCSSIntoTheme } = require('../app');
     
@@ -418,7 +457,7 @@ router.post("/inject-script", async (req, res) => {
     const deferResult = await injectDeferScript(shop, shopRecord.short_id, shopRecord.access_token);
     const cssResult = await injectCriticalCSSIntoTheme(shop, shopRecord.short_id, shopRecord.access_token);
     
-    // Update database
+    // Update local database
     await ShopModel.updateOne(
       { shop }, 
       { 
@@ -430,6 +469,21 @@ router.post("/inject-script", async (req, res) => {
         } 
       }
     );
+
+    // Sync injection status to rl-core
+    try {
+      const { updateInjectionStatus } = require('../utils/rlCoreApi');
+      await updateInjectionStatus(shop, shopRecord.api_token, {
+        script_injected: deferResult.success,
+        critical_css_injected: cssResult.success,
+        script_injection_attempted: true,
+        critical_css_injection_attempted: true,
+        error: deferResult.error || cssResult.error
+      });
+      console.log(`✅ Injection status synced to rl-core: ${shop}`);
+    } catch (syncError) {
+      console.error(`⚠️ Failed to sync injection status to rl-core:`, syncError.message);
+    }
     
     res.json({ 
       ok: true, 
@@ -446,6 +500,7 @@ router.post("/inject-script", async (req, res) => {
     });
   }
 });
+
 // Get RabbitLoader dashboard data - ROBUST API handling
 router.get("/dashboard-data", async (req, res) => {
   const { shop } = req.query;
@@ -684,8 +739,7 @@ router.get("/configure-defer", async (req, res) => {
                     '<input type="text" class="rule-regex" value="' + (rule.src_regex || '').replace(/"/g, '&quot;') + '" placeholder="e.g., googletagmanager\\\\.com">' +
                   '</div>' +
                   '<div class="form-group">' +
-                    '<label>Action:</label>' +
-                    '<select class="rule-action">' +
+                    '<label>Action:</label>' +'<select class="rule-action">' +
                       '<option value="defer"' + (rule.action === 'defer' ? ' selected' : '') + '>Defer (load after delay)</option>' +
                       '<option value="delay"' + (rule.action === 'delay' ? ' selected' : '') + '>Delay (extended defer)</option>' +
                       '<option value="block"' + (rule.action === 'block' ? ' selected' : '') + '>Block (do not load)</option>' +
