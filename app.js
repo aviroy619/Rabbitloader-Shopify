@@ -123,11 +123,7 @@ app.use("/api/performance", performanceRoutes);
 app.get("/", (req, res) => {
   const { shop, host, embedded, hmac, timestamp } = req.query;
   
-  console.log(`Root route accessed:`, {
-    shop: shop || 'none',
-    embedded: embedded || 'none',
-    hasAuth: !!(hmac || timestamp)
-  });
+  console.log(`Root route accessed:`, { shop: shop || 'none', embedded: embedded || 'none' });
 
   // Auto-fix: Shopify OAuth callback without embedded=1
   const isFromShopifyOAuth = shop && host && (hmac || timestamp);
@@ -139,32 +135,14 @@ app.get("/", (req, res) => {
     return res.redirect(`/?${params.toString()}`);
   }
 
-  // For embedded apps, shop is required
-  if (embedded === '1' && !shop) {
-    return res.status(400).send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Shop Parameter Required</title>
-        <style>
-          body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; text-align: center; padding: 50px; background: #f6f6f7; }
-          .error { background: white; padding: 40px; border-radius: 8px; max-width: 500px; margin: 0 auto; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-          h1 { color: #dc3545; }
-        </style>
-      </head>
-      <body>
-        <div class="error">
-          <h1>Missing Shop Parameter</h1>
-          <p>This embedded app requires a shop parameter.</p>
-          <p><code>/?shop=your-shop.myshopify.com&embedded=1</code></p>
-        </div>
-      </body>
-      </html>
-    `);
+  // Require shop parameter
+  if (!shop) {
+    return res.status(400).send('Missing shop parameter');
   }
 
-  // Serve static frontend
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  // Redirect to dashboard route (which loads iframe)
+  const params = new URLSearchParams(req.query);
+  res.redirect(`/dashboard?${params.toString()}`);
 });
 
 // ====== Health Check ======
