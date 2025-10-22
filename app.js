@@ -31,7 +31,7 @@ const cookieParser = require("cookie-parser");
 const mongoose = require("mongoose");
 const path = require("path");
 const ShopModel = require("./models/Shop");
-const jsDeferService = require('./services/jsDeferService');
+
 
 // Initialize express
 const app = express();
