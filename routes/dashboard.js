@@ -1,2203 +1,272 @@
 const express = require("express");
 const router = express.Router();
+const ShopModel = require("../models/Shop");
 
-// Helper function to register uninstall webhook
-async function registerUninstallWebhook(shop, accessToken) {
-  if (!accessToken) {
-    throw new Error('No access token available');
-  }
-
-  const webhookUrl = `${process.env.APP_URL}/webhooks/app/uninstalled`;
-  
-  console.log(`[Webhook] Registering uninstall webhook for ${shop}: ${webhookUrl}`);
-  
-  try {
-    // Use the centralized API handler
-    const { shopifyRequest } = require("../utils/shopifyApi");
-    
-    // Check existing webhooks
-    const existingWebhooks = await shopifyRequest(shop, "webhooks.json");
-    
-    if (existingWebhooks.error === "TOKEN_EXPIRED") {
-      console.error(`[Webhook] Token expired for ${shop}, skipping webhook registration`);
-      return { success: false, error: "TOKEN_EXPIRED" };
-    }
-    
-    const uninstallWebhook = existingWebhooks.webhooks?.find(
-      w => w.topic === 'app/uninstalled' && w.address === webhookUrl
-    );
-    
-    if (uninstallWebhook) {
-      console.log(`[Webhook] Uninstall webhook already exists for ${shop}`);
-      return { success: true, message: 'Webhook already exists' };
-    }
-
-    // Register new webhook
-    const result = await shopifyRequest(shop, "webhooks.json", "POST", {
-      webhook: {
-        topic: 'app/uninstalled',
-        address: webhookUrl,
-        format: 'json'
-      }
-    });
-
-    if (result.error === "TOKEN_EXPIRED") {
-      return { success: false, error: "TOKEN_EXPIRED" };
-    }
-
-    console.log(`[Webhook] ✅ Uninstall webhook registered successfully for ${shop}`);
-    return { 
-      success: true, 
-      webhook: result.webhook,
-      message: 'Webhook registered successfully' 
-    };
-
-  } catch (error) {
-    console.error(`[Webhook] Registration error for ${shop}:`, error.message);
-    // Don't throw - return error gracefully
-    return { success: false, error: error.message };
-  }
-}
-// Helper function to inject defer script
-async function injectDeferScript(shop, did, accessToken) {
-  console.log(`[RL] Attempting auto defer script injection for ${shop} with DID: ${did}`);
-
-  try {
-    // Get active theme
-    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!themesResponse.ok) {
-      throw new Error(`Failed to fetch themes: ${themesResponse.status}`);
-    }
-
-    const themesData = await themesResponse.json();
-    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
-    
-    if (!activeTheme) {
-      throw new Error("No active theme found");
-    }
-
-    // Get theme.liquid file
-    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!assetResponse.ok) {
-      throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status}`);
-    }
-
-    const assetData = await assetResponse.json();
-    let themeContent = assetData.asset.value;
-
-    // Check if defer script already exists
-    const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
-    
-    if (themeContent.includes(`defer-config/loader.js?shop=${shop}`) || 
-        themeContent.includes(deferLoaderUrl) ||
-        themeContent.includes('RabbitLoader Configuration')) {
-      console.log(`[RL] Defer script already exists in theme for ${shop}`);
-      return { success: true, message: "Defer script already exists", already_exists: true };
-    }
-
-    // Find first <script> tag to inject BEFORE it
-    const firstJSPattern = /(<script[^>]*>)/;
-    const jsMatch = themeContent.match(firstJSPattern);
-    
-    const scriptTag = `  <!-- RabbitLoader Configuration -->
-  <script>
-    (function() {
-      // Check for ?norl parameter to disable RabbitLoader
-      var search = window.location.search || '';
-      var disabled = search.indexOf('norl') !== -1;
-      
-      if (disabled) {
-        console.log('🚫 RabbitLoader disabled via ?norl parameter');
-        window.RABBITLOADER_DISABLED = true;
-        return;
-      }
-      
-      console.log('✅ RabbitLoader enabled');
-      
-      // Load Defer Configuration Script
-      var deferScript = document.createElement('script');
-      deferScript.src = '${deferLoaderUrl}';
-      deferScript.onerror = function() { console.error('Failed to load defer script'); };
-      document.head.appendChild(deferScript);
-      
-      // Load Critical CSS
-      var criticalCSS = document.createElement('link');
-      criticalCSS.rel = 'stylesheet';
-      criticalCSS.href = '${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}';
-      criticalCSS.onload = function() { 
-        var template = window.location.pathname.split('/')[1] || 'index';
-        console.log('💚 Critical CSS loaded: ' + template); 
-      };
-      criticalCSS.onerror = function() { console.error('Failed to load critical CSS'); };
-      document.head.appendChild(criticalCSS);
-    })();
-  </script>
-`;
-    
-    if (jsMatch) {
-      themeContent = themeContent.replace(firstJSPattern, scriptTag + '$1');
-      console.log(`[RL] Injecting defer script BEFORE first JS`);
-    } else {
-      const headOpenTag = '<head>';
-      if (!themeContent.includes(headOpenTag)) {
-        throw new Error("Could not find <head> tag in theme.liquid");
-      }
-      themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
-      console.log(`[RL] Injecting defer script after <head> (no JS found)`);
-    }
-
-    // Update theme file
-    const updateResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
-      method: 'PUT',
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        asset: {
-          key: 'layout/theme.liquid',
-          value: themeContent
-        }
-      })
-    });
-
-    if (!updateResponse.ok) {
-      const errorData = await updateResponse.json();
-      throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
-    }
-
-    console.log(`[RL] Defer script auto-injected successfully for ${shop}`);
-    return { 
-      success: true, 
-      message: "Defer script injected successfully",
-      deferLoaderUrl,
-      themeId: activeTheme.id,
-      position: jsMatch ? 'before-first-js' : 'after-head'
-    };
-
-  } catch (error) {
-    console.error(`[RL] Auto-injection failed for ${shop}:`, error);
-    throw error;
-  }
-}
-
-// ============================================================
-// ROUTE: RabbitLoader OAuth Callback
-// ============================================================
-router.get("/rl-callback", async (req, res) => {
-  const { shop, "rl-token": rlToken } = req.query;
-
-  console.log("[RL] Callback received:", {
-    hasRlToken: !!rlToken,
-    shop,
-    allParams: Object.keys(req.query),
-    referer: req.headers.referer
-  });
-
-  if (!rlToken || !shop) {
-    console.error("[RL] Missing rl-token or shop parameter in callback");
-    return res.status(400).send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Callback Error</title>
-        <style>body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }</style>
-      </head>
-      <body>
-        <h2>RabbitLoader Callback Error</h2>
-        <p>Missing required parameters. Please try connecting again.</p>
-        <a href="/?shop=${encodeURIComponent(shop || '')}" style="color: #007bff;">Return to App</a>
-      </body>
-      </html>
-    `);
-  }
-
-  try {
-    const decoded = JSON.parse(Buffer.from(rlToken, "base64").toString("utf8"));
-    console.log("[RL] Decoded token:", {
-      hasDid: !!(decoded.did || decoded.short_id),
-      hasApiToken: !!decoded.api_token,
-      platform: decoded.platform,
-      accountId: decoded.account_id
-    });
-    
-    const ShopModel = require("../models/Shop");
-    
-    const updateData = {
-      $set: {
-        short_id: decoded.did || decoded.short_id,
-        api_token: decoded.api_token,
-        connected_at: new Date(),
-        needs_setup: true
-      },
-      $push: {
-        history: {
-          event: "connect",
-          timestamp: new Date(),
-          details: { 
-            via: "rl-callback",
-            platform: decoded.platform || 'shopify'
-          }
-        }
-      }
-    };
-
-    if (decoded.account_id) {
-      updateData.$set.account_id = decoded.account_id;
-    }
-
-    const shopRecord = await ShopModel.findOneAndUpdate(
-  { shop },
-  updateData,
-  { upsert: true, new: true }
-);
-
-console.log(`[RL] Connection saved for shop: ${shop}`);
-
-// Register uninstall webhook
-// Register uninstall webhook (non-blocking)
-if (shopRecord && shopRecord.access_token) {
-  registerUninstallWebhook(shop, shopRecord.access_token)
-    .then(result => {
-      if (result.success) {
-        console.log(`[RL] ✅ Webhook registered for ${shop}`);
-      } else if (result.error === "TOKEN_EXPIRED") {
-        console.log(`[RL] ⚠️ Token expired for ${shop}, needs re-auth`);
-      }
-    })
-    .catch(err => {
-      console.error(`[RL] ⚠️ Webhook registration failed:`, err.message);
-    });
-}
-
-    const shopBase64 = Buffer.from(`${shop}/admin`).toString('base64');
-    const hostParam = req.query.host || shopBase64;
-    
-    let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1&trigger_setup=1`;
-    
-    console.log("[RL] Redirecting to dashboard with trigger_setup flag:", redirectUrl);
-    res.redirect(redirectUrl);
-
-  } catch (error) {
-    console.error("[RL] Callback processing error:", error);
-    
-    res.status(500).send(`
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <title>Connection Error</title>
-        <style>body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }</style>
-      </head>
-      <body>
-        <h2>RabbitLoader Connection Error</h2>
-        <p>Failed to process the connection. Please try again.</p>
-        <p><strong>Error:</strong> ${error.message}</p>
-        <a href="/?shop=${encodeURIComponent(shop || '')}" style="color: #007bff;">Return to App</a>
-      </body>
-      </html>
-    `);
-  }
-});
-
-// ============================================================
-// ROUTE: Initiate RabbitLoader Connection
-// ============================================================
-router.get("/rl-connect", async (req, res) => {
+// Serve embedded dashboard page
+router.get("/", async (req, res) => {
   const { shop, host } = req.query;
   
-  console.log(`[RL] Connect request for: ${shop}`);
-  
   if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
+    return res.status(400).send("Shop parameter required");
   }
 
   try {
-    const connectUrl = new URL('https://rabbitloader.com/account/');
-    connectUrl.searchParams.set('source', 'shopify');
-    connectUrl.searchParams.set('action', 'connect');
-    connectUrl.searchParams.set('site_url', `https://${shop}`);
-    
-    const redirectUrl = new URL('/rl/rl-callback', process.env.APP_URL);
-    redirectUrl.searchParams.set('shop', shop);
-    if (host) {
-      redirectUrl.searchParams.set('host', host);
-    }
-    
-    connectUrl.searchParams.set('redirect_url', redirectUrl.toString());
-    connectUrl.searchParams.set('cms_v', 'shopify');
-    connectUrl.searchParams.set('plugin_v', '1.0.0');
-
-    const finalUrl = connectUrl.toString();
-    console.log(`[RL] Redirecting to RabbitLoader: ${finalUrl}`);
-
-    res.redirect(finalUrl);
-    
-  } catch (error) {
-    console.error(`[RL] ❌ Connect error:`, error);
-    res.status(500).json({ 
-      ok: false, 
-      error: "Failed to initiate connection" 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Get Shop Status
-// ============================================================
-router.get("/status", async (req, res) => {
-  const { shop } = req.query;
-
-  console.log(`[RL] Status check for: ${shop}`);
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-
-    if (!shopRecord) {
-      console.log(`[RL] No record found for ${shop}`);
-      return res.json({ 
-        ok: true, 
-        connected: false,
-        message: "Shop not found"
-      });
-    }
-
-    // ✅ Unified response for frontend
-    const connected = !!shopRecord.api_token;
-    const did = shopRecord.short_id || null;
-
-    console.log(`[RL] Status result for ${shop}: connected=${connected}, did=${did}`);
-
-    return res.json({
-      ok: true,
-      connected,
-      did,
-      shop,
-      api_token_present: !!shopRecord.api_token,
-      short_id_present: !!shopRecord.short_id,
-      script_injected: shopRecord.script_injected || false,
-      critical_css_injected: shopRecord.critical_css_injected || false,
-      needs_setup: shopRecord.needs_setup || false,
-      setup_completed: shopRecord.setup_completed || false,
-      connected_at: shopRecord.connected_at,
-    });
-
-  } catch (error) {
-    console.error(`[RL] Status check error for ${shop}:`, error);
-    return res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Get Dashboard Data
-// ============================================================
-router.get("/dashboard-data", async (req, res) => {
-  const { shop } = req.query;
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
+    // Get shop data from database
     const shopRecord = await ShopModel.findOne({ shop });
     
     if (!shopRecord) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop not found" 
-      });
+      return res.status(404).send("Shop not found. Please authenticate first.");
     }
 
-    res.json({
-      ok: true,
-      data: {
-        did: shopRecord.short_id,
-        reports_url: `https://rabbitloader.com/account/`,
-        customize_url: `https://rabbitloader.com/account/`,
-        api_token: shopRecord.api_token ? 'present' : 'missing',
-        connected_at: shopRecord.connected_at,
-        script_injected: shopRecord.script_injected || false,
-        critical_css_injected: shopRecord.critical_css_injected || false,
-        site_structure: shopRecord.site_structure || null
-      }
-    });
-  } catch (error) {
-    console.error('[Dashboard Data] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-// ============================================================
-// ROUTE: Get Cached Homepage Performance Data
-// ============================================================
-router.get("/api/performance/homepage", async (req, res) => {
-  const { shop } = req.query;
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
+    // Check if shop is connected to RabbitLoader
+    const isConnected = !!shopRecord.api_token;
+    const needsAuth = shopRecord.reauth_required || !shopRecord.access_token;
 
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop not found" 
-      });
-    }
-
-    // Check if we have PSI data in site_structure for index template
-    const templateGroups = shopRecord.site_structure?.template_groups;
-    if (!templateGroups) {
-      return res.json({ 
-        ok: false,
-        message: "No site structure data available"
-      });
-    }
-
-    // Handle both Map and Object formats
-    const indexTemplate = templateGroups instanceof Map 
-      ? templateGroups.get('index')
-      : templateGroups['index'];
-    
-    if (!indexTemplate || !indexTemplate.psi_metrics) {
-      return res.json({ 
-        ok: false,
-        message: "No PSI data available for homepage. Run analysis first."
-      });
-    }
-
-    // Calculate scores from metrics (0-1 to 0-100 scale)
-    const mobileScore = Math.round((indexTemplate.psi_metrics.performance_score || 0) * 100);
-    const desktopScore = Math.round((indexTemplate.psi_metrics.performance_score || 0) * 100);
-
-    // Return in the format your frontend expects
-    res.json({
-      ok: true,
-      data: {
-        psi: {
-          mobile_score: mobileScore,
-          desktop_score: desktopScore,
-          report_url: `https://pagespeed.web.dev/analysis?url=${encodeURIComponent('https://' + shop)}`,
-          lab_data: {
-            fcp: indexTemplate.psi_metrics.fcp_time || 0,
-            lcp: indexTemplate.psi_metrics.lcp_time || 0,
-            cls: indexTemplate.psi_metrics.cls_score || 0,
-            tbt: indexTemplate.psi_metrics.tbt_time || 0,
-            fid: indexTemplate.psi_metrics.fid_time || 0
-          }
-        },
-        crux: {
-          available: false,
-          message: "Chrome UX Report data not yet available",
-          days_until_available: 28
-        },
-        fetched_at: indexTemplate.psi_metrics.created_at || indexTemplate.last_psi_analysis,
-        days_since_install: Math.round((Date.now() - new Date(shopRecord.connected_at || Date.now())) / 86400000)
-      }
-    });
-    
-  } catch (error) {
-    console.error('[Homepage Performance] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Get Template Performance Data  
-// ============================================================
-router.get("/api/performance/template", async (req, res) => {
-  const { shop, type } = req.query;
-  
-  if (!shop || !type) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop and type parameters required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.site_structure) {
-      return res.json({ 
-        ok: false,
-        message: "No site structure data available"
-      });
-    }
-
-    const templateGroups = shopRecord.site_structure.template_groups;
-    const template = templateGroups instanceof Map 
-      ? templateGroups.get(type)
-      : templateGroups[type];
-    
-    if (!template || !template.psi_metrics) {
-      return res.json({ 
-        ok: false,
-        message: `No PSI data available for ${type} template`
-      });
-    }
-
-    const mobileScore = Math.round((template.psi_metrics.performance_score || 0) * 100);
-    const desktopScore = Math.round((template.psi_metrics.performance_score || 0) * 100);
-
-    res.json({
-      ok: true,
-      data: {
-        psi: {
-          mobile_score: mobileScore,
-          desktop_score: desktopScore,
-          report_url: template.psi_metrics.url_analyzed 
-            ? `https://pagespeed.web.dev/analysis?url=${encodeURIComponent(template.psi_metrics.url_analyzed)}`
-            : null
-        },
-        crux: {
-          available: false,
-          message: "Chrome UX Report data not yet available"
-        },
-        fetched_at: template.psi_metrics.created_at || template.last_psi_analysis
-      }
-    });
-    
-  } catch (error) {
-    console.error(`[${type} Performance] Error:`, error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-// ============================================================
-// ROUTE: Get Cached PSI Data for Homepage
-// ============================================================
-router.get("/psi-data", async (req, res) => {
-  const { shop } = req.query;
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop not found" 
-      });
-    }
-
-    // Check if we have PSI data in site_structure for index template
-    const indexTemplate = shopRecord.site_structure?.template_groups?.get?.('index') || 
-                          shopRecord.site_structure?.template_groups?.['index'];
-    
-    if (!indexTemplate || !indexTemplate.psi_metrics) {
-      return res.json({ 
-        ok: true,
-        has_data: false,
-        message: "No PSI data available for homepage"
-      });
-    }
-
-    // Return the cached PSI metrics
-    res.json({
-      ok: true,
-      has_data: true,
-      psi_metrics: {
-        performance_score: indexTemplate.psi_metrics.performance_score,
-        lcp_time: indexTemplate.psi_metrics.lcp_time,
-        fid_time: indexTemplate.psi_metrics.fid_time, 
-        cls_score: indexTemplate.psi_metrics.cls_score,
-        created_at: indexTemplate.psi_metrics.created_at,
-        url_analyzed: indexTemplate.psi_metrics.url_analyzed
-      },
-      last_analyzed: indexTemplate.last_psi_analysis,
-      template: 'index'
-    });
-    
-  } catch (error) {
-    console.error('[PSI Data] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-// ============================================================
-// ROUTE: Get Manual Instructions
-// ============================================================
-router.get("/manual-instructions", async (req, res) => {
-  const { shop } = req.query;
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  const deferLoaderUrl = `${process.env.APP_URL}/defer-config/loader.js?shop=${encodeURIComponent(shop)}`;
-  
-  res.json({
-    ok: true,
-    scriptTag: `<script src="${deferLoaderUrl}"></script>`,
-    instructions: {
-      step1: "In your Shopify admin, go to Online Store > Themes",
-      step2: "Click Actions > Edit code on your active theme",
-      step3: "In the left sidebar, find and click on theme.liquid under Layout",
-      step4: "Locate the opening <head> tag (usually near the top of the file)",
-      step5: "Add the script AFTER <head> and BEFORE any other scripts",
-      step6: "Click Save in the top right corner",
-      step7: "Test your store to ensure everything works correctly",
-      step8: "Configure defer rules in the Defer Configuration section below"
-    }
-  });
-});
-// ============================================================
-// ROUTE: Remove Old Script
-// ============================================================
-router.post("/remove-script", async (req, res) => {
-  const { shop } = req.body;
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.access_token) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'Shop not found or access token missing' 
-      });
-    }
-
-    console.log(`[RL] Removing old RabbitLoader script for ${shop}`);
-
-    // Get active theme
-    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!themesResponse.ok) {
-      throw new Error(`Failed to fetch themes: ${themesResponse.status}`);
-    }
-
-    const themesData = await themesResponse.json();
-    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
-    
-    if (!activeTheme) {
-      throw new Error("No active theme found");
-    }
-
-    // Get theme.liquid file
-    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    if (!assetResponse.ok) {
-      throw new Error(`Failed to fetch theme.liquid: ${assetResponse.status}`);
-    }
-
-    const assetData = await assetResponse.json();
-    let themeContent = assetData.asset.value;
-
-    // Remove all RabbitLoader script blocks
-    const patterns = [
-      /<!-- RabbitLoader Defer Configuration -->[\s\S]*?<\/script>\s*/g,
-      /<!-- RabbitLoader Configuration -->[\s\S]*?<\/script>\s*/g,
-      /<!-- RabbitLoader Critical CSS -->[\s\S]*?<\/style>\s*/g
-    ];
-
-    let removed = false;
-    patterns.forEach(pattern => {
-      if (pattern.test(themeContent)) {
-        themeContent = themeContent.replace(pattern, '');
-        removed = true;
-      }
-    });
-
-    if (!removed) {
-      console.log(`[RL] No RabbitLoader scripts found in theme for ${shop}`);
-      return res.json({ 
-        ok: true, 
-        message: "No RabbitLoader scripts found to remove"
-      });
-    }
-
-    // Update theme file
-    const updateResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
-      method: 'PUT',
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        asset: {
-          key: 'layout/theme.liquid',
-          value: themeContent
-        }
-      })
-    });
-
-    if (!updateResponse.ok) {
-      const errorData = await updateResponse.json();
-      throw new Error(`Theme update failed: ${updateResponse.status} - ${JSON.stringify(errorData)}`);
-    }
-
-    // Update shop record
-    await ShopModel.updateOne(
-      { shop },
-      {
-        $set: {
-          script_injected: false
-        },
-        $push: {
-          history: {
-            event: "script_removal",
-            timestamp: new Date(),
-            details: {
-              theme_id: activeTheme.id
-            }
-          }
-        }
-      }
-    );
-
-    console.log(`[RL] ✅ Old RabbitLoader script removed successfully for ${shop}`);
-    
-    res.json({ 
-      ok: true, 
-      message: "Old RabbitLoader script removed successfully"
-    });
-
-  } catch (error) {
-    console.error('[Remove Script] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-// ============================================================
-// ROUTE: Auto-Inject Script
-// ============================================================
-router.post("/inject-script", async (req, res) => {
-  const { shop } = req.body;
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.access_token) { 
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'Shop not found or access token missing' 
-      });
-    }
-
-    // STEP 1: Remove old script FIRST
-    console.log(`[RL] Removing old script before injection for ${shop}`);
-    
-    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const themesData = await themesResponse.json();
-    const activeTheme = themesData.themes.find(theme => theme.role === 'main');
-    
-    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      }
-    });
-
-    const assetData = await assetResponse.json();
-    let themeContent = assetData.asset.value;
-
-    // Remove ALL RabbitLoader scripts
-    const patterns = [
-      /<!-- RabbitLoader Defer Configuration -->[\s\S]*?<\/script>\s*/g,
-      /<!-- RabbitLoader Configuration -->[\s\S]*?<\/script>\s*/g,
-      /<!-- RabbitLoader Critical CSS -->[\s\S]*?<\/style>\s*/g
-    ];
-
-    patterns.forEach(pattern => {
-      themeContent = themeContent.replace(pattern, '');
-    });
-
-    // Update theme with cleaned content
-    await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json`, {
-      method: 'PUT',
-      headers: {
-        'X-Shopify-Access-Token': shopRecord.access_token,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        asset: {
-          key: 'layout/theme.liquid',
-          value: themeContent
-        }
-      })
-    });
-
-    console.log(`[RL] ✅ Old script removed, now injecting new script for ${shop}`);
-
-    // STEP 2: Now inject the NEW script
-    const result = await injectDeferScript(shop, shopRecord.short_id, shopRecord.access_token);
-
-    await ShopModel.updateOne(
-      { shop },
-      {
-        $set: {
-          script_injected: true,
-          script_injection_attempted: true
-        },
-        $push: {
-          history: {
-            event: "script_injection",
-            timestamp: new Date(),
-            details: {
-              success: result.success,
-              position: result.position,
-              theme_id: result.themeId,
-              replaced_old: true
-            }
-          }
-        }
-      }
-    );
-
-    res.json({ 
-      ok: true, 
-      message: "Script updated successfully with ?norl support",
-      ...result
-    });
-
-  } catch (error) {
-    console.error('[Inject Script] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-// ============================================================
-// ROUTE: Disconnect
-// ============================================================
-router.post("/disconnect", async (req, res) => {
-  const { shop } = req.body;
-  
-  console.log(`[RL] Disconnect request for: ${shop}`);
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    
-    await ShopModel.updateOne(
-      { shop },
-      {
-        $unset: { 
-          api_token: "", 
-          short_id: "",
-          script_injected: "",
-          script_injection_attempted: "",
-          critical_css_injected: ""
-        },
-        $set: { 
-          connected_at: null,
-          needs_setup: false,
-          setup_completed: false
-        },
-        $push: {
-          history: {
-            event: "disconnect",
-            timestamp: new Date(),
-            details: { via: "manual-disconnect" }
-          }
-        }
-      }
-    );
-
-    console.log(`[RL] ✅ Disconnected shop: ${shop}`);
-    
-    res.json({ 
-      ok: true, 
-      message: "Disconnected from RabbitLoader successfully" 
-    });
-    
-  } catch (error) {
-    console.error(`[RL] ❌ Disconnect error:`, error);
-    res.status(500).json({ 
-      ok: false, 
-      error: "Failed to disconnect" 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Health Check
-// ============================================================
-router.get("/health", (req, res) => {
-  res.json({
-    ok: true,
-    service: "rabbitloader-shopify-integration",
-    timestamp: new Date().toISOString(),
-    routes: [
-      "rl-callback",
-      "rl-connect",
-      "status",
-      "dashboard-data",
-      "manual-instructions",
-      "inject-script",
-      "disconnect",
-      "health",
-      "debug"
-    ],
-    features: [
-      "oauth-connection",
-      "auto-script-injection",
-      "manual-instructions",
-      "setup-flow",
-      "disconnect"
-    ]
-  });
-});
-
-// ============================================================
-// ROUTE: Debug
-// ============================================================
-router.get("/debug/:shop", async (req, res) => {
-  const { shop } = req.params;
-  
-  try {
-    const ShopModel = require("../models/Shop");
-    
-    let shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord && !shop.includes('.myshopify.com')) {
-      shopRecord = await ShopModel.findOne({ shop: shop + '.myshopify.com' });
-    }
-    
-    if (!shopRecord) {
-      return res.json({ 
-        found: false, 
-        shop,
-        message: "Shop not found in database"
-      });
-    }
-    
-    res.json({
-      found: true,
-      shop: shopRecord.shop,
-      connected: !!shopRecord.api_token,
-      needs_setup: shopRecord.needs_setup || false,
-      setup_completed: shopRecord.setup_completed || false,
-      script_injected: shopRecord.script_injected || false,
-      critical_css_injected: shopRecord.critical_css_injected || false,
-      injection_attempted: shopRecord.script_injection_attempted || false,
-      connected_at: shopRecord.connected_at,
-      did: shopRecord.short_id,
-      account_id: shopRecord.account_id,
-      history: shopRecord.history || [],
-      site_structure: shopRecord.site_structure || null
-    });
-  } catch (error) {
-    res.status(500).json({ 
-      error: error.message 
-    });
-  }
-});
-// ============================================================
-// ROUTE: Get Pages List with Templates (OPTIMIZED - PAGINATED)
-// ============================================================
-router.get("/pages-list", async (req, res) => {
-  const { shop, page = 1, limit = 100 } = req.query;
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.site_structure) {
-      return res.json({
-        ok: true,
-        data: {
-          templates: {},
-          all_pages: [],
-          total_pages: 0,
-          page: 1,
-          total_pages_count: 0,
-          has_more: false
-        },
-        message: "No site structure found. Run site analysis first."
-      });
-    }
-
-    const { site_structure } = shopRecord;
-    const templateGroups = site_structure.template_groups instanceof Map ?
-      site_structure.template_groups :
-      new Map(Object.entries(site_structure.template_groups));
-
-    // Get global defer rules from deferConfig
-    const globalDeferRules = shopRecord.deferConfig?.rules 
-      ? shopRecord.deferConfig.rules.filter(r => r.enabled !== false).length 
-      : 0;
-
-    console.log(`[Pages List] Global defer rules count: ${globalDeferRules}`);
-
-    // Build templates summary (lightweight - no pages array)
-    const templates = {};
-    let allPages = [];
-
-    for (const [templateName, templateData] of templateGroups) {
-      const pages = templateData.pages || [];
+    // Dashboard configuration
+    const dashboardConfig = {
+      platform: 'shopify',
+      shopIdentifier: shop,
+      host: host,
+      did: shopRecord.short_id || shopRecord.did,
+      apiToken: shopRecord.api_token,
+      isConnected: isConnected,
+      needsAuth: needsAuth,
       
-      // Get template-level defer rules count
-      const templateJsRules = (templateData.js_defer_rules || []).length;
+      // Microservice URLs (proxied through this app)
+      apiUrl: '/api/dashboard',
+      psiUrl: '/api/dashboard/psi',
+      criticalCSSUrl: '/api/dashboard/critical-css',
+      jsDeferUrl: '/api/dashboard/js-defer',
+      rlCoreUrl: '/api/dashboard/rl-core',
       
-      // Summary only for templates object
-      templates[templateName] = {
-        count: templateData.count || pages.length,
-        sample_page: templateData.sample_page || (pages[0] ? pages[0].url : '/'),
-        critical_css_enabled: templateData.critical_css_enabled !== false,
-        js_defer_count: templateJsRules + globalDeferRules
-      };
-      
-      // Collect all pages for pagination
-      allPages.push(...pages.map(page => {
-        // Calculate total defer rules: page-level + template-level + global
-        const pageJsRules = (page.js_defer_rules || []).length;
-        const totalJsRules = pageJsRules + templateJsRules + globalDeferRules;
-        
-        return {
-          ...page,
-          template: templateName,
-          critical_css_enabled: page.critical_css_enabled !== false,
-          js_defer_count: totalJsRules,
-          page_level_rules: pageJsRules,
-          template_level_rules: templateJsRules,
-          global_defer_rules: globalDeferRules
-        };
-      }));
-    }
-
-    // Paginate
-    const pageNum = parseInt(page) || 1;
-    const pageLimit = Math.min(parseInt(limit) || 100, 200); // Max 200 per page
-    const startIndex = (pageNum - 1) * pageLimit;
-    const endIndex = startIndex + pageLimit;
-    
-    const paginatedPages = allPages.slice(startIndex, endIndex);
-    const totalPages = allPages.length;
-    const hasMore = endIndex < totalPages;
-
-    console.log(`[Pages List] Loaded page ${pageNum} (${paginatedPages.length} pages) of ${totalPages} total for ${shop}, global rules: ${globalDeferRules}`);
-
-    res.json({
-      ok: true,
-      data: {
-        templates: templates,
-        all_pages: paginatedPages,
-        total_pages: paginatedPages.length,
-        total_pages_count: totalPages,
-        total_templates: Object.keys(templates).length,
-        page: pageNum,
-        limit: pageLimit,
-        has_more: hasMore,
-        global_defer_rules: globalDeferRules
+      features: {
+        performance: true,
+        pages: true,
+        jsOptimization: true,
+        criticalCSS: true,
+        settings: true,
+        analytics: true
       }
-    });
-
-  } catch (error) {
-    console.error('[Pages List] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Toggle Critical CSS for Template
-// ============================================================
-router.post("/toggle-template-css", async (req, res) => {
-  const { shop, template, enabled } = req.body;
-  
-  if (!shop || !template) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop and template parameters required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    
-    // Update template-level setting
-    await ShopModel.updateOne(
-      { shop },
-      {
-        $set: {
-          [`site_structure.template_groups.${template}.critical_css_enabled`]: enabled
-        },
-        $push: {
-          history: {
-            event: "toggle_template_css",
-            timestamp: new Date(),
-            details: {
-              template: template,
-              enabled: enabled
-            }
-          }
-        }
-      }
-    );
-
-    console.log(`[Toggle CSS] Template ${template} CSS ${enabled ? 'enabled' : 'disabled'} for ${shop}`);
-
-    res.json({
-      ok: true,
-      message: `Critical CSS ${enabled ? 'enabled' : 'disabled'} for template ${template}`
-    });
-
-  } catch (error) {
-    console.error('[Toggle Template CSS] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Toggle Critical CSS for Single Page
-// ============================================================
-router.post("/toggle-page-css", async (req, res) => {
-  const { shop, page_id, template, enabled } = req.body;
-  
-  if (!shop || !page_id || !template) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop, page_id, and template parameters required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.site_structure) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop site structure not found" 
-      });
-    }
-
-    // Find and update the specific page
-    const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-      shopRecord.site_structure.template_groups :
-      new Map(Object.entries(shopRecord.site_structure.template_groups));
-    
-    const templateData = templateGroups.get(template);
-    
-    if (!templateData) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Template not found" 
-      });
-    }
-
-    const pages = templateData.pages || [];
-    const pageIndex = pages.findIndex(p => p.id === page_id);
-    
-    if (pageIndex === -1) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Page not found" 
-      });
-    }
-
-    // Update the page
-    await ShopModel.updateOne(
-      { shop },
-      {
-        $set: {
-          [`site_structure.template_groups.${template}.pages.${pageIndex}.critical_css_enabled`]: enabled
-        },
-        $push: {
-          history: {
-            event: "toggle_page_css",
-            timestamp: new Date(),
-            details: {
-              page_id: page_id,
-              template: template,
-              enabled: enabled
-            }
-          }
-        }
-      }
-    );
-
-    console.log(`[Toggle CSS] Page ${page_id} CSS ${enabled ? 'enabled' : 'disabled'} for ${shop}`);
-
-    res.json({
-      ok: true,
-      message: `Critical CSS ${enabled ? 'enabled' : 'disabled'} for page`
-    });
-
-  } catch (error) {
-    console.error('[Toggle Page CSS] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Get JS Rules (Template or Page)
-// ============================================================
-router.get("/js-rules", async (req, res) => {
-  const { shop, template, page_id } = req.query;
-  
-  if (!shop || (!template && !page_id)) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop and either template or page_id required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.site_structure) {
-      return res.json({
-        ok: true,
-        rules: []
-      });
-    }
-
-    let rules = [];
-
-    if (template) {
-      // Get template-level rules
-      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-        shopRecord.site_structure.template_groups :
-        new Map(Object.entries(shopRecord.site_structure.template_groups));
-      
-      const templateData = templateGroups.get(template);
-      rules = templateData?.js_defer_rules || [];
-    } else if (page_id) {
-      // Get page-level rules
-      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-        shopRecord.site_structure.template_groups :
-        new Map(Object.entries(shopRecord.site_structure.template_groups));
-      
-      for (const [templateName, templateData] of templateGroups) {
-        const pages = templateData.pages || [];
-        const page = pages.find(p => p.id === page_id);
-        
-        if (page) {
-          rules = page.js_defer_rules || [];
-          break;
-        }
-      }
-    }
-
-    res.json({
-      ok: true,
-      rules: rules
-    });
-
-  } catch (error) {
-    console.error('[Get JS Rules] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-// ============================================================
-// ROUTE: Debug Defer Rules
-// ============================================================
-router.get("/debug-defer/:shop", async (req, res) => {
-  const { shop } = req.params;
-  
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord) {
-      return res.json({ found: false });
-    }
-    
-    res.json({
-      found: true,
-      shop: shop,
-      defer_config: shopRecord.deferConfig || null,
-      defer_rules_count: shopRecord.deferConfig?.rules?.length || 0,
-      site_structure_templates: shopRecord.site_structure?.template_groups 
-        ? Object.keys(shopRecord.site_structure.template_groups).map(template => ({
-            template: template,
-            js_defer_rules: (shopRecord.site_structure.template_groups[template].js_defer_rules || []).length
-          }))
-        : []
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// ============================================================
-// ROUTE: Add JS Rule
-// ============================================================
-router.post("/add-js-rule", async (req, res) => {
-  const { shop, template, page_id, pattern, action, delay, reason } = req.body;
-  
-  if (!shop || !pattern || !action) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop, pattern, and action are required" 
-    });
-  }
-
-  if (!['defer', 'async', 'delay', 'block'].includes(action)) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Action must be one of: defer, async, delay, block" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    
-    const newRule = {
-      id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      pattern: pattern,
-      action: action,
-      delay: action === 'delay' ? (delay || 3000) : null,
-      reason: reason || '',
-      created_at: new Date()
     };
 
-    let updateQuery = {};
+    // Render embedded dashboard page
+    res.send(`
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RabbitLoader Dashboard</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
     
-    if (template) {
-      // Add to template
-      updateQuery = {
-        $push: {
-          [`site_structure.template_groups.${template}.js_defer_rules`]: newRule,
-          history: {
-            event: "add_js_rule",
-            timestamp: new Date(),
-            details: {
-              template: template,
-              pattern: pattern,
-              action: action
-            }
-          }
-        }
-      };
-    } else if (page_id) {
-      // Add to specific page - need to find it first
-      const shopRecord = await ShopModel.findOne({ shop });
-      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-        shopRecord.site_structure.template_groups :
-        new Map(Object.entries(shopRecord.site_structure.template_groups));
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: #f6f6f7;
+      overflow: hidden;
+    }
+    
+    #dashboard-container {
+      width: 100%;
+      height: 100vh;
+      position: relative;
+    }
+    
+    #dashboard-iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      display: ${isConnected ? 'block' : 'none'};
+    }
+    
+    #connection-required {
+      display: ${isConnected ? 'none' : 'flex'};
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      text-align: center;
+      padding: 40px;
+    }
+    
+    #connection-required h1 {
+      font-size: 24px;
+      margin-bottom: 16px;
+      color: #202223;
+    }
+    
+    #connection-required p {
+      font-size: 14px;
+      color: #6d7175;
+      margin-bottom: 24px;
+      max-width: 500px;
+    }
+    
+    .btn-primary {
+      background: #008060;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 4px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: none;
+      display: inline-block;
+    }
+    
+    .btn-primary:hover {
+      background: #006e52;
+    }
+    
+    #loading-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(255, 255, 255, 0.9);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    
+    .spinner {
+      border: 3px solid #f3f3f3;
+      border-top: 3px solid #008060;
+      border-radius: 50%;
+      width: 40px;
+      height: 40px;
+      animation: spin 1s linear infinite;
+    }
+    
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div id="dashboard-container">
+    <!-- Connection Required Screen -->
+    <div id="connection-required">
+      <h1>🐰 Connect to RabbitLoader</h1>
+      <p>
+        Connect your store to RabbitLoader to start optimizing your site's performance.
+        This will enable defer configurations, critical CSS generation, and performance monitoring.
+      </p>
+      <a href="/rl/rl-connect?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host || '')}" class="btn-primary">
+        Connect to RabbitLoader
+      </a>
+    </div>
+    
+    <!-- Dashboard iFrame -->
+    <iframe 
+      id="dashboard-iframe"
+      src="http://45.32.212.222:3006?platform=shopify&shop=${encodeURIComponent(shop)}&debug=false"
+      allow="fullscreen"
+    ></iframe>
+    
+    <!-- Loading Overlay -->
+    <div id="loading-overlay">
+      <div class="spinner"></div>
+    </div>
+  </div>
+
+  <script>
+    // Dashboard configuration passed from server
+    window.DASHBOARD_CONFIG = ${JSON.stringify(dashboardConfig, null, 2)};
+    
+    const iframe = document.getElementById('dashboard-iframe');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    
+    // Handle iframe load
+    iframe.addEventListener('load', function() {
+      console.log('Dashboard iframe loaded');
       
-      let foundTemplate = null;
-      let pageIndex = -1;
-      
-      for (const [templateName, templateData] of templateGroups) {
-        const pages = templateData.pages || [];
-        pageIndex = pages.findIndex(p => p.id === page_id);
+      // Send configuration to iframe
+      setTimeout(() => {
+        iframe.contentWindow.postMessage({
+          type: 'RABBITLOADER_CONFIG',
+          config: window.DASHBOARD_CONFIG
+        }, '*');
         
-        if (pageIndex !== -1) {
-          foundTemplate = templateName;
+        // Hide loading overlay
+        loadingOverlay.style.display = 'none';
+      }, 500);
+    });
+    
+    // Listen for messages from dashboard
+    window.addEventListener('message', function(event) {
+      // Verify origin (in production, use exact origin)
+      if (!event.origin.includes('45.32.212.222')) return;
+      
+      console.log('Message from dashboard:', event.data);
+      
+      switch(event.data.type) {
+        case 'RABBITLOADER_READY':
+          console.log('✅ Dashboard ready');
+          loadingOverlay.style.display = 'none';
           break;
-        }
-      }
-      
-      if (!foundTemplate) {
-        return res.status(404).json({ 
-          ok: false, 
-          error: "Page not found" 
-        });
-      }
-      
-      updateQuery = {
-        $push: {
-          [`site_structure.template_groups.${foundTemplate}.pages.${pageIndex}.js_defer_rules`]: newRule,
-          history: {
-            event: "add_js_rule",
-            timestamp: new Date(),
-            details: {
-              page_id: page_id,
-              pattern: pattern,
-              action: action
-            }
+          
+        case 'RABBITLOADER_REQUEST_CONFIG':
+          // Dashboard is requesting config
+          iframe.contentWindow.postMessage({
+            type: 'RABBITLOADER_CONFIG',
+            config: window.DASHBOARD_CONFIG
+          }, '*');
+          break;
+          
+        case 'RABBITLOADER_NAVIGATE':
+          // Dashboard wants to navigate
+          window.location.href = event.data.url;
+          break;
+          
+        case 'RABBITLOADER_RESIZE':
+          // Dashboard wants to resize (optional)
+          if (event.data.height) {
+            iframe.style.height = event.data.height + 'px';
           }
-        }
-      };
-    } else {
-      return res.status(400).json({ 
-        ok: false, 
-        error: "Either template or page_id must be provided" 
-      });
-    }
-
-    await ShopModel.updateOne({ shop }, updateQuery);
-
-    console.log(`[Add JS Rule] Added rule for ${shop}: ${pattern} -> ${action}`);
-
-    res.json({
-      ok: true,
-      message: "JS rule added successfully",
-      rule: newRule
-    });
-
-  } catch (error) {
-    console.error('[Add JS Rule] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Delete JS Rule
-// ============================================================
-router.post("/delete-js-rule", async (req, res) => {
-  const { shop, rule_id } = req.body;
-  
-  if (!shop || !rule_id) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop and rule_id are required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.site_structure) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop not found" 
-      });
-    }
-
-    // Find and remove the rule
-    const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-      shopRecord.site_structure.template_groups :
-      new Map(Object.entries(shopRecord.site_structure.template_groups));
-    
-    let ruleFound = false;
-    
-    for (const [templateName, templateData] of templateGroups) {
-      // Check template-level rules
-      if (templateData.js_defer_rules) {
-        const ruleIndex = templateData.js_defer_rules.findIndex(r => r.id === rule_id);
-        if (ruleIndex !== -1) {
-          await ShopModel.updateOne(
-            { shop },
-            {
-              $pull: {
-                [`site_structure.template_groups.${templateName}.js_defer_rules`]: { id: rule_id }
-              }
-            }
-          );
-          ruleFound = true;
           break;
-        }
+          
+        case 'RABBITLOADER_ERROR':
+          console.error('Dashboard error:', event.data.error);
+          alert('Dashboard error: ' + event.data.error);
+          break;
       }
-      
-      // Check page-level rules
-      if (templateData.pages) {
-        for (let i = 0; i < templateData.pages.length; i++) {
-          const page = templateData.pages[i];
-          if (page.js_defer_rules) {
-            const ruleIndex = page.js_defer_rules.findIndex(r => r.id === rule_id);
-            if (ruleIndex !== -1) {
-              await ShopModel.updateOne(
-                { shop },
-                {
-                  $pull: {
-                    [`site_structure.template_groups.${templateName}.pages.${i}.js_defer_rules`]: { id: rule_id }
-                  }
-                }
-              );
-              ruleFound = true;
-              break;
-            }
+    });
+    
+    // Handle connection status changes
+    if (${isConnected}) {
+      // Poll for connection changes (optional)
+      setInterval(async () => {
+        try {
+          const response = await fetch('/shopify/status?shop=${encodeURIComponent(shop)}');
+          const data = await response.json();
+          
+          if (!data.connected && window.location.href.indexOf('connected=1') === -1) {
+            // Lost connection, reload
+            window.location.reload();
           }
+        } catch (error) {
+          console.error('Status check failed:', error);
         }
-        if (ruleFound) break;
-      }
+      }, 30000); // Check every 30 seconds
     }
-
-    if (!ruleFound) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Rule not found" 
-      });
-    }
-
-    console.log(`[Delete JS Rule] Deleted rule ${rule_id} for ${shop}`);
-
-    res.json({
-      ok: true,
-      message: "JS rule deleted successfully"
-    });
-
+  </script>
+</body>
+</html>
+    `);
+    
   } catch (error) {
-    console.error('[Delete JS Rule] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
+    console.error('[Dashboard] Error:', error);
+    res.status(500).send("Failed to load dashboard: " + error.message);
   }
 });
 
-// ============================================================
-// ROUTE: Export Defer Configuration (for loader.js)
-// ============================================================
-router.get("/export-defer-config", async (req, res) => {
-  const { shop } = req.query;
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.site_structure) {
-      return res.json({
-        ok: true,
-        config: {
-          templates: {},
-          global_rules: []
-        }
-      });
-    }
-
-    const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-      shopRecord.site_structure.template_groups :
-      new Map(Object.entries(shopRecord.site_structure.template_groups));
-    
-    const config = {
-      templates: {},
-      global_rules: []
-    };
-    
-    for (const [templateName, templateData] of templateGroups) {
-      config.templates[templateName] = {
-        critical_css_enabled: templateData.critical_css_enabled !== false,
-        js_defer_rules: templateData.js_defer_rules || []
-      };
-    }
-
-    res.json({
-      ok: true,
-      config: config,
-      shop: shop,
-      generated_at: new Date().toISOString()
-    });
-
-  } catch (error) {
-    console.error('[Export Config] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-// ============================================================
-// ROUTE: Analyze Page Performance (ASYNC WITH QUEUE)
-// ============================================================
-router.get("/analyze-page", async (req, res) => {
-  const { shop, url } = req.query;
-  
-  if (!shop || !url) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop and url parameters required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.short_id) {
-      return res.status(404).json({ 
-        ok: false, 
-        error: "Shop not connected to RabbitLoader" 
-      });
-    }
-
-    // Check for cached results (last 1 hour)
-    const PagePerformance = require("../models/PagePerformance");
-    const oneHourAgo = new Date(Date.now() - 3600000);
-    
-    const cached = await PagePerformance.findOne({
-      shop: shop,
-      url: url,
-      analyzed_at: { $gte: oneHourAgo }
-    });
-    
-    if (cached) {
-      console.log(`[Analyze Page] ✅ Returning cached scores for ${url}`);
-      return res.json({
-        ok: true,
-        scores: {
-          mobile: cached.mobile_score,
-          desktop: cached.desktop_score
-        },
-        url: url,
-        analyzed_at: cached.analyzed_at,
-        cached: true
-      });
-    }
-
-    // Check if analysis is already in progress
-    const AnalysisQueue = require("../models/AnalysisQueue");
-    const pending = await AnalysisQueue.findOne({
-      shop: shop,
-      url: url,
-      status: { $in: ['pending', 'processing'] }
-    });
-    
-    if (pending) {
-      console.log(`[Analyze Page] ⏳ Analysis already queued for ${url}`);
-      return res.json({
-        ok: true,
-        status: 'analyzing',
-        queued_at: pending.created_at,
-        message: 'Analysis in progress. Check back in 60 seconds.'
-      });
-    }
-
-    // Queue new analysis
-    await AnalysisQueue.create({
-      shop: shop,
-      url: url,
-      full_url: `https://${shop}${url}`,
-      status: 'pending',
-      created_at: new Date()
-    });
-
-    console.log(`[Analyze Page] 🔄 Queued analysis for ${url}`);
-
-    res.json({
-      ok: true,
-      status: 'queued',
-      message: 'Analysis queued. Results will be available in ~60 seconds.',
-      poll_url: `/rl/get-page-performance?shop=${shop}&url=${encodeURIComponent(url)}`
-    });
-
-  } catch (error) {
-    console.error('[Analyze Page] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Get Page Performance Results
-// ============================================================
-router.get("/get-page-performance", async (req, res) => {
-  const { shop, url } = req.query;
-  
-  if (!shop || !url) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop and url parameters required" 
-    });
-  }
-
-  try {
-    const PagePerformance = require("../models/PagePerformance");
-    
-    // Get latest result
-    const result = await PagePerformance.findOne({
-      shop: shop,
-      url: url
-    }).sort({ analyzed_at: -1 });
-    
-    if (result) {
-      return res.json({
-        ok: true,
-        status: 'completed',
-        scores: {
-          mobile: result.mobile_score,
-          desktop: result.desktop_score
-        },
-        url: url,
-        analyzed_at: result.analyzed_at
-      });
-    }
-
-    // Check queue status
-    const AnalysisQueue = require("../models/AnalysisQueue");
-    const queued = await AnalysisQueue.findOne({
-      shop: shop,
-      url: url
-    }).sort({ created_at: -1 });
-    
-    if (queued) {
-      if (queued.status === 'failed') {
-        return res.json({
-          ok: false,
-          status: 'failed',
-          error: queued.error || 'Analysis failed'
-        });
-      }
-      
-      return res.json({
-        ok: true,
-        status: queued.status,
-        message: queued.status === 'processing' 
-          ? 'Analysis in progress...' 
-          : 'Analysis queued...'
-      });
-    }
-
-    res.json({
-      ok: true,
-      status: 'not_found',
-      message: 'No analysis found. Request a new analysis.'
-    });
-
-  } catch (error) {
-    console.error('[Get Performance] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Apply JS Rule (Page/Template/Global)
-// ============================================================
-router.post("/apply-js-rule", async (req, res) => {
-  const { shop, scope, template, pageId, scriptUrl, action } = req.body;
-  
-  if (!shop || !scope || !action) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop, scope, and action are required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    
-    const newRule = {
-      id: `rule_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-      pattern: scriptUrl,
-      action: action,
-      created_at: new Date()
-    };
-
-    let updateQuery = {};
-    
-    if (scope === 'page') {
-      // Apply to single page
-      const shopRecord = await ShopModel.findOne({ shop });
-      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-        shopRecord.site_structure.template_groups :
-        new Map(Object.entries(shopRecord.site_structure.template_groups));
-      
-      let foundTemplate = null;
-      let pageIndex = -1;
-      
-      for (const [templateName, templateData] of templateGroups) {
-        const pages = templateData.pages || [];
-        pageIndex = pages.findIndex(p => p._doc?.id === pageId || p.id === pageId);
-        
-        if (pageIndex !== -1) {
-          foundTemplate = templateName;
-          break;
-        }
-      }
-      
-      if (!foundTemplate) {
-        return res.status(404).json({ 
-          ok: false, 
-          error: "Page not found" 
-        });
-      }
-      
-      updateQuery = {
-        $push: {
-          [`site_structure.template_groups.${foundTemplate}.pages.${pageIndex}.js_defer_rules`]: newRule
-        }
-      };
-      
-    } else if (scope === 'template') {
-      // Apply to all pages in template
-      updateQuery = {
-        $push: {
-          [`site_structure.template_groups.${template}.js_defer_rules`]: newRule
-        }
-      };
-      
-    } else if (scope === 'global') {
-      // Apply to all templates
-      const shopRecord = await ShopModel.findOne({ shop });
-      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-        shopRecord.site_structure.template_groups :
-        new Map(Object.entries(shopRecord.site_structure.template_groups));
-      
-      const updates = [];
-      for (const templateName of templateGroups.keys()) {
-        updates.push(
-          ShopModel.updateOne(
-            { shop },
-            {
-              $push: {
-                [`site_structure.template_groups.${templateName}.js_defer_rules`]: newRule
-              }
-            }
-          )
-        );
-      }
-      
-      await Promise.all(updates);
-      
-      return res.json({
-        ok: true,
-        message: `JS rule applied globally to all templates`
-      });
-    }
-
-    await ShopModel.updateOne({ shop }, updateQuery);
-
-    console.log(`[Apply JS Rule] Applied ${action} for ${scriptUrl} to ${scope} in ${shop}`);
-
-    res.json({
-      ok: true,
-      message: `JS rule applied successfully to ${scope}`,
-      rule: newRule
-    });
-
-  } catch (error) {
-    console.error('[Apply JS Rule] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Apply CSS Setting (Page/Template/Global)
-// ============================================================
-router.post("/apply-css-setting", async (req, res) => {
-  const { shop, scope, template, pageId, enabled } = req.body;
-  
-  if (!shop || !scope || enabled === undefined) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop, scope, and enabled are required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    let updateQuery = {};
-    
-    if (scope === 'page') {
-      // Apply to single page
-      const shopRecord = await ShopModel.findOne({ shop });
-      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-        shopRecord.site_structure.template_groups :
-        new Map(Object.entries(shopRecord.site_structure.template_groups));
-      
-      let foundTemplate = null;
-      let pageIndex = -1;
-      
-      for (const [templateName, templateData] of templateGroups) {
-        const pages = templateData.pages || [];
-        pageIndex = pages.findIndex(p => p._doc?.id === pageId || p.id === pageId);
-        
-        if (pageIndex !== -1) {
-          foundTemplate = templateName;
-          break;
-        }
-      }
-      
-      if (!foundTemplate) {
-        return res.status(404).json({ 
-          ok: false, 
-          error: "Page not found" 
-        });
-      }
-      
-      updateQuery = {
-        $set: {
-          [`site_structure.template_groups.${foundTemplate}.pages.${pageIndex}.critical_css_enabled`]: enabled
-        }
-      };
-      
-    } else if (scope === 'template') {
-      // Apply to template
-      updateQuery = {
-        $set: {
-          [`site_structure.template_groups.${template}.critical_css_enabled`]: enabled
-        }
-      };
-      
-    } else if (scope === 'global') {
-      // Apply to all templates
-      const shopRecord = await ShopModel.findOne({ shop });
-      const templateGroups = shopRecord.site_structure.template_groups instanceof Map ?
-        shopRecord.site_structure.template_groups :
-        new Map(Object.entries(shopRecord.site_structure.template_groups));
-      
-      const updates = [];
-      for (const templateName of templateGroups.keys()) {
-        updates.push(
-          ShopModel.updateOne(
-            { shop },
-            {
-              $set: {
-                [`site_structure.template_groups.${templateName}.critical_css_enabled`]: enabled
-              }
-            }
-          )
-        );
-      }
-      
-      await Promise.all(updates);
-      
-      return res.json({
-        ok: true,
-        message: `Critical CSS ${enabled ? 'enabled' : 'disabled'} globally`
-      });
-    }
-
-    await ShopModel.updateOne({ shop }, updateQuery);
-
-    console.log(`[Apply CSS Setting] Set to ${enabled} for ${scope} in ${shop}`);
-
-    res.json({
-      ok: true,
-      message: `Critical CSS ${enabled ? 'enabled' : 'disabled'} for ${scope}`
-    });
-
-  } catch (error) {
-    console.error('[Apply CSS Setting] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-
-// ============================================================
-// ROUTE: Analyze/Refresh Site Structure
-// ============================================================
-router.post("/analyze-site", async (req, res) => {
-  const { shop } = req.body;
-  
-  if (!shop) {
-    return res.status(400).json({ 
-      ok: false, 
-      error: "Shop parameter required" 
-    });
-  }
-
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.access_token) {
-      return res.status(400).json({ 
-        ok: false, 
-        error: 'Shop not found or access token missing' 
-      });
-    }
-
-    const { analyzeSite } = require("../workers/site-analyzer");
-    const siteStructure = await analyzeSite(shop, shopRecord.access_token);
-
-    res.json({
-      ok: true,
-      message: "Site structure analyzed successfully",
-      total_pages: siteStructure.total_pages
-    });
-
-  } catch (error) {
-    console.error('[Analyze Site] Error:', error);
-    res.status(500).json({ 
-      ok: false, 
-      error: error.message 
-    });
-  }
-});
-// ============================================================
-// WEBHOOK: Product Created/Updated
-// ============================================================
-router.post("/webhooks/products/update", async (req, res) => {
-  const shop = req.get('X-Shopify-Shop-Domain');
-  
-  console.log(`[Webhook] Product updated for ${shop}`);
-  
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (shopRecord && shopRecord.access_token) {
-      const { analyzeSite } = require("../workers/site-analyzer");
-      await analyzeSite(shop, shopRecord.access_token);
-      console.log(`[Webhook] ✅ Site structure refreshed for ${shop}`);
-    }
-    
-    res.status(200).send('OK');
-  } catch (error) {
-    console.error('[Webhook] Error:', error);
-    res.status(500).send('Error');
-  }
-});
-// ============================================================
-// ROUTE: Check what's actually injected in theme.liquid
-// ============================================================
-router.get("/check-injection/:shop", async (req, res) => {
-  const { shop } = req.params;
-  
-  try {
-    const ShopModel = require("../models/Shop");
-    const shopRecord = await ShopModel.findOne({ shop });
-    
-    if (!shopRecord || !shopRecord.access_token) {
-      return res.json({ error: 'Shop not found' });
-    }
-
-    // Get theme content
-    const themesResponse = await fetch(`https://${shop}/admin/api/2025-01/themes.json`, {
-      headers: { 'X-Shopify-Access-Token': shopRecord.access_token }
-    });
-    const themesData = await themesResponse.json();
-    const activeTheme = themesData.themes.find(t => t.role === 'main');
-    
-    const assetResponse = await fetch(`https://${shop}/admin/api/2025-01/themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`, {
-      headers: { 'X-Shopify-Access-Token': shopRecord.access_token }
-    });
-    const assetData = await assetResponse.json();
-    
-    // Extract just the RabbitLoader section
-    const content = assetData.asset.value;
-    const rlMatch = content.match(/<!-- RabbitLoader[\s\S]{0,2000}?<\/script>/);
-    
-    res.json({
-      found: !!rlMatch,
-      script: rlMatch ? rlMatch[0] : 'Not found',
-      hasNorlCheck: content.includes('norl'),
-      hasWindowLocationSearch: content.includes('window.location.search'),
-      hasDisabledVariable: content.includes('disabled'),
-      hasRabbitLoaderDisabled: content.includes('RABBITLOADER_DISABLED')
-    });
-    
-  } catch (error) {
-    res.json({ error: error.message });
-  }
-});
-
-// ============================================================
-// EXPORTS
-// ============================================================
-module.exports = {
-  router,
-  injectDeferScript
-};
+module.exports = router;

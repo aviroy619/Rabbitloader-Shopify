@@ -137,12 +137,16 @@ const shopifyRoutes = require("./routes/shopify");
 const deferConfigRoutes = require("./routes/deferConfig");
 const { router: dashboardRouter } = require("./routes/dashboard");
 const performanceRoutes = require("./routes/performance");
+const dashboardRoutes = require("./routes/dashboard");
+const dashboardProxyRoutes = require("./routes/dashboardProxy");
 
 // ====== Mount Routes ======
 app.use("/shopify", shopifyRoutes);          // ✅ Mount Shopify router properly
 app.use("/defer-config", deferConfigRoutes); // ✅ Defer configuration endpoints
 app.use("/rl", dashboardRouter);             // ✅ Dashboard-related routes
 app.use("/api/performance", performanceRoutes); // ✅ Performance-related routes
+app.use("/dashboard", dashboardRoutes);
+app.use("/api/dashboard", dashboardProxyRoutes);
 
 // Helper function to inject Critical CSS into theme - OPTION A (First Position)
 async function injectCriticalCSSIntoTheme(shop, did, accessToken) {

@@ -1,11 +1,9 @@
 const express = require("express");
 const router = express.Router();
-const { shopifyRequest } = require("../utils/shopifyApi");
 const jwt = require("jsonwebtoken");
 const ShopModel = require("../models/Shop");
-const { injectDeferScript, injectCriticalCSSIntoTheme } = require("../utils/shopifyApi");
+const { shopifyRequest } = require("../utils/shopifyApi");
 
-// Helper function to inject defer script
 // Helper function to inject defer script
 async function injectDeferScript(shop, did, accessToken) {
   console.log(`[RL] Attempting auto defer script injection for ${shop} with DID: ${did}`);
@@ -57,12 +55,11 @@ async function injectDeferScript(shop, did, accessToken) {
     const firstJSPattern = /(<script[^>]*>)/;
     const jsMatch = themeContent.match(firstJSPattern);
 
-  const scriptTag = `
+    const scriptTag = `
   <!-- RabbitLoader Defer Configuration -->
   <link rel="stylesheet" href="${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}" />
   <script src="${deferLoaderUrl}" defer></script>
 `;
-
 
     if (jsMatch) {
       // Inject BEFORE first JS script
@@ -131,7 +128,7 @@ router.get("/rl-callback", async (req, res) => {
       accountId: decoded?.account_id,
     });
 
-    // ✅ Save or update shop connection details
+    // Save or update shop connection details
     const updateData = {
       api_token: decoded.api_token,
       short_id: decoded.short_id,
@@ -145,9 +142,8 @@ router.get("/rl-callback", async (req, res) => {
       { $set: updateData },
       { new: true, upsert: true }
     );
-console.log("[Debug] About to call injectDeferScript", typeof injectDeferScript);
 
-      // ✅ Trigger automatic theme injection
+    // Trigger automatic theme injection
     console.log(`[RL] Triggering auto-injection for ${shop}`);
     try {
       const injectResult = await injectDeferScript(
@@ -155,24 +151,24 @@ console.log("[Debug] About to call injectDeferScript", typeof injectDeferScript)
         decoded.did || decoded.short_id,
         updatedShop.access_token
       );
+      
       if (injectResult.success) {
-  await ShopModel.updateOne(
-    { shop },
-    { 
-      $set: { 
-        script_injected: true,
-        critical_css_injected: true,
-        script_injection_attempted: true
+        await ShopModel.updateOne(
+          { shop },
+          { 
+            $set: { 
+              script_injected: true,
+              critical_css_injected: true,
+              script_injection_attempted: true
+            }
+          }
+        );
       }
-    }
-  );
-}
-
     } catch (injectErr) {
       console.error(`[RL] Auto-injection failed for ${shop}:`, injectErr.message);
     }
 
-    // ✅ Redirect back to embedded dashboard with flags
+    // Redirect back to embedded dashboard with flags
     const redirectUrl = `/?shop=${shop}&host=${host}&embedded=1&connected=1&trigger_setup=1`;
     console.log(`[RL] Redirecting to dashboard with trigger_setup flag: ${redirectUrl}`);
     res.redirect(redirectUrl);
@@ -182,7 +178,6 @@ console.log("[Debug] About to call injectDeferScript", typeof injectDeferScript)
     res.status(500).send("Callback failed: " + error.message);
   }
 });
-
 
 // Connect to RabbitLoader
 router.get("/rl-connect", async (req, res) => {
@@ -241,8 +236,6 @@ router.get("/rl-disconnect", async (req, res) => {
   }
 
   try {
-    const ShopModel = require("../models/Shop");
-    
     await ShopModel.updateOne(
       { shop },
       {
@@ -296,9 +289,8 @@ router.get("/debug/:shop", async (req, res) => {
   const { shop } = req.params;
   
   try {
-    const ShopModel = require("../models/Shop");
-const shopDomain = shop.endsWith(".myshopify.com") ? shop : `${shop}.myshopify.com`;
-const shopRecord = await ShopModel.findOne({ shop: shopDomain });
+    const shopDomain = shop.endsWith(".myshopify.com") ? shop : `${shop}.myshopify.com`;
+    const shopRecord = await ShopModel.findOne({ shop: shopDomain });
     
     if (!shopRecord) {
       return res.json({ found: false, shop });
@@ -323,7 +315,4 @@ const shopRecord = await ShopModel.findOne({ shop: shopDomain });
   }
 });
 
-// Export router as default, attach helper function as property
-router.injectDeferScript = injectDeferScript;
-router.injectCriticalCSSIntoTheme = injectCriticalCSSIntoTheme;
 module.exports = router;
