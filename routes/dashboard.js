@@ -168,7 +168,7 @@ router.get("/", async (req, res) => {
     <!-- Dashboard iFrame -->
     <iframe 
       id="dashboard-iframe"
-      src="http://45.32.212.222:3006?platform=shopify&shop=${encodeURIComponent(shop)}&debug=false"
+      src="https://dashboard.rb8.in?platform=shopify&shop=${encodeURIComponent(shop)}&debug=false"
       allow="fullscreen"
     ></iframe>
     
