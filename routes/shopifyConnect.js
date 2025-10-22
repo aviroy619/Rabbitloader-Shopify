@@ -108,77 +108,89 @@ async function injectDeferScript(shop, did, accessToken) {
 router.get("/rl-callback", async (req, res) => {
   try {
     const { shop, host, 'rl-token': rlToken } = req.query;
-    console.log("[RL] Callback received:", {
-      hasRlToken: !!rlToken,
-      shop,
-      allParams: Object.keys(req.query),
-      referer: req.headers.referer,
-    });
+    console.log("[RL] Callback received:", { hasRlToken: !!rlToken, shop });
 
     if (!shop || !rlToken) {
-      console.log("[RL] Missing shop or rl-token in callback");
+      console.log("[RL] Missing shop or rl-token");
       return res.status(400).send("Invalid callback parameters");
     }
 
-    const decoded = jwt.decode(rlToken);
-    console.log("[RL] Decoded token:", {
-      hasDid: !!decoded?.did,
-      hasApiToken: !!decoded?.api_token,
-      platform: decoded?.platform,
-      accountId: decoded?.account_id,
+    // Decode token
+    const decoded = JSON.parse(Buffer.from(rlToken, 'base64').toString('utf8'));
+    console.log("[RL] Decoded token:", { 
+      hasDid: !!decoded.did, 
+      hasApiToken: !!decoded.api_token 
     });
 
-    // Save or update shop connection details
-    const updateData = {
-      api_token: decoded.api_token,
-      short_id: decoded.short_id,
-      did: decoded.did,
-      needs_setup: true,
-      connected_at: new Date(),
-    };
-
-    const updatedShop = await ShopModel.findOneAndUpdate(
+    // Save BOTH tokens to MongoDB
+    const shopData = await ShopModel.findOneAndUpdate(
       { shop },
-      { $set: updateData },
-      { new: true, upsert: true }
+      { 
+        $set: {
+          api_token: decoded.api_token,      // RL token (JWT)
+          short_id: decoded.did,             // RL domain ID
+          did: decoded.did,                  // RL domain ID (duplicate for compatibility)
+          connected_at: new Date()
+        }
+      },
+      { upsert: true, new: true }
     );
 
-    // Trigger automatic theme injection
-    console.log(`[RL] Triggering auto-injection for ${shop}`);
+    console.log(`[RL] ✅ Tokens saved for ${shop}:`, {
+      has_shopify_token: !!shopData.access_token,
+      has_rl_token: !!shopData.api_token,
+      did: shopData.did
+    });
+
+    // Sync to RL Core
     try {
-      const injectResult = await injectDeferScript(
+      const { syncShopToCore } = require('../utils/rlCoreApi');
+      await syncShopToCore({
         shop,
-        decoded.did || decoded.short_id,
-        updatedShop.access_token
-      );
-      
-      if (injectResult.success) {
-        await ShopModel.updateOne(
-          { shop },
-          { 
-            $set: { 
-              script_injected: true,
-              critical_css_injected: true,
-              script_injection_attempted: true
-            }
-          }
-        );
-      }
-    } catch (injectErr) {
-      console.error(`[RL] Auto-injection failed for ${shop}:`, injectErr.message);
+        access_token: shopData.access_token,  // Shopify token
+        api_token: decoded.api_token,          // RL token
+        short_id: decoded.did,
+        did: decoded.did
+      });
+      console.log(`[RL] ✅ Synced to RL Core`);
+    } catch (syncError) {
+      console.error(`[RL] ⚠️ RL Core sync failed:`, syncError.message);
     }
 
-    // Redirect back to embedded dashboard with flags
-    const redirectUrl = `/?shop=${shop}&host=${host}&embedded=1&connected=1&trigger_setup=1`;
-    console.log(`[RL] Redirecting to dashboard with trigger_setup flag: ${redirectUrl}`);
+    // Inject scripts if we have BOTH tokens
+    if (shopData.access_token) {
+      try {
+        const injectResult = await injectDeferScript(
+          shop, 
+          decoded.did, 
+          shopData.access_token
+        );
+        
+        if (injectResult.success) {
+          await ShopModel.updateOne({ shop }, { 
+            $set: { 
+              script_injected: true,
+              critical_css_injected: true
+            }
+          });
+          console.log(`[RL] ✅ Scripts injected`);
+        }
+      } catch (injectErr) {
+        console.error(`[RL] ❌ Injection failed:`, injectErr.message);
+      }
+    } else {
+      console.warn(`[RL] ⚠️ No Shopify token yet, skipping injection`);
+    }
+
+    // Redirect to dashboard
+    const redirectUrl = `/?shop=${shop}&host=${host}&embedded=1&connected=1`;
     res.redirect(redirectUrl);
 
   } catch (error) {
-    console.error("[RL] Callback processing error:", error.message);
+    console.error("[RL] Callback error:", error);
     res.status(500).send("Callback failed: " + error.message);
   }
 });
-
 // Connect to RabbitLoader
 router.get("/rl-connect", async (req, res) => {
   const { shop, host } = req.query;
