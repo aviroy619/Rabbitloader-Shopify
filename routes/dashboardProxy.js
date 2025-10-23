@@ -45,7 +45,6 @@ async function proxyRequest(serviceUrl, req, res) {
     res.status(status).json(errorData);
   }
 }
-
 // Proxy to PSI Service - Special handling for analyze endpoint
 router.get('/psi/analyze', async (req, res) => {
   const { url, strategy } = req.query;
