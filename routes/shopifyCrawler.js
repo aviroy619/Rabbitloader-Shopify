@@ -296,18 +296,21 @@ async function crawlShopifyStore(shop, accessToken) {
       active_theme: activeThemeName
     };
 
-    const rlCoreResponse = await axios.post(
-      `${RL_CORE_URL}/site-analysis/analyze`,
-      { site_data: siteData },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shop': shop,
-          'X-Platform': 'shopify'
-        },
-        timeout: 30000
-      }
-    );
+   const shopRecord = await ShopModel.findOne({ shop });
+
+const rlCoreResponse = await axios.post(
+  `${RL_CORE_URL}/site-analysis/analyze`,
+  { site_data: siteData },
+  {
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Shop': shop,
+      'X-Platform': 'shopify',
+      'X-API-Key': shopRecord.api_token || shopRecord.rl_api_token
+    },
+    timeout: 30000
+  }
+);
 
     if (rlCoreResponse.data.ok) {
       console.log(`[Crawler] ✅ Data sent to RL Core successfully`);
