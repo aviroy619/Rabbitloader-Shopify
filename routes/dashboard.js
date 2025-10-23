@@ -33,11 +33,11 @@ router.get("/", async (req, res) => {
       needsAuth: needsAuth,
       
       // Microservice URLs (proxied through this app)
-      apiUrl: '/api/dashboard',
-      psiUrl: '/api/dashboard/psi',
-      criticalCSSUrl: '/api/dashboard/critical-css',
-      jsDeferUrl: '/api/dashboard/js-defer',
-      rlCoreUrl: '/api/dashboard/rl-core',
+      apiUrl: '/api/rl-core',
+      psiUrl: '/api/dashboard/psi',           // Should this be /api/rl-core/psi ?
+      criticalCSSUrl: '/api/dashboard/critical-css',  // Should this be /api/rl-core/critical-css ?
+      jsDeferUrl: '/api/dashboard/js-defer',   // Should this be /api/rl-core/js-defer ?
+      rlCoreUrl: '/api/dashboard/rl-core',     // This looks wrong - probably just /api/rl-core
       
       features: {
         performance: true,
