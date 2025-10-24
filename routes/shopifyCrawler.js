@@ -96,7 +96,13 @@ async function crawlShopifyStore(shop, accessToken) {
       `;
       
       const variables = cursor ? { cursor } : {};
-      const response = await shopifyGraphQLRequest(shop, accessToken, query, variables);
+      const response = await shopifyGraphQL(shop, query, variables);
+      
+      // Handle token expiration
+      if (!response.ok && response.error === "TOKEN_EXPIRED") {
+        console.error(`[Crawler] Token expired for ${shop}`);
+        throw new Error('TOKEN_EXPIRED');
+      }
       
       if (!response.data?.products) break;
       
@@ -166,7 +172,13 @@ async function crawlShopifyStore(shop, accessToken) {
       `;
       
       const variables = cursor ? { cursor } : {};
-      const response = await shopifyGraphQLRequest(shop, accessToken, query, variables);
+      const response = await shopifyGraphQL(shop, query, variables);
+      
+      // Handle token expiration
+      if (!response.ok && response.error === "TOKEN_EXPIRED") {
+        console.error(`[Crawler] Token expired for ${shop}`);
+        throw new Error('TOKEN_EXPIRED');
+      }
       
       if (!response.data?.collections) break;
       
@@ -213,7 +225,13 @@ async function crawlShopifyStore(shop, accessToken) {
     // ============================================================
     console.log(`[Crawler] Fetching pages...`);
     
-    const pagesResponse = await shopifyRESTRequest(shop, accessToken, 'pages.json?limit=250');
+    const pagesResponse = await shopifyRequest(shop, 'pages.json?limit=250');
+    
+    // Handle token expiration
+    if (!pagesResponse.ok && pagesResponse.error === "TOKEN_EXPIRED") {
+      console.error(`[Crawler] Token expired for ${shop}`);
+      throw new Error('TOKEN_EXPIRED');
+    }
     
     const pages = [];
     if (pagesResponse.pages) {
@@ -266,10 +284,12 @@ async function crawlShopifyStore(shop, accessToken) {
     // ============================================================
     let activeThemeName = 'Unknown';
     try {
-      const themesData = await shopifyRESTRequest(shop, accessToken, 'themes.json');
-      const activeTheme = themesData.themes?.find(t => t.role === 'main');
-      if (activeTheme) {
-        activeThemeName = activeTheme.name;
+      const themesData = await shopifyRequest(shop, 'themes.json');
+      if (themesData.ok) {
+        const activeTheme = themesData.themes?.find(t => t.role === 'main');
+        if (activeTheme) {
+          activeThemeName = activeTheme.name;
+        }
       }
     } catch (err) {
       console.warn(`[Crawler] Could not fetch theme: ${err.message}`);
@@ -296,21 +316,21 @@ async function crawlShopifyStore(shop, accessToken) {
       active_theme: activeThemeName
     };
 
-   const shopRecord = await ShopModel.findOne({ shop });
+    const shopRecord = await ShopModel.findOne({ shop });
 
-const rlCoreResponse = await axios.post(
-  `${RL_CORE_URL}/site-analysis/analyze`,
-  { site_data: siteData },
-  {
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Shop': shop,
-      'X-Platform': 'shopify',
-      'X-API-Key': shopRecord.api_token || shopRecord.rl_api_token
-    },
-    timeout: 30000
-  }
-);
+    const rlCoreResponse = await axios.post(
+      `${RL_CORE_URL}/site-analysis/analyze`,
+      { site_data: siteData },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shop': shop,
+          'X-Platform': 'shopify',
+          'X-API-Key': shopRecord.api_token
+        },
+        timeout: 30000
+      }
+    );
 
     if (rlCoreResponse.data.ok) {
       console.log(`[Crawler] ✅ Data sent to RL Core successfully`);
@@ -365,29 +385,6 @@ const rlCoreResponse = await axios.post(
     
     throw error;
   }
-}
-
-// ============================================================
-// Helper: Shopify GraphQL Request
-// ============================================================
-const response = await shopifyGraphQL(shop, query, variables);
-
-
-// ============================================================
-// Helper: Shopify REST Request
-// ============================================================
-async function shopifyRESTRequest(shop, accessToken, endpoint) {
-  const response = await axios.get(
-    `https://${shop}/admin/api/2024-01/${endpoint}`,
-    {
-      headers: {
-        'X-Shopify-Access-Token': accessToken
-      },
-      timeout: 30000
-    }
-  );
-  
-  return response.data;
 }
 
 // ============================================================
