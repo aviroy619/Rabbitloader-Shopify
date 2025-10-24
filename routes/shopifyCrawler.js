@@ -370,21 +370,8 @@ const rlCoreResponse = await axios.post(
 // ============================================================
 // Helper: Shopify GraphQL Request
 // ============================================================
-async function shopifyGraphQLRequest(shop, accessToken, query, variables = {}) {
-  const response = await axios.post(
-    `https://${shop}/admin/api/2024-01/graphql.json`,
-    { query, variables },
-    {
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json'
-      },
-      timeout: 30000
-    }
-  );
-  
-  return response.data;
-}
+const response = await shopifyGraphQL(shop, query, variables);
+
 
 // ============================================================
 // Helper: Shopify REST Request

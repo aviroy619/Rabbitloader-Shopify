@@ -38,12 +38,20 @@ app.use(compression());
 const PORT = process.env.PORT || 3000;
 
 // ====== Middleware ======
+// IMPORTANT: Raw body middleware for webhooks MUST come BEFORE bodyParser
+app.use('/webhooks/app/uninstalled', (req, res, next) => {
+  let data = '';
+  req.setEncoding('utf8');
+  req.on('data', chunk => { data += chunk; });
+  req.on('end', () => {
+    req.rawBody = data;
+    next();
+  });
+});
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
-
-// Webhook raw body (MUST come BEFORE other body parsers)
-app.use('/webhooks/app/uninstalled', express.raw({ type: 'application/json' }));
 
 // ====== Session Support ======
 app.use(session({

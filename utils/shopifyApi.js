@@ -20,15 +20,18 @@ async function shopifyRequest(shop, endpoint, method = "GET", data = null) {
     });
 
     if (response.status === 401) {
-      // Token is invalid/expired
-      console.error(`[Token] Invalid/expired for ${shop}`);
+      // Token might be invalid/expired - mark for reauth but DON'T delete token
+      console.warn(`[Token] Possibly expired or invalid for ${shop}. Marking for reauth check.`);
       
-      // Mark shop as needing re-auth
+      // Mark shop as needing re-auth but KEEP the token
       await ShopModel.updateOne(
         { shop },
         { 
-          $set: { needs_reauth: true },
-          $unset: { access_token: "" }
+          $set: { 
+            needs_reauth: true,
+            reauth_required: true,
+            last_token_check: new Date()
+          }
         }
       );
       
@@ -69,13 +72,16 @@ async function shopifyGraphQL(shop, query, variables = {}) {
     });
 
     if (response.status === 401) {
-      console.error(`[Token] Invalid/expired for ${shop}`);
+      console.warn(`[Token] Possibly expired or invalid for ${shop}. Marking for reauth check.`);
       
       await ShopModel.updateOne(
         { shop },
         { 
-          $set: { needs_reauth: true },
-          $unset: { access_token: "" }
+          $set: { 
+            needs_reauth: true,
+            reauth_required: true,
+            last_token_check: new Date()
+          }
         }
       );
       
