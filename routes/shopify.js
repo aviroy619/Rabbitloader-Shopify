@@ -224,6 +224,13 @@ router.get("/auth/callback", async (req, res) => {
     });
 
     const tokenData = await tokenResponse.json();
+    console.log('🔑 Token Exchange Result:', {
+      success: !!tokenData.access_token,
+      token_preview: tokenData.access_token ? tokenData.access_token.substring(0, 20) + '...' : 'NONE',
+      scopes_granted: tokenData.scope
+    });
+    
+    if (!tokenData.access_token) throw new Error("Failed to get access token from Shopify");
     if (!tokenData.access_token) throw new Error("Failed to get access token from Shopify");
 
     const existingShop = await ShopModel.findOne({ shop });
