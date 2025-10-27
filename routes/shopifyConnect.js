@@ -58,28 +58,21 @@ async function injectDeferScript(shop, did, accessToken) {
       return { success: true, message: "Defer script already exists", already_exists: true };
     }
 
-    // Find first <script> tag to inject BEFORE it
-    const firstJSPattern = /(<script[^>]*>)/;
-    const jsMatch = themeContent.match(firstJSPattern);
-
+    // Inject script at the top of <head> for optimal PSI performance
+    const headOpenTag = '<head>';
     const scriptTag = `
   <!-- RabbitLoader Defer Configuration -->
-  <link rel="stylesheet" href="${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}" />
+  <link rel="stylesheet" href="${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}" importance="high" />
   <script src="${deferLoaderUrl}" defer></script>
 `;
 
-    if (jsMatch) {
-      // Inject BEFORE first JS script
-      themeContent = themeContent.replace(firstJSPattern, scriptTag + '$1');
-      console.log(`[RL] Injecting defer script BEFORE first JS`);
-    } else {
-      // No JS found, inject after <head>
-      const headOpenTag = '<head>';
-      if (!themeContent.includes(headOpenTag)) {
-        throw new Error("Could not find <head> tag in theme.liquid");
-      }
+    if (themeContent.includes(headOpenTag)) {
       themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
-      console.log(`[RL] Injecting defer script after <head> (no JS found)`);
+      console.log(`[RL] Injecting snippet at top of <head>`);
+    } else {
+      // Fallback: inject at start of file if no <head> tag found
+      themeContent = scriptTag + themeContent;
+      console.log(`[RL] Injecting snippet at start of file (no <head> tag found)`);
     }
 
     // Update theme file
