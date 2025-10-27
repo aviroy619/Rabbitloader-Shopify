@@ -118,7 +118,7 @@ const webhookRoutes = require("./routes/webhooks");
 const dashboardRoutes = require("./routes/dashboard");
 const dashboardProxyRoutes = require("./routes/dashboardProxy");
 const performanceRoutes = require("./routes/performance");
-const shopifyCrawlerRoutes = require('./routes/shopifyCrawler');
+const shopifyCrawler = require('./routes/shopifyCrawler');  // ✅ only once
 
 // ====== Mount Routes ======
 app.use("/shopify", shopifyRoutes);
@@ -127,7 +127,8 @@ app.use("/webhooks", webhookRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/api/dashboard", dashboardProxyRoutes);
 app.use("/api/performance", performanceRoutes);
-app.use('/crawler', shopifyCrawlerRoutes);
+app.use('/crawler', shopifyCrawler);  // ✅ mounted cleanly
+
 
 // ====== Root Route (Embedded Dashboard) ======
 app.get("/", (req, res) => {
