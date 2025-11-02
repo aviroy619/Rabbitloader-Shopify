@@ -9,10 +9,10 @@ const RL_CORE_URL = process.env.RL_CORE_URL || 'http://localhost:4000';
  * @param {string} method - HTTP method (GET, POST, PUT, DELETE)
  * @param {object} data - Request body data
  * @param {string} shop - Shop domain for authentication
- * @param {string} apiKey - API key for authentication
+ * @param {string} apiToken - API token for authentication (RL token, NOT Shopify token)
  * @returns {Promise<object>} API response
  */
-async function rlCoreRequest(endpoint, method = 'GET', data = null, shop = null, apiKey = null) {
+async function rlCoreRequest(endpoint, method = 'GET', data = null, shop = null, apiToken = null) {
   const url = `${RL_CORE_URL}${endpoint}`;
   
   const headers = {
@@ -21,7 +21,7 @@ async function rlCoreRequest(endpoint, method = 'GET', data = null, shop = null,
   
   // Add authentication headers if provided
   if (shop) headers['X-Shop'] = shop;
-  if (apiKey) headers['X-API-Key'] = apiKey;
+  if (apiToken) headers['X-API-Key'] = apiToken;
   headers['X-Platform'] = 'shopify';
   
   const options = {
@@ -62,104 +62,101 @@ async function syncShopToCore(shopData) {
     name: shopData.name || shopData.shop,
     domain: shopData.shop,
     platform: 'shopify',
-    rl_token: shopData.rl_token || shopData.api_token,
-    rl_api_token: shopData.api_token,
-    api_token: shopData.api_token,
-    short_id: shopData.short_id || shopData.did,
-    did: shopData.did || shopData.short_id,
+    api_token: shopData.api_token,           // RL API token (JWT)
+    short_id: shopData.short_id,             // RL domain ID
     account_id: shopData.account_id,
-    access_token: shopData.access_token,
+    access_token: shopData.access_token,     // Shopify access token
     needs_setup: shopData.needs_setup,
     reauth_required: shopData.reauth_required
-  }, shopData.shop, shopData.rl_token || shopData.api_token);
+  }, shopData.shop, shopData.api_token);
 }
 
 /**
  * Get shop details from rl-core
  */
-async function getShopFromCore(shop, apiKey) {
-  return await rlCoreRequest(`/shops`, 'GET', null, shop, apiKey);
+async function getShopFromCore(shop, apiToken) {
+  return await rlCoreRequest(`/shops`, 'GET', null, shop, apiToken);
 }
 
 /**
  * Update shop in rl-core
  */
-async function updateShopInCore(shop, apiKey, updates) {
-  return await rlCoreRequest('/shops', 'PUT', updates, shop, apiKey);
+async function updateShopInCore(shop, apiToken, updates) {
+  return await rlCoreRequest('/shops', 'PUT', updates, shop, apiToken);
 }
 
 /**
  * Get defer config from rl-core
  */
-async function getDeferConfig(shop, apiKey) {
-  return await rlCoreRequest(`/defer-config?shop=${encodeURIComponent(shop)}`, 'GET', null, shop, apiKey);
+async function getDeferConfig(shop, apiToken) {
+  return await rlCoreRequest(`/defer-config?shop=${encodeURIComponent(shop)}`, 'GET', null, shop, apiToken);
 }
 
 /**
  * Save defer config to rl-core
  */
-async function saveDeferConfig(shop, apiKey, config) {
+async function saveDeferConfig(shop, apiToken, config) {
   return await rlCoreRequest('/defer-config', 'POST', { 
     shop, 
     ...config 
-  }, shop, apiKey);
+  }, shop, apiToken);
 }
 
 /**
  * Save site analysis results to rl-core
  */
-async function saveSiteAnalysis(shop, apiKey, analysisData) {
+async function saveSiteAnalysis(shop, apiToken, analysisData) {
   return await rlCoreRequest('/site-analysis', 'POST', {
     shop,
     ...analysisData
-  }, shop, apiKey);
+  }, shop, apiToken);
 }
 
 /**
  * Get site analysis from rl-core
  */
-async function getSiteAnalysis(shop, apiKey) {
-  return await rlCoreRequest(`/site-analysis?shop=${encodeURIComponent(shop)}`, 'GET', null, shop, apiKey);
+async function getSiteAnalysis(shop, apiToken) {
+  return await rlCoreRequest(`/site-analysis?shop=${encodeURIComponent(shop)}`, 'GET', null, shop, apiToken);
 }
 
 /**
  * Save template data to rl-core
  */
-async function saveTemplate(shop, apiKey, templateData) {
+async function saveTemplate(shop, apiToken, templateData) {
   return await rlCoreRequest('/templates', 'POST', {
     shop,
     ...templateData
-  }, shop, apiKey);
+  }, shop, apiToken);
 }
 
 /**
  * Get templates from rl-core
  */
-async function getTemplates(shop, apiKey) {
-  return await rlCoreRequest(`/templates?shop=${encodeURIComponent(shop)}`, 'GET', null, shop, apiKey);
+async function getTemplates(shop, apiToken) {
+  return await rlCoreRequest(`/templates?shop=${encodeURIComponent(shop)}`, 'GET', null, shop, apiToken);
 }
 
 /**
  * Save performance metrics to rl-core
  */
-async function savePerformanceMetrics(shop, apiKey, metricsData) {
+async function savePerformanceMetrics(shop, apiToken, metricsData) {
   return await rlCoreRequest('/performance', 'POST', {
     shop,
     ...metricsData
-  }, shop, apiKey);
+  }, shop, apiToken);
 }
 
 /**
  * Get performance metrics from rl-core
  */
-async function getPerformanceMetrics(shop, apiKey) {
-  return await rlCoreRequest(`/performance?shop=${encodeURIComponent(shop)}`, 'GET', null, shop, apiKey);
+async function getPerformanceMetrics(shop, apiToken) {
+  return await rlCoreRequest(`/performance?shop=${encodeURIComponent(shop)}`, 'GET', null, shop, apiToken);
 }
 
 /**
  * Update injection status in rl-core
  */
-async function updateInjectionStatus(shop, apiKey, status) {
+async function updateInjectionStatus(shop, apiToken, status) {
   return await rlCoreRequest('/shops', 'PUT', {
     script_injected: status.script_injected,
     critical_css_injected: status.critical_css_injected,
@@ -167,7 +164,7 @@ async function updateInjectionStatus(shop, apiKey, status) {
     critical_css_injection_attempted: status.critical_css_injection_attempted,
     last_injection_at: new Date(),
     injection_error: status.error || null
-  }, shop, apiKey);
+  }, shop, apiToken);
 }
 
 /**

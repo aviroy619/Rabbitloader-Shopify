@@ -38,12 +38,20 @@ app.use(compression());
 const PORT = process.env.PORT || 3000;
 
 // ====== Middleware ======
+// IMPORTANT: Raw body middleware for webhooks MUST come BEFORE bodyParser
+app.use('/webhooks/app/uninstalled', (req, res, next) => {
+  let data = '';
+  req.setEncoding('utf8');
+  req.on('data', chunk => { data += chunk; });
+  req.on('end', () => {
+    req.rawBody = data;
+    next();
+  });
+});
+
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
-
-// Webhook raw body (MUST come BEFORE other body parsers)
-app.use('/webhooks/app/uninstalled', express.raw({ type: 'application/json' }));
 
 // ====== Session Support ======
 app.use(session({
@@ -110,7 +118,7 @@ const webhookRoutes = require("./routes/webhooks");
 const dashboardRoutes = require("./routes/dashboard");
 const dashboardProxyRoutes = require("./routes/dashboardProxy");
 const performanceRoutes = require("./routes/performance");
-const shopifyCrawlerRoutes = require('./routes/shopifyCrawler');
+const shopifyCrawler = require('./routes/shopifyCrawler');  // ✅ only once
 
 // ====== Mount Routes ======
 app.use("/shopify", shopifyRoutes);
@@ -119,7 +127,8 @@ app.use("/webhooks", webhookRoutes);
 app.use("/dashboard", dashboardRoutes);
 app.use("/api/dashboard", dashboardProxyRoutes);
 app.use("/api/performance", performanceRoutes);
-app.use('/crawler', shopifyCrawlerRoutes);
+app.use('/crawler', shopifyCrawler);  // ✅ mounted cleanly
+
 
 // ====== Root Route (Embedded Dashboard) ======
 app.get("/", (req, res) => {

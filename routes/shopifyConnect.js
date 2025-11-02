@@ -11,13 +11,16 @@ async function injectDeferScript(shop, did, accessToken) {
   try {
     // Get active theme
     const themesData = await shopifyRequest(shop, "themes.json");
-    if (!themesData.ok && themesData.error === "TOKEN_EXPIRED") {
-      console.log(`[RL] Token expired for ${shop}, marking for reauth`);
-      return {
-        success: false,
-        error: "TOKEN_EXPIRED",
-        message: "Access token expired - shop needs to re-authenticate"
-      };
+    if (!themesData.ok) {
+      if (themesData.error === "TOKEN_EXPIRED") {
+        console.log(`[RL] Token expired for ${shop}, marking for reauth`);
+        return {
+          success: false,
+          error: "TOKEN_EXPIRED",
+          message: "Access token expired - shop needs to re-authenticate"
+        };
+      }
+      throw new Error(themesData.error || 'Failed to fetch themes');
     }
 
     const activeTheme = themesData.themes?.find(theme => theme.role === 'main');
@@ -29,12 +32,16 @@ async function injectDeferScript(shop, did, accessToken) {
     const assetData = await shopifyRequest(shop,
       `themes/${activeTheme.id}/assets.json?asset[key]=layout/theme.liquid`
     );
-    if (!assetData.ok && assetData.error === "TOKEN_EXPIRED") {
-      return {
-        success: false,
-        error: "TOKEN_EXPIRED",
-        message: "Access token expired - shop needs to re-authenticate"
-      };
+    
+    if (!assetData.ok) {
+      if (assetData.error === "TOKEN_EXPIRED") {
+        return {
+          success: false,
+          error: "TOKEN_EXPIRED",
+          message: "Access token expired - shop needs to re-authenticate"
+        };
+      }
+      throw new Error(assetData.error || 'Failed to fetch theme.liquid');
     }
 
     let themeContent = assetData.asset.value;
@@ -51,28 +58,21 @@ async function injectDeferScript(shop, did, accessToken) {
       return { success: true, message: "Defer script already exists", already_exists: true };
     }
 
-    // Find first <script> tag to inject BEFORE it
-    const firstJSPattern = /(<script[^>]*>)/;
-    const jsMatch = themeContent.match(firstJSPattern);
-
+    // Inject script at the top of <head> for optimal PSI performance
+    const headOpenTag = '<head>';
     const scriptTag = `
   <!-- RabbitLoader Defer Configuration -->
-  <link rel="stylesheet" href="${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}" />
+  <link rel="stylesheet" href="${process.env.APP_URL}/defer-config/critical.css?shop=${encodeURIComponent(shop)}" importance="high" />
   <script src="${deferLoaderUrl}" defer></script>
 `;
 
-    if (jsMatch) {
-      // Inject BEFORE first JS script
-      themeContent = themeContent.replace(firstJSPattern, scriptTag + '$1');
-      console.log(`[RL] Injecting defer script BEFORE first JS`);
-    } else {
-      // No JS found, inject after <head>
-      const headOpenTag = '<head>';
-      if (!themeContent.includes(headOpenTag)) {
-        throw new Error("Could not find <head> tag in theme.liquid");
-      }
+    if (themeContent.includes(headOpenTag)) {
       themeContent = themeContent.replace(headOpenTag, `${headOpenTag}\n${scriptTag}`);
-      console.log(`[RL] Injecting defer script after <head> (no JS found)`);
+      console.log(`[RL] Injecting snippet at top of <head>`);
+    } else {
+      // Fallback: inject at start of file if no <head> tag found
+      themeContent = scriptTag + themeContent;
+      console.log(`[RL] Injecting snippet at start of file (no <head> tag found)`);
     }
 
     // Update theme file
@@ -87,12 +87,15 @@ async function injectDeferScript(shop, did, accessToken) {
       }
     );
 
-    if (!updateResult.ok && updateResult.error === "TOKEN_EXPIRED") {
-      return {
-        success: false,
-        error: "TOKEN_EXPIRED",
-        message: "Access token expired - shop needs to re-authenticate"
-      };
+    if (!updateResult.ok) {
+      if (updateResult.error === "TOKEN_EXPIRED") {
+        return {
+          success: false,
+          error: "TOKEN_EXPIRED",
+          message: "Access token expired - shop needs to re-authenticate"
+        };
+      }
+      throw new Error(updateResult.error || 'Failed to update theme');
     }
 
     console.log(`[RL] ✅ Defer script injected successfully for ${shop}`);
@@ -122,14 +125,14 @@ router.get("/rl-callback", async (req, res) => {
       hasApiToken: !!decoded.api_token 
     });
 
-    // Save BOTH tokens to MongoDB
+    // Save tokens to MongoDB
     const shopData = await ShopModel.findOneAndUpdate(
       { shop },
       { 
         $set: {
           api_token: decoded.api_token,      // RL token (JWT)
           short_id: decoded.did,             // RL domain ID
-          did: decoded.did,                  // RL domain ID (duplicate for compatibility)
+          account_id: decoded.account_id,
           connected_at: new Date()
         }
       },
@@ -139,7 +142,7 @@ router.get("/rl-callback", async (req, res) => {
     console.log(`[RL] ✅ Tokens saved for ${shop}:`, {
       has_shopify_token: !!shopData.access_token,
       has_rl_token: !!shopData.api_token,
-      did: shopData.did
+      did: shopData.short_id
     });
 
     // Sync to RL Core
@@ -150,7 +153,7 @@ router.get("/rl-callback", async (req, res) => {
         access_token: shopData.access_token,  // Shopify token
         api_token: decoded.api_token,          // RL token
         short_id: decoded.did,
-        did: decoded.did
+        account_id: decoded.account_id
       });
       console.log(`[RL] ✅ Synced to RL Core`);
     } catch (syncError) {
@@ -174,6 +177,10 @@ router.get("/rl-callback", async (req, res) => {
             }
           });
           console.log(`[RL] ✅ Scripts injected`);
+        } else if (injectResult.error === 'TOKEN_EXPIRED') {
+          console.log(`[RL] ⚠️ Token expired during injection, skipping`);
+        } else {
+          console.error(`[RL] ❌ Injection failed:`, injectResult.error);
         }
       } catch (injectErr) {
         console.error(`[RL] ❌ Injection failed:`, injectErr.message);
@@ -191,6 +198,7 @@ router.get("/rl-callback", async (req, res) => {
     res.status(500).send("Callback failed: " + error.message);
   }
 });
+
 // Connect to RabbitLoader
 router.get("/rl-connect", async (req, res) => {
   const { shop, host } = req.query;
