@@ -112,7 +112,7 @@ router.get("/auth/callback", async (req, res) => {
   console.log("Referer:", req.headers.referer || "none");
   console.log("=================================================");
 
-  // 🐰 RabbitLoader Callback handler
+  // RL callback path first
   if (rlToken && shop) {
     console.log("🐰 RabbitLoader Callback Processing");
     try {
@@ -125,22 +125,22 @@ router.get("/auth/callback", async (req, res) => {
             short_id: decoded.did || decoded.short_id,
             api_token: decoded.api_token,
             account_id: decoded.account_id,
-            connected_at: new Date(),
+            connected_at: new Date()
           },
           $push: {
             history: {
               event: "connect",
               timestamp: new Date(),
-              details: { via: "rl-callback" },
-            },
-          },
+              details: { via: "rl-callback" }
+            }
+          }
         },
         { upsert: true, new: true }
       );
 
       console.log(`RabbitLoader token saved for ${shop}`);
 
-      // Sync to rl-core after RL connection
+      // Sync to RL-Core
       try {
         const { syncShopToCore } = require('../utils/rlCoreApi');
         await syncShopToCore({
@@ -153,51 +153,50 @@ router.get("/auth/callback", async (req, res) => {
           rl_token: decoded.api_token,
           needs_setup: true
         });
-        console.log(`✅ Shop synced to rl-core after RL connection: ${shop}`);
       } catch (syncError) {
-        console.error(`⚠️ Failed to sync shop to rl-core:`, syncError.message);
+        console.error(`[RL] Sync failed:`, syncError.message);
       }
 
-      // 🔍 Trigger site analysis immediately after RL connection
-      try {
-        const { analyzeSite } = require("../workers/site-analyzer");
-        if (shopRecord && shopRecord.access_token) {
-          console.log(`[RL] Triggering site analysis for ${shop}`);
-          await analyzeSite(shop, shopRecord.access_token);
-        } else {
-          console.warn(`[RL] ⚠️ No access token found for ${shop}, skipping site analysis`);
+      // 🔥 AUTO-INJECT after RL callback if Shopify token exists
+      if (shopRecord.access_token) {
+        try {
+          console.log(`[AutoInject] RL callback injection: ${shop}`);
+          const { injectDeferScript } = require("./shopifyConnect");
+          const { injectCriticalCSSIntoTheme } = require("../app");
+
+          await injectDeferScript(shop, shopRecord.short_id, shopRecord.access_token);
+          await injectCriticalCSSIntoTheme(shop, shopRecord.short_id, shopRecord.access_token);
+
+          console.log(`[AutoInject] ✅ Done`);
+        } catch (e) {
+          console.error(`[AutoInject] ❌ Failed:`, e.message);
         }
-      } catch (analysisError) {
-        console.error(`[RL] ❌ Site analysis failed for ${shop}:`, analysisError.message);
       }
 
-      // Redirect to dashboard
+      // Redirect to app
       const shopBase64 = Buffer.from(`${shop}/admin`).toString("base64");
       const hostParam = req.query.host || shopBase64;
-      const redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&connected=1&trigger_setup=1`;
-
-      console.log(`[RL] Redirecting to: ${redirectUrl}`);
-      return res.redirect(redirectUrl);
+      return res.redirect(`/?shop=${shop}&host=${hostParam}&embedded=1&connected=1&trigger_setup=1`);
     } catch (err) {
       console.error("RL callback error:", err);
       return res.status(400).send("Failed to process RabbitLoader token");
     }
   }
 
-  // 🛍️ Shopify OAuth callback
+  // Shopify OAuth
   if (!code || !shop) {
     return res.status(400).send("Missing authorization code or shop");
   }
 
   try {
-    // Verify HMAC
+    // HMAC verify
     const queryObj = { ...req.query };
     delete queryObj.hmac;
     delete queryObj.signature;
 
     const queryString = Object.keys(queryObj)
       .sort()
-      .map((key) => `${key}=${queryObj[key]}`)
+      .map(key => `${key}=${queryObj[key]}`)
       .join("&");
 
     const calculatedHmac = crypto
@@ -206,37 +205,26 @@ router.get("/auth/callback", async (req, res) => {
       .digest("hex");
 
     if (calculatedHmac !== hmac) {
-      console.error("HMAC verification failed");
-      return res.status(401).send("Invalid HMAC - Security verification failed");
+      return res.status(401).send("Invalid HMAC");
     }
 
-    console.log("✅ HMAC verification passed");
-
-    // Exchange code for access token
+    // Get Shopify token
     const tokenResponse = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         client_id: process.env.SHOPIFY_API_KEY,
         client_secret: process.env.SHOPIFY_API_SECRET,
-        code,
-      }),
+        code
+      })
     });
 
     const tokenData = await tokenResponse.json();
-    console.log('🔑 Token Exchange Result:', {
-      success: !!tokenData.access_token,
-      token_preview: tokenData.access_token ? tokenData.access_token.substring(0, 20) + '...' : 'NONE',
-      scopes_granted: tokenData.scope
-    });
-    
-    if (!tokenData.access_token) throw new Error("Failed to get access token from Shopify");
-    if (!tokenData.access_token) throw new Error("Failed to get access token from Shopify");
+    if (!tokenData.access_token) throw new Error("Token exchange failed");
 
     const existingShop = await ShopModel.findOne({ shop });
     const isReinstall = existingShop && !existingShop.access_token && existingShop.short_id;
 
-    // Save access token
     const shopRecord = await ShopModel.findOneAndUpdate(
       { shop },
       {
@@ -245,22 +233,13 @@ router.get("/auth/callback", async (req, res) => {
           access_token: tokenData.access_token,
           connected_at: new Date(),
           reauth_required: false,
-          needs_setup: isReinstall ? true : false,
-        },
-        $push: {
-          history: {
-            event: "shopify_auth",
-            timestamp: new Date(),
-            details: { via: "oauth", reinstall: isReinstall || false },
-          },
-        },
+          needs_setup: isReinstall ? true : false
+        }
       },
       { upsert: true, new: true }
     );
 
-    console.log(`✅ Shopify OAuth completed for ${shop}`);
-    
-    // Sync shop to rl-core
+    // Sync to RL-Core if RL token already exists
     try {
       const { syncShopToCore } = require('../utils/rlCoreApi');
       await syncShopToCore({
@@ -271,48 +250,37 @@ router.get("/auth/callback", async (req, res) => {
         did: shopRecord.short_id,
         account_id: shopRecord.account_id,
         rl_token: shopRecord.api_token,
-        needs_setup: isReinstall,
-        reauth_required: false
+        needs_setup: isReinstall
       });
-      console.log(`✅ Shop synced to rl-core: ${shop}`);
-    } catch (syncError) {
-      console.error(`⚠️ Failed to sync shop to rl-core:`, syncError.message);
-      // Don't fail OAuth if sync fails
-    }
+    } catch {}
 
-    // Register uninstall webhook
-    try {
-      await registerUninstallWebhook(shop, tokenData.access_token);
-      console.log(`[Webhook] ✅ Uninstall webhook registered for ${shop}`);
-    } catch (webhookError) {
-      console.error(`[Webhook] ⚠️ Webhook registration failed:`, webhookError.message);
-    }
+    // 🧠 AUTO-INJECT on fresh install **and reinstall**
+    if (shopRecord.api_token) {
+      try {
+        console.log(`[AutoInject] Shopify install: ${shop}`);
+        const { injectDeferScript } = require("./shopifyConnect");
+        const { injectCriticalCSSIntoTheme } = require("../app");
 
-    // 🔍 Trigger site analysis after Shopify connection
-    try {
-      const { analyzeSite } = require("../workers/site-analyzer");
-      if (shopRecord && shopRecord.access_token) {
-        console.log(`[Shopify] Triggering site analysis for ${shop}`);
-        await analyzeSite(shop, shopRecord.access_token);
+        await injectDeferScript(shop, shopRecord.short_id, tokenData.access_token);
+        await injectCriticalCSSIntoTheme(shop, shopRecord.short_id, tokenData.access_token);
+
+        console.log(`[AutoInject] ✅ Done`);
+      } catch (e) {
+        console.error(`[AutoInject] ❌ Failed:`, e.message);
       }
-    } catch (analysisError) {
-      console.error(`[Shopify] ❌ Failed to analyze site for ${shop}:`, analysisError.message);
     }
 
-    // Redirect to embedded dashboard
+    // Redirect to app
     const shopBase64 = Buffer.from(`${shop}/admin`).toString("base64");
     const hostParam = req.query.host || shopBase64;
-    let redirectUrl = `/?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(hostParam)}&embedded=1&shopify_auth=1`;
+    return res.redirect(`/?shop=${shop}&host=${hostParam}&embedded=1&shopify_auth=1${isReinstall ? "&trigger_setup=1" : ""}`);
 
-    if (isReinstall) redirectUrl += "&trigger_setup=1";
-
-    console.log(`[Shopify] Redirecting after OAuth: ${redirectUrl}`);
-    res.redirect(redirectUrl);
   } catch (err) {
     console.error("OAuth callback error:", err);
     res.status(500).send(`Authentication failed: ${err.message}`);
   }
 });
+
 
 // ====== RABBITLOADER INTEGRATION ======
 
