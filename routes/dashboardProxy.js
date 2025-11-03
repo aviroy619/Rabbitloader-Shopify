@@ -154,21 +154,25 @@ router.all('/dashboard/*', async (req, res) => {
 
   await proxyRequest(SERVICES.rlCore, req, res);
 });
-
-// RL Core Overview Proxy
 router.get("/rl-core/overview", async (req, res) => {
   const shop = req.query.shop;
-  if (!shop) return res.status(400).json({ ok:false, error:"Missing shop" });
+  if (!shop) return res.status(400).json({ ok: false, error: "Missing shop" });
 
   try {
-    const coreRes = await fetch(`${process.env.RL_CORE_URL}/api/dashboard/overview?shop=${shop}`, {
-      headers: { "X-API-Key": process.env.INTERNAL_API_KEY }
+    const coreRes = await fetch(`${process.env.RL_CORE_URL}/dashboard/overview?shop=${shop}`, {
+      headers: { 
+        "X-API-Key": process.env.RL_API_KEY,
+        "X-Shop": shop,
+        "X-Platform": "shopify"
+      }
     });
-    
+
     const data = await coreRes.json();
     res.json(data);
+
   } catch (err) {
-    res.status(500).json({ ok:false, error:"Core unreachable" });
+    console.error("RL CORE OVERVIEW ERROR:", err);
+    res.status(500).json({ ok: false, error: "Failed to reach RL Core" });
   }
 });
 
