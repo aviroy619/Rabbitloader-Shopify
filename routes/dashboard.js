@@ -2,7 +2,6 @@ const express = require("express");
 const router = express.Router();
 const ShopModel = require("../models/Shop");
 
-// Serve embedded dashboard page
 router.get("/", async (req, res) => {
   const { shop, host } = req.query;
 
@@ -28,14 +27,7 @@ router.get("/", async (req, res) => {
       apiToken: shopRecord.api_token,
       isConnected,
       needsAuth,
-
-      // Proxy paths
       apiUrl: "/api/rl-core",
-      psiUrl: "/api/rl-core/psi",
-      criticalCSSUrl: "/api/rl-core/critical-css",
-      jsDeferUrl: "/api/rl-core/js-defer",
-      rlCoreUrl: "/api/rl-core",
-
       features: {
         performance: true,
         pages: true,
@@ -50,58 +42,57 @@ router.get("/", async (req, res) => {
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8" />
-  <title>RabbitLoader Dashboard</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <style>
-    body { margin:0; padding:0; background:#f6f6f7; }
-    #dashboard-container { width:100%; height:100vh; }
-    #dashboard-iframe { width:100%; height:100%; border:0; display:${isConnected ? "block" : "none"}; }
-    #connect-screen { display:${isConnected ? "none" : "flex"}; align-items:center; justify-content:center; flex-direction:column; height:100vh; }
-  </style>
+<meta charset="UTF-8" />
+<title>RabbitLoader Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<style>
+body { margin:0; padding:0; background:#f6f6f7; }
+#dashboard-container { width:100%; height:100vh; }
+#dashboard-iframe { width:100%; height:100%; border:0; display:${isConnected ? "block" : "none"}; }
+#connect-screen { display:${isConnected ? "none" : "flex"}; align-items:center; justify-content:center; flex-direction:column; height:100vh; }
+</style>
 </head>
 <body>
-  <div id="dashboard-container">
+<div id="dashboard-container">
 
-    <div id="connect-screen">
-      <h2>Connect to RabbitLoader</h2>
-      <p>Please connect your store to begin optimization.</p>
-      <a href="/rl/rl-connect?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host || '')}">Connect Now</a>
-    </div>
-
-    <iframe id="dashboard-iframe"
-      src="https://dashboard.rb8.in?platform=shopify&shop=${encodeURIComponent(shop)}"
-    ></iframe>
+  <div id="connect-screen">
+    <h2>Connect to RabbitLoader</h2>
+    <p>Please connect your store to begin optimization.</p>
+    <a href="/rl/rl-connect?shop=${encodeURIComponent(shop)}&host=${encodeURIComponent(host || '')}">Connect Now</a>
   </div>
 
-  <script>
-    // Expose config for dashboard iframe
-    window.RL_DASHBOARD_CONFIG = ${JSON.stringify(dashboardConfig)};
+  <iframe id="dashboard-iframe"
+    src="https://dashboard.rb8.in?platform=shopify&shop=${encodeURIComponent(shop)}"
+  ></iframe>
 
-    const iframe = document.getElementById('dashboard-iframe');
+</div>
 
-    iframe.addEventListener("load", () => {
-      iframe.contentWindow.postMessage({
-        type: "RABBITLOADER_CONFIG",
-        config: window.RL_DASHBOARD_CONFIG
-      }, "*");
-    });
+<script>
+window.RL_DASHBOARD_CONFIG = ${JSON.stringify(dashboardConfig)};
 
-    window.addEventListener("message", (event) => {
-      if (!event.origin.includes("dashboard.rb8.in")) return;
+const iframe = document.getElementById('dashboard-iframe');
 
-      if (event.data?.type === "RABBITLOADER_REQUEST_CONFIG") {
-        iframe.contentWindow.postMessage({
-          type: "RABBITLOADER_CONFIG",
-          config: window.RL_DASHBOARD_CONFIG
-        }, "*");
-      }
-    });
-  </script>
+iframe.addEventListener("load", () => {
+  iframe.contentWindow.postMessage({
+    type: "RABBITLOADER_CONFIG",
+    config: window.RL_DASHBOARD_CONFIG
+  }, "*");
+});
+
+window.addEventListener("message", (event) => {
+  if (!event.origin.includes("dashboard.rb8.in")) return;
+
+  if (event.data?.type === "RABBITLOADER_REQUEST_CONFIG") {
+    iframe.contentWindow.postMessage({
+      type: "RABBITLOADER_CONFIG",
+      config: window.RL_DASHBOARD_CONFIG
+    }, "*");
+  }
+});
+</script>
 </body>
 </html>
-    `);
-
+`);
   } catch (err) {
     console.error("[Dashboard] Error:", err);
     res.status(500).send("Failed to load dashboard: " + err.message);
