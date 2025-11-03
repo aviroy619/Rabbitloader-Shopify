@@ -155,6 +155,23 @@ router.all('/dashboard/*', async (req, res) => {
   await proxyRequest(SERVICES.rlCore, req, res);
 });
 
+// RL Core Overview Proxy
+router.get("/rl-core/overview", async (req, res) => {
+  const shop = req.query.shop;
+  if (!shop) return res.status(400).json({ ok:false, error:"Missing shop" });
+
+  try {
+    const coreRes = await fetch(`${process.env.RL_CORE_URL}/api/dashboard/overview?shop=${shop}`, {
+      headers: { "X-API-Key": process.env.INTERNAL_API_KEY }
+    });
+    
+    const data = await coreRes.json();
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ ok:false, error:"Core unreachable" });
+  }
+});
+
 
 // Health check for proxy
 router.get('/health', (req, res) => {
@@ -165,5 +182,6 @@ router.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
 
 module.exports = router;
