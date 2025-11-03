@@ -2,35 +2,6 @@ const express = require("express");
 const router = express.Router();
 const axios = require("axios");
 
-router.use("/api/dashboard", async (req, res) => {
-  try {
-    const shop = req.query.shop || req.headers["x-shop"];
-    if (!shop) {
-      return res.status(400).json({ ok: false, error: "Missing shop parameter" });
-    }
-
-    const targetUrl = `${process.env.RL_CORE_URL}/dashboard${req.url}`;
-
-    const response = await fetch(targetUrl, {
-      method: req.method,
-      headers: {
-        "Content-Type": "application/json",
-        "x-shop": shop,
-        "x-platform": "shopify",
-        "x-api-key": process.env.RL_API_KEY
-      },
-      body: req.method !== "GET" ? JSON.stringify(req.body) : undefined
-    });
-
-    const data = await response.json();
-    return res.status(response.status).json(data);
-
-  } catch (err) {
-    console.error("❌ Dashboard proxy error:", err);
-    return res.status(500).json({ ok: false, error: "Proxy error" });
-  }
-});
-
 // Microservice URLs
 const SERVICES = {
   psi: process.env.PSI_SERVICE_URL || 'http://45.32.212.222:3008',
@@ -154,27 +125,6 @@ router.all('/dashboard/*', async (req, res) => {
 
   await proxyRequest(SERVICES.rlCore, req, res);
 });
-router.get("/rl-core/overview", async (req, res) => {
-  const shop = req.query.shop;
-  if (!shop) return res.status(400).json({ ok: false, error: "Missing shop" });
-
-  try {
-    const coreRes = await fetch(`${process.env.RL_CORE_URL}/dashboard/overview?shop=${shop}`, {
-      headers: { 
-        "X-API-Key": process.env.RL_API_KEY,
-        "X-Shop": shop,
-        "X-Platform": "shopify"
-      }
-    });
-
-    const data = await coreRes.json();
-    res.json(data);
-
-  } catch (err) {
-    console.error("RL CORE OVERVIEW ERROR:", err);
-    res.status(500).json({ ok: false, error: "Failed to reach RL Core" });
-  }
-});
 
 
 // Health check for proxy
@@ -186,6 +136,5 @@ router.get('/health', (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
-
 
 module.exports = router;
