@@ -2,6 +2,35 @@ const express = require("express");
 const router = express.Router();
 const axios = require("axios");
 
+router.use("/api/dashboard", async (req, res) => {
+  try {
+    const shop = req.query.shop || req.headers["x-shop"];
+    if (!shop) {
+      return res.status(400).json({ ok: false, error: "Missing shop parameter" });
+    }
+
+    const targetUrl = `${process.env.RL_CORE_URL}/dashboard${req.url}`;
+
+    const response = await fetch(targetUrl, {
+      method: req.method,
+      headers: {
+        "Content-Type": "application/json",
+        "x-shop": shop,
+        "x-platform": "shopify",
+        "x-api-key": process.env.RL_API_KEY
+      },
+      body: req.method !== "GET" ? JSON.stringify(req.body) : undefined
+    });
+
+    const data = await response.json();
+    return res.status(response.status).json(data);
+
+  } catch (err) {
+    console.error("❌ Dashboard proxy error:", err);
+    return res.status(500).json({ ok: false, error: "Proxy error" });
+  }
+});
+
 // Microservice URLs
 const SERVICES = {
   psi: process.env.PSI_SERVICE_URL || 'http://45.32.212.222:3008',
@@ -26,7 +55,7 @@ async function proxyRequest(serviceUrl, req, res) {
       headers: {
         'Content-Type': 'application/json',
         'X-Shop': req.query.shop || req.body?.shop,
-        'X-API-Key': req.query.apiToken || req.body?.apiToken,
+        'X-API-Key': process.env.RL_API_KEY,
         'X-Platform': 'shopify'
       },
       timeout: 30000 // 30 second timeout
@@ -114,11 +143,18 @@ router.all('/js-defer/*', async (req, res) => {
 });
 
 // Proxy to RL Core
-router.all('/rl-core/*', async (req, res) => {
-  const path = req.path.replace('/rl-core', '');
+// Proxy Dashboard Requests to RL-Core
+router.all('/dashboard/*', async (req, res) => {
+  const path = req.path.replace('/dashboard', '');
   req.path = path;
+
+  console.log(`[Dashboard Proxy → RL-Core] ${req.method} ${path}`, {
+    shop: req.query.shop || req.body?.shop
+  });
+
   await proxyRequest(SERVICES.rlCore, req, res);
 });
+
 
 // Health check for proxy
 router.get('/health', (req, res) => {

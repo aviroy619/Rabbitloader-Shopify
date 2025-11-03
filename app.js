@@ -133,28 +133,31 @@ app.use('/crawler', shopifyCrawler);  // ✅ mounted cleanly
 // ====== Root Route (Embedded Dashboard) ======
 app.get("/", (req, res) => {
   const { shop, host, embedded, hmac, timestamp } = req.query;
-  
+
   console.log(`Root route accessed:`, { shop: shop || 'none', embedded: embedded || 'none' });
 
-  // Auto-fix: Shopify OAuth callback without embedded=1
-  const isFromShopifyOAuth = shop && host && (hmac || timestamp);
-  
-  if (isFromShopifyOAuth && embedded !== '1') {
-    console.log(`⚠️ Auto-fixing: adding embedded=1 to OAuth callback`);
+  // Shopify OAuth callback only (we must allow this)
+  const isOAuthCallback = shop && host && hmac;
+
+  // If coming back from OAuth and embedded missing, add it once
+  if (isOAuthCallback && embedded !== '1') {
+    console.log(`⚠️ OAuth return detected — fixing missing embedded param`);
     const params = new URLSearchParams(req.query);
-    params.set('embedded', '1');
+    params.set("embedded", "1");
     return res.redirect(`/?${params.toString()}`);
   }
 
-  // Require shop parameter
+  // If no shop param — send to install flow instead of error
   if (!shop) {
-    return res.status(400).send('Missing shop parameter');
+    console.log("⚠️ No shop param — redirecting to install");
+    return res.redirect("/auth?step=start");
   }
 
-  // Redirect to dashboard route (which loads iframe)
+  // Normal embedded app load → redirect to dashboard page
   const params = new URLSearchParams(req.query);
-  res.redirect(`/dashboard?${params.toString()}`);
+  return res.redirect(`/dashboard?${params.toString()}`);
 });
+
 
 // ====== Health Check ======
 app.get('/health', (req, res) => {
