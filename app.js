@@ -52,6 +52,7 @@ app.use('/webhooks/app/uninstalled', (req, res, next) => {
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
+app.use("/dashboard-static", express.static(path.join(__dirname, "public")));
 
 // ====== Session Support ======
 app.use(session({

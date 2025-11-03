@@ -99,32 +99,37 @@ router.all('/psi/*', async (req, res) => {
   await proxyRequest(SERVICES.psi, req, res);
 });
 
-// Proxy to Critical CSS Service
-router.all('/critical-css/*', async (req, res) => {
-  const path = req.path.replace('/critical-css', '');
+// Proxy RL-Dash → RL-Core API
+router.all('/api/rl-core/*', async (req, res) => {
+  const path = req.path.replace('/api/rl-core', '/api');
   req.path = path;
-  await proxyRequest(SERVICES.criticalCSS, req, res);
-});
-
-// Proxy to JS Defer Service
-router.all('/js-defer/*', async (req, res) => {
-  const path = req.path.replace('/js-defer', '');
-  req.path = path;
-  await proxyRequest(SERVICES.jsDefer, req, res);
-});
-
-// Proxy to RL Core
-// Proxy Dashboard Requests to RL-Core
-router.all('/dashboard/*', async (req, res) => {
-  const path = req.path.replace('/dashboard', '');
-  req.path = path;
-
-  console.log(`[Dashboard Proxy → RL-Core] ${req.method} ${path}`, {
-    shop: req.query.shop || req.body?.shop
-  });
-
   await proxyRequest(SERVICES.rlCore, req, res);
 });
+
+// Loader for storefront
+router.all('/defer-config/loader.js', async (req, res) => {
+  req.path = `/api/defer-config/loader.js`;
+  await proxyRequest(SERVICES.rlCore, req, res);
+});
+
+// Defer config API
+router.all('/defer-config*', async (req, res) => {
+  req.path = req.path.replace('/defer-config', '/api/defer-config');
+  await proxyRequest(SERVICES.rlCore, req, res);
+});
+
+// Critical CSS API
+router.all('/critical-css*', async (req, res) => {
+  req.path = req.path.replace('/critical-css', '/api/criticalcss');
+  await proxyRequest(SERVICES.rlCore, req, res);
+});
+
+// JS files discovery & rules via Core
+router.all('/js-defer*', async (req, res) => {
+  req.path = req.path.replace('/js-defer', '/api/jsfiles');
+  await proxyRequest(SERVICES.rlCore, req, res);
+});
+
 
 
 // Health check for proxy

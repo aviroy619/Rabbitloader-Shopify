@@ -48,6 +48,15 @@ router.get("/", async (req, res) => {
         analytics: true
       }
     };
+window.addEventListener("message", (event) => {
+  if (!event.origin.includes("shopify.rb8.in")) return;
+
+  if (event.data?.type === "RABBITLOADER_CONFIG") {
+    console.log("✅ Received config from Shopify app", event.data.config);
+    window.RL_CONFIG = event.data.config;
+  }
+});
+window.parent.postMessage({ type: "RABBITLOADER_REQUEST_CONFIG" }, "*");
 
     // Render embedded dashboard page
     res.send(`
