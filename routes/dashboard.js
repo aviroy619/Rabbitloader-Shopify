@@ -17,9 +17,8 @@ router.get("/", async (req, res) => {
     }
 
     const dashboardUrl = `https://dashboard.rb8.in?platform=shopify&shop=${encodeURIComponent(shop)}`;
-
-    res.redirect(dashboardUrl);
-
+    
+    return res.redirect(dashboardUrl);
   } catch (err) {
     console.error("[Dashboard] Error:", err);
     res.status(500).send("Failed to load dashboard");
