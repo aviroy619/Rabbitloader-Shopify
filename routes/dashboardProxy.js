@@ -4,15 +4,27 @@ const axios = require("axios");
 
 // Add CORS for dashboard
 router.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', 'https://dashboard.rb8.in');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type');
-  
-  if (req.method === 'OPTIONS') {
+  const allowedOrigins = [
+    "https://dashboard.rb8.in",
+    "http://localhost:3000"
+  ];
+
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header("Access-Control-Allow-Origin", origin);
+  }
+
+  res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Shop, X-Requested-With");
+
+  if (req.method === "OPTIONS") {
     return res.sendStatus(200);
   }
+
   next();
 });
+
 
 // Microservice URLs
 const SERVICES = {
