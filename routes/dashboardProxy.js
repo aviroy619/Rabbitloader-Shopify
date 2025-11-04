@@ -74,6 +74,49 @@ router.all('/psi/*', async (req, res) => {
   await proxyRequest(SERVICES.psi, req, res);
 });
 
+/* ========= RL-CORE DASHBOARD PROXY ========= */
+
+// Handles calls like:
+// /proxy/core?shop=xxx&path=/api/rl-core/dashboard/overview
+router.all('/proxy/core', async (req, res) => {
+  try {
+    const shop = req.query.shop;
+    const path = req.query.path;
+
+    if (!shop || !path) {
+      return res.status(400).json({ ok: false, error: "Missing shop or path" });
+    }
+
+    // Build target URL to RL-Core
+    const coreUrl = `${SERVICES.rlCore}${path}`;
+
+    console.log(`[→ RL-Core DASH] ${req.method} ${coreUrl}`);
+
+    const response = await axios({
+      method: req.method,
+      url: coreUrl,
+      params: { shop, ...req.query },
+      data: req.body,
+      headers: {
+        "Content-Type": "application/json",
+        "X-Shop": shop,
+        "X-Platform": "shopify",
+        "X-API-Key": process.env.RL_API_KEY
+      },
+      timeout: 30000
+    });
+
+    return res.status(response.status).json(response.data);
+
+  } catch (err) {
+    console.error("[RL-Core DASH Proxy Error]", err.message);
+    return res.status(err.response?.status || 500).json(
+      err.response?.data || { ok: false, error: err.message }
+    );
+  }
+});
+
+
 /* ========= RL-DASH UI ROUTES ========= */
 
 router.all('/dashboard*', async (req, res) => {
