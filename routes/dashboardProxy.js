@@ -24,7 +24,7 @@ async function proxyRequest(serviceUrl, req, res) {
       headers: {
         'Content-Type': 'application/json',
         'X-Shop': req.query.shop || req.body?.shop,
-        'X-API-Key': process.env.RL_API_KEY,
+        'X-API-Key': process.env.RL_API_KEY || 'rl-internal',
         'X-Platform': 'shopify'
       },
       timeout: 30000
@@ -76,32 +76,37 @@ router.all('/psi/*', async (req, res) => {
 
 /* ========= RL-CORE DASHBOARD PROXY ========= */
 
-// Handles calls like:
-// /proxy/core?shop=xxx&path=/api/rl-core/dashboard/overview
+// This is the main route called by dashboard's api-client.js
+// Handles: /api/dashboard/proxy/core?shop=xxx&path=/api/rl-core/overview
 router.all('/proxy/core', async (req, res) => {
   try {
     const shop = req.query.shop;
     const path = req.query.path;
 
     if (!shop || !path) {
-      return res.status(400).json({ ok: false, error: "Missing shop or path" });
+      console.error("[Proxy/Core] Missing shop or path", req.query);
+      return res.status(400).json({ ok: false, error: "Missing shop or path parameter" });
     }
 
     // Build target URL to RL-Core
     const coreUrl = `${SERVICES.rlCore}${path}`;
 
-    console.log(`[→ RL-Core DASH] ${req.method} ${coreUrl}`);
+    console.log(`[→ RL-Core] ${req.method} ${coreUrl} for shop: ${shop}`);
+
+    // Forward all query params except 'path' to RL-Core
+    const forwardParams = { ...req.query };
+    delete forwardParams.path; // Don't forward the 'path' param itself
 
     const response = await axios({
       method: req.method,
       url: coreUrl,
-      params: { shop, ...req.query },
+      params: forwardParams,
       data: req.body,
       headers: {
         "Content-Type": "application/json",
         "X-Shop": shop,
         "X-Platform": "shopify",
-        "X-API-Key": process.env.RL_API_KEY
+        "X-API-Key": process.env.RL_API_KEY || "rl-internal"
       },
       timeout: 30000
     });
@@ -109,13 +114,19 @@ router.all('/proxy/core', async (req, res) => {
     return res.status(response.status).json(response.data);
 
   } catch (err) {
-    console.error("[RL-Core DASH Proxy Error]", err.message);
-    return res.status(err.response?.status || 500).json(
-      err.response?.data || { ok: false, error: err.message }
-    );
+    console.error("[RL-Core Proxy Error]", err.message);
+    
+    // Better error response
+    const status = err.response?.status || 500;
+    const errorData = err.response?.data || { 
+      ok: false, 
+      error: err.message,
+      service: 'rl-core-proxy'
+    };
+    
+    return res.status(status).json(errorData);
   }
 });
-
 
 /* ========= RL-DASH UI ROUTES ========= */
 
@@ -124,12 +135,12 @@ router.all('/dashboard*', async (req, res) => {
   await proxyRequest(SERVICES.rlDash, req, res);
 });
 
-/* ========= RL-CORE API ROUTES ========= */
+/* ========= RL-CORE API ROUTES (Direct) ========= */
 
-// Dashboard internal API calls
+// Dashboard internal API calls that go directly to RL-Core
 router.all('/api/rl-core/*', async (req, res) => {
   req.path = req.path.replace('/api/rl-core', '/api');
-  console.log(`[→ rl-core] ${req.method} ${req.path}`);
+  console.log(`[→ rl-core direct] ${req.method} ${req.path}`);
   await proxyRequest(SERVICES.rlCore, req, res);
 });
 
