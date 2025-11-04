@@ -2,6 +2,18 @@ const express = require("express");
 const router = express.Router();
 const axios = require("axios");
 
+// Add CORS for dashboard
+router.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', 'https://dashboard.rb8.in');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // Microservice URLs
 const SERVICES = {
   psi: process.env.PSI_SERVICE_URL || 'http://45.32.212.222:3008',
