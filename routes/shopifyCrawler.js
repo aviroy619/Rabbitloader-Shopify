@@ -351,12 +351,12 @@ async function crawlShopifyStore(shop, accessToken) {
           `${RL_CORE_URL}/site-analysis/analyze`,
           { site_data: siteData },
           {
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Shop': shop,
-              'X-Platform': 'shopify',
-              'X-API-Key': shopRecord.api_token
-            },
+           headers: {
+  'Content-Type': 'application/json',
+  'X-Shop': shop,
+  'X-Platform': 'shopify',
+  'X-API-Key': process.env.INTERNAL_API_KEY || 'rl-internal'
+},
             timeout: 30000
           }
         );
