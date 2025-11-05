@@ -194,7 +194,7 @@ router.all('/js-defer*', async (req, res) => {
 /* ========= SYNC ENDPOINT ========= */
 
 // Trigger sync endpoint - calls crawler
-router.post('/sync', async (req, res) => {
+router.post('/sync', express.raw({ type: '*/*' }), async (req, res) => {
   const { shop } = req.query;
   
   console.log(`[Sync] Trigger request for shop: ${shop}`);
