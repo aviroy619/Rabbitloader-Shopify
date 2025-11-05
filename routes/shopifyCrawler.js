@@ -1,5 +1,5 @@
 // routes/shopifyCrawler.js
-// FIXED: Better error handling for missing tokens
+// Crawls Shopify store and syncs pages to rl-core
 
 const express = require('express');
 const router = express.Router();
@@ -333,66 +333,79 @@ async function crawlShopifyStore(shop, accessToken) {
     console.log(`[Crawler] Total: ${totalPages} pages across ${Object.keys(templateGroups).length} templates`);
 
     // ============================================================
-    // 7. Send to RL Core
+    // 7. Send to RL Core (ONLY if api_token exists)
     // ============================================================
-    console.log(`[Crawler] Sending data to RL Core...`);
-    
-    const siteData = {
-      template_groups: templateGroups,
-      total_pages: totalPages,
-      active_theme: activeThemeName
-    };
-
     const shopRecord = await ShopModel.findOne({ shop });
 
-    const rlCoreResponse = await axios.post(
-      `${RL_CORE_URL}/site-analysis/analyze`,
-      { site_data: siteData },
-      {
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Shop': shop,
-          'X-Platform': 'shopify',
-          'X-API-Key': shopRecord.api_token || 'shopify-app'
-        },
-        timeout: 30000
-      }
-    );
-
-    if (rlCoreResponse.data.ok) {
-      console.log(`[Crawler] ✅ Data sent to RL Core successfully`);
+    if (shopRecord.api_token) {
+      console.log(`[Crawler] Sending data to RL Core...`);
       
-      // Update local shop record
-      await ShopModel.updateOne(
-        { shop },
-        {
-          $set: {
-            setup_in_progress: false,
-            last_crawl_at: new Date(),
-            last_crawl_pages: totalPages,
-            site_structure: {
-              template_groups: templateGroups,
+      const siteData = {
+        template_groups: templateGroups,
+        total_pages: totalPages,
+        active_theme: activeThemeName
+      };
+
+      try {
+        const rlCoreResponse = await axios.post(
+          `${RL_CORE_URL}/site-analysis/analyze`,
+          { site_data: siteData },
+          {
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Shop': shop,
+              'X-Platform': 'shopify',
+              'X-API-Key': shopRecord.api_token
+            },
+            timeout: 30000
+          }
+        );
+
+        if (rlCoreResponse.data.ok) {
+          console.log(`[Crawler] ✅ Data sent to RL Core successfully`);
+        } else {
+          console.warn(`[Crawler] ⚠️ RL Core rejected site data:`, rlCoreResponse.data);
+        }
+      } catch (rlCoreError) {
+        console.error(`[Crawler] ⚠️ Failed to send to RL Core:`, rlCoreError.message);
+        // Continue anyway - don't fail the crawl
+      }
+    } else {
+      console.log(`[Crawler] ⚠️ Skipping RL Core sync - no api_token (RabbitLoader not connected yet)`);
+    }
+
+    // ============================================================
+    // 8. Update local shop record (ALWAYS, regardless of RL Core)
+    // ============================================================
+    await ShopModel.updateOne(
+      { shop },
+      {
+        $set: {
+          setup_in_progress: false,
+          setup_failed: false,  // ✅ Mark as successful
+          last_crawl_at: new Date(),
+          last_crawl_pages: totalPages,
+          site_structure: {
+            template_groups: templateGroups,
+            total_pages: totalPages,
+            active_theme: activeThemeName,
+            last_crawled: new Date()
+          }
+        },
+        $push: {
+          history: {
+            event: 'site_crawl_completed',
+            timestamp: new Date(),
+            details: {
               total_pages: totalPages,
-              active_theme: activeThemeName,
-              last_crawled: new Date()
-            }
-          },
-          $push: {
-            history: {
-              event: 'site_crawl_completed',
-              timestamp: new Date(),
-              details: {
-                total_pages: totalPages,
-                templates: Object.keys(templateGroups).length,
-                duration_seconds: parseFloat(crawlTime)
-              }
+              templates: Object.keys(templateGroups).length,
+              duration_seconds: parseFloat(crawlTime),
+              rl_core_synced: !!shopRecord.api_token
             }
           }
         }
-      );
-    } else {
-      throw new Error('RL Core rejected site data');
-    }
+      }
+    );
 
     console.log(`[Crawler] 🎉 All done for ${shop}!`);
 
