@@ -189,7 +189,6 @@ async function crawlShopifyStore(shop, accessToken) {
                 id
                 handle
                 title
-                onlineStoreUrl
               }
             }
             pageInfo {
@@ -213,13 +212,13 @@ async function crawlShopifyStore(shop, accessToken) {
       const edges = response.data.collections.edges;
       edges.forEach(edge => {
         const collection = edge.node;
-        if (collection.onlineStoreUrl) {
+        if (collection.handle) {
           collections.push({
             id: collection.id,
             handle: collection.handle,
             title: collection.title,
             url: `/collections/${collection.handle}`,
-            full_url: collection.onlineStoreUrl
+            full_url: `https://${shop}/collections/${collection.handle}`
           });
         }
       });
