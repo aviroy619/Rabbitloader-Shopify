@@ -49,7 +49,15 @@ app.use('/webhooks/app/uninstalled', (req, res, next) => {
   });
 });
 
-app.use(bodyParser.json());
+// Handle empty/null bodies gracefully
+app.use(bodyParser.json({
+  strict: false,
+  verify: (req, res, buf, encoding) => {
+    if (buf.length === 0 || buf.toString().trim() === '' || buf.toString() === 'null') {
+      req.body = {};
+    }
+  }
+}));
 app.use(bodyParser.urlencoded({ extended: true }));
 app.use(cookieParser());
 app.use("/dashboard-static", express.static(path.join(__dirname, "public")));
