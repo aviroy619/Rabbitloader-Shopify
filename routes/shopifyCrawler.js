@@ -338,7 +338,7 @@ async function crawlShopifyStore(shop, accessToken) {
     const shopRecord = await ShopModel.findOne({ shop });
 
     if (shopRecord.api_token) {
-      console.log(`[Crawler] Sending data to RL Core...`);
+      console.log('[Crawler] Sending data to RL Core...');
       
       const siteData = {
         template_groups: templateGroups,
@@ -371,7 +371,7 @@ async function crawlShopifyStore(shop, accessToken) {
         // Continue anyway - don't fail the crawl
       }
     } else {
-      console.log(`[Crawler] ⚠️ Skipping RL Core sync - no api_token (RabbitLoader not connected yet)`);
+      console.log('[Crawler] ⚠️ Skipping RL Core sync - no api_token (RabbitLoader not connected yet)');
     }
 
     // ============================================================
