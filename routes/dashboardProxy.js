@@ -191,7 +191,63 @@ router.all('/js-defer*', async (req, res) => {
   req.path = req.path.replace('/js-defer', '/api/jsfiles');
   await proxyRequest(SERVICES.rlCore, req, res);
 });
+/* ========= SYNC ENDPOINT ========= */
 
+// Trigger sync endpoint - calls crawler
+router.post('/sync', async (req, res) => {
+  const { shop } = req.query;
+  
+  console.log(`[Sync] Trigger request for shop: ${shop}`);
+  
+  if (!shop) {
+    return res.status(400).json({
+      ok: false,
+      error: 'Shop parameter required'
+    });
+  }
+
+  try {
+    const ShopModel = require('../models/Shop');
+    const shopRecord = await ShopModel.findOne({ shop });
+    
+    if (!shopRecord) {
+      return res.status(404).json({
+        ok: false,
+        error: 'Shop not found'
+      });
+    }
+
+    if (!shopRecord.access_token) {
+      return res.status(403).json({
+        ok: false,
+        error: 'Shop not authenticated with Shopify'
+      });
+    }
+
+    // Trigger the crawler
+    console.log(`[Sync] Triggering crawler for ${shop}`);
+    const crawlerResponse = await axios.post(
+      `http://localhost:3000/crawler/start?shop=${shop}`,
+      {},
+      { timeout: 5000 }
+    );
+
+    res.json({
+      ok: true,
+      message: 'Sync triggered successfully',
+      shop,
+      crawler_response: crawlerResponse.data
+    });
+
+  } catch (error) {
+    console.error('[Sync] Error:', error.message);
+    res.status(500).json({
+      ok: false,
+      error: 'Failed to trigger sync',
+      message: error.message
+    });
+  }
+});
 /* ========= HEALTH ========= */
 
 router.get('/health', (req, res) => {
