@@ -1,5 +1,5 @@
 // routes/shopifyCrawler.js
-// Crawls Shopify store and syncs pages to rl-core
+// FIXED: Better error handling for missing tokens
 
 const express = require('express');
 const router = express.Router();
@@ -27,10 +27,29 @@ router.post('/start', async (req, res) => {
   try {
     const shopRecord = await ShopModel.findOne({ shop });
     
-    if (!shopRecord || !shopRecord.access_token) {
+    if (!shopRecord) {
       return res.status(404).json({
         ok: false,
-        error: 'Shop not found or not authenticated'
+        error: 'Shop not found in database',
+        action: 'install_app',
+        install_url: `https://shopify.rb8.in/shopify/auth?shop=${shop}`
+      });
+    }
+
+    // ✅ FIXED: Better error message for missing access_token
+    if (!shopRecord.access_token) {
+      console.error(`[Crawler] Missing access_token for ${shop}`);
+      return res.status(403).json({
+        ok: false,
+        error: 'Shop not authenticated with Shopify',
+        details: 'The shop needs to complete Shopify OAuth to grant API access',
+        action: 'reauth_required',
+        reauth_url: `https://shopify.rb8.in/shopify/auth?shop=${shop}`,
+        shop_status: {
+          has_shopify_token: false,
+          has_rl_token: !!shopRecord.api_token,
+          did: shopRecord.short_id || null
+        }
       });
     }
 
@@ -38,19 +57,28 @@ router.post('/start', async (req, res) => {
     res.json({
       ok: true,
       message: 'Site crawl started',
-      shop
+      shop,
+      estimated_time: '30-60 seconds'
     });
 
     // Run crawl asynchronously
     crawlShopifyStore(shop, shopRecord.access_token).catch(err => {
       console.error(`[Crawler] Error crawling ${shop}:`, err);
+      
+      // Mark shop for reauth if token expired
+      if (err.message === 'TOKEN_EXPIRED') {
+        ShopModel.updateOne({ shop }, { 
+          $set: { reauth_required: true }
+        }).catch(e => console.error('Failed to mark reauth:', e));
+      }
     });
 
   } catch (error) {
     console.error('[Crawler] Start error:', error);
     res.status(500).json({
       ok: false,
-      error: error.message
+      error: 'Internal server error',
+      message: error.message
     });
   }
 });
@@ -98,7 +126,7 @@ async function crawlShopifyStore(shop, accessToken) {
       const variables = cursor ? { cursor } : {};
       const response = await shopifyGraphQL(shop, query, variables);
       
-      // Handle token expiration
+      // ✅ Handle token expiration
       if (!response.ok && response.error === "TOKEN_EXPIRED") {
         console.error(`[Crawler] Token expired for ${shop}`);
         throw new Error('TOKEN_EXPIRED');
@@ -326,7 +354,7 @@ async function crawlShopifyStore(shop, accessToken) {
           'Content-Type': 'application/json',
           'X-Shop': shop,
           'X-Platform': 'shopify',
-          'X-API-Key': shopRecord.api_token
+          'X-API-Key': shopRecord.api_token || 'shopify-app'
         },
         timeout: 30000
       }
@@ -342,7 +370,13 @@ async function crawlShopifyStore(shop, accessToken) {
           $set: {
             setup_in_progress: false,
             last_crawl_at: new Date(),
-            last_crawl_pages: totalPages
+            last_crawl_pages: totalPages,
+            site_structure: {
+              template_groups: templateGroups,
+              total_pages: totalPages,
+              active_theme: activeThemeName,
+              last_crawled: new Date()
+            }
           },
           $push: {
             history: {
@@ -371,7 +405,8 @@ async function crawlShopifyStore(shop, accessToken) {
       {
         $set: {
           setup_in_progress: false,
-          setup_failed: true
+          setup_failed: true,
+          reauth_required: error.message === 'TOKEN_EXPIRED'
         },
         $push: {
           history: {
@@ -406,10 +441,13 @@ router.get('/status', async (req, res) => {
     res.json({
       ok: true,
       shop,
+      authenticated: !!shopRecord.access_token,
+      connected_to_rl: !!shopRecord.api_token,
       last_crawl_at: shopRecord.last_crawl_at,
       last_crawl_pages: shopRecord.last_crawl_pages,
       setup_in_progress: shopRecord.setup_in_progress,
-      setup_failed: shopRecord.setup_failed
+      setup_failed: shopRecord.setup_failed,
+      reauth_required: shopRecord.reauth_required || false
     });
 
   } catch (error) {
