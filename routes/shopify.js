@@ -268,6 +268,23 @@ router.get("/auth/callback", async (req, res) => {
       } catch (e) {
         console.error(`[AutoInject] ❌ Failed:`, e.message);
       }
+          }
+
+          // ✅ AUTO-START CRAWLER after OAuth
+    try {
+      console.log(`[Crawler] 🕷️ Triggering crawl for ${shop}...`);
+      const crawlResponse = await fetch(`${process.env.APP_URL}/crawler/start?shop=${encodeURIComponent(shop)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (crawlResponse.ok) {
+        console.log(`✅ Crawler started for ${shop}`);
+      } else {
+        console.warn(`⚠️ Crawler failed: ${crawlResponse.status}`);
+      }
+    } catch (crawlError) {
+      console.warn(`⚠️ Crawler error:`, crawlError.message);
     }
 
     // Redirect to app
