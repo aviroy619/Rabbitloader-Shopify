@@ -140,33 +140,35 @@ app.use('/crawler', shopifyCrawler);  // ✅ mounted cleanly
 
 
 // ====== Root Route (Embedded Dashboard) ======
-app.get("/", (req, res) => {
+app.get("/", async (req, res) => {
   const { shop, host, embedded, hmac, timestamp } = req.query;
 
   console.log(`Root route accessed:`, { shop: shop || 'none', embedded: embedded || 'none' });
 
-  // Shopify OAuth callback only (we must allow this)
-  const isOAuthCallback = shop && host && hmac;
-
-  // If coming back from OAuth and embedded missing, add it once
-  if (isOAuthCallback && embedded !== '1') {
-    console.log(`⚠️ OAuth return detected — fixing missing embedded param`);
-    const params = new URLSearchParams(req.query);
-    params.set("embedded", "1");
-    return res.redirect(`/?${params.toString()}`);
-  }
-
-  // If no shop param — send to install flow instead of error
+  // If no shop param – send to install flow
   if (!shop) {
-    console.log("⚠️ No shop param — redirecting to install");
+    console.log("⚠️ No shop param – redirecting to install");
     return res.redirect("/auth?step=start");
   }
 
-  // Normal embedded app load → redirect to dashboard page
+  // Check if shop already has access_token
+  try {
+    const ShopModel = require("./models/Shop");
+    const existingShop = await ShopModel.findOne({ shop });
+    
+    // If shop doesn't have access token, trigger OAuth
+    if (!existingShop || !existingShop.access_token) {
+      console.log(`🔐 Fresh install detected for ${shop} – triggering OAuth`);
+      return res.redirect(`/shopify/auth?shop=${encodeURIComponent(shop)}&host=${host}`);
+    }
+  } catch (err) {
+    console.error("Root route error:", err);
+  }
+
+  // Already authenticated – go to dashboard
   const params = new URLSearchParams(req.query);
   return res.redirect(`/dashboard?${params.toString()}`);
 });
-
 
 // ====== Health Check ======
 app.get('/health', (req, res) => {

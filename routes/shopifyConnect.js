@@ -241,7 +241,28 @@ router.get("/rl-connect", async (req, res) => {
     });
   }
 });
+// Get shop status (for checking RL connection)
+router.get("/api/shop-status", async (req, res) => {
+  const { shop } = req.query;
+  if (!shop) {
+    return res.status(400).json({ error: "Shop parameter required" });
+  }
 
+  try {
+    const shopRecord = await ShopModel.findOne({ shop });
+    if (!shopRecord) {
+      return res.json({ api_token: null, short_id: null });
+    }
+
+    res.json({
+      api_token: shopRecord.api_token,
+      short_id: shopRecord.short_id,
+      connected_at: shopRecord.connected_at
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 // Disconnect from RabbitLoader
 router.get("/rl-disconnect", async (req, res) => {
   const { shop } = req.query;
