@@ -189,9 +189,11 @@ router.get("/rl-callback", async (req, res) => {
       console.warn(`[RL] ⚠️ No Shopify token yet, skipping injection`);
     }
 
-    // Redirect to dashboard
-    const redirectUrl = `/?shop=${shop}&host=${host}&embedded=1&connected=1`;
-    res.redirect(redirectUrl);
+   // ✅ Redirect back to Shopify Admin
+    const shopName = shop.split('.')[0]; // Extract shop name
+    const shopifyAdminUrl = `https://admin.shopify.com/store/${shopName}/apps/rabbitloader-dev`;
+    console.log(`[RL] Redirecting to Shopify Admin:`, shopifyAdminUrl);
+    res.redirect(shopifyAdminUrl);
 
   } catch (error) {
     console.error("[RL] Callback error:", error);
@@ -355,5 +357,42 @@ router.get("/debug/:shop", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// ====== SAVE RL TOKEN ======
+router.post("/save-token", async (req, res) => {
+  const { shop, did, api_token } = req.body;
+  
+  console.log(`[RL] Save token request for shop: ${shop}`);
+  
+  if (!shop || !did) {
+    return res.status(400).json({ ok: false, error: "Shop and did are required" });
+  }
 
+  try {
+    const shopRecord = await ShopModel.findOneAndUpdate(
+      { shop },
+      {
+        $set: {
+          api_token: api_token,
+          short_id: did,
+          connected_at: new Date(),
+          needs_setup: false
+        }
+      },
+      { upsert: true, new: true }
+    );
+
+    console.log(`[RL] ✅ Token saved for ${shop}:`, { has_api_token: !!shopRecord.api_token, did: shopRecord.short_id });
+
+    res.json({ 
+      ok: true, 
+      message: "Token saved successfully",
+      shop: shopRecord.shop,
+      connected: true
+    });
+
+  } catch (error) {
+    console.error(`[RL] ❌ Error saving token:`, error);
+    res.status(500).json({ ok: false, error: error.message });
+  }
+});
 module.exports = router;

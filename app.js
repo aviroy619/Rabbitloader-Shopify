@@ -183,38 +183,37 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ====== Debug Route ======
-app.get('/debug/shop', async (req, res) => {
-  const { shop } = req.query;
-  if (!shop) {
-    return res.status(400).json({ error: "Missing shop parameter" });
-  }
-
+// ====== DEBUG ROUTE ======
+app.get("/rl/debug/:shop", async (req, res) => {
+  const { shop } = req.params;
+  
   try {
     const ShopModel = require("./models/Shop");
-    const shopData = await ShopModel.findOne({ shop });
+    const shopDomain = shop.endsWith(".myshopify.com") ? shop : `${shop}.myshopify.com`;
+    const shopRecord = await ShopModel.findOne({ shop: shopDomain });
     
-    if (!shopData) {
-      return res.json({ found: false, shop });
+    if (!shopRecord) {
+      return res.json({ 
+        found: false, 
+        shop: shopDomain,
+        api_token: null,
+        short_id: null
+      });
     }
-
+    
     res.json({
       found: true,
-      shop: shopData.shop,
-      has_access_token: !!shopData.access_token,
-      has_api_token: !!shopData.api_token,
-      short_id: shopData.short_id,
-      connected_at: shopData.connected_at,
-      script_injected: shopData.script_injected,
-      critical_css_injected: shopData.critical_css_injected,
-      needs_setup: shopData.needs_setup,
-      reauth_required: shopData.reauth_required
+      shop: shopRecord.shop,
+      has_access_token: !!shopRecord.access_token,
+      api_token: shopRecord.api_token,
+      short_id: shopRecord.short_id,
+      connected_at: shopRecord.connected_at
     });
-  } catch (err) {
-    console.error("Debug error:", err);
-    res.status(500).json({ error: "Database error" });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
+
 
 // ====== Error Handling ======
 app.use((err, req, res, next) => {
