@@ -51,7 +51,33 @@ async function fetchReportOverview(shop, jwtToken) {
     return null;
   }
 }
+// Fetch fresh data
+    const reportData = await fetchReportOverview(shop, jwt);
+    if (!reportData) {
+      console.log(`[RL Report] ⚠️ Failed to fetch report data`);
+      return null;
+    }
 
+    console.log(`[RL Report] 📊 Report data:`, JSON.stringify(reportData, null, 2)); // ADD THIS
+
+    // Extract subscription info
+    const subscription = {
+      plan_name: reportData.plan_details?.title,
+      pay_type: reportData.plan_details?.pay_type,
+      fetched_at: new Date()
+    };
+
+    console.log(`[RL Report] 💾 Subscription:`, subscription); // ADD THIS
+
+    // Extract optimization status
+    const optimization_status = {
+      avg_score: reportData.speed_score?.avg_score,
+      optimized_url_count: reportData.speed_score?.optimized_url_count,
+      fetched_at: new Date()
+    };
+
+    console.log(`[RL Report] 📈 Optimization:`, optimization_status); // ADD THIS
+    
 /**
  * Check if cache is still valid (< 24 hours old)
  */
