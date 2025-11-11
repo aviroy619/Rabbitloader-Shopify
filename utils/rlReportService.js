@@ -6,6 +6,13 @@ const Shop = require('../models/Shop');
  */
 function extractJWT(encodedToken) {
   try {
+    // Check if it's already a JWT (starts with "eyJ")
+    if (encodedToken.startsWith('eyJ')) {
+      console.log('[RL Report] api_token is already a JWT');
+      return encodedToken;
+    }
+
+    // Otherwise, try to decode as base64
     const decoded = JSON.parse(Buffer.from(encodedToken, 'base64').toString());
     return decoded.api_token;
   } catch (error) {
