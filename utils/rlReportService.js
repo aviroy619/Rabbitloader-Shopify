@@ -1,0 +1,107 @@
+const axios = require('axios');
+const Shop = require('../models/Shop');
+
+function extractJWT(encodedToken) {
+  try {
+    if (encodedToken.startsWith('eyJ')) {
+      console.log('[RL Report] api_token is already a JWT');
+      return encodedToken;
+    }
+    const decoded = JSON.parse(Buffer.from(encodedToken, 'base64').toString());
+    return decoded.api_token;
+  } catch (error) {
+    console.error('[RL Report] Failed to extract JWT:', error.message);
+    return null;
+  }
+}
+
+async function fetchReportOverview(shop, jwtToken) {
+  try {
+    console.log(`[RL Report] Fetching overview for: ${shop}`);
+    const response = await axios.get(`https://api-v1.rabbitloader.com/api/v1/report/overview`, {
+      params: {
+        domain: shop,
+        start_date: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        end_date: new Date().toISOString().split('T')[0]
+      },
+      headers: {
+        'Authorization': `Bearer ${jwtToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    console.log(`[RL Report] ✅ Got report for ${shop}`);
+    return response.data.data;
+  } catch (error) {
+    console.error(`[RL Report] ❌ Failed to fetch:`, error.message);
+    return null;
+  }
+}
+
+function isCacheValid(lastFetch) {
+  if (!lastFetch) return false;
+  const hoursPassed = (Date.now() - new Date(lastFetch).getTime()) / (1000 * 60 * 60);
+  return hoursPassed < 24;
+}
+
+async function syncReportData(shop) {
+  try {
+    console.log(`[RL Report] Syncing data for shop: ${shop}`);
+    
+    const shopDoc = await Shop.findOne({ shop });
+    if (!shopDoc || !shopDoc.api_token) {
+      console.log(`[RL Report] ⚠️ Shop not found or no api_token`);
+      return null;
+    }
+
+    if (isCacheValid(shopDoc.optimization_status?.fetched_at)) {
+      console.log(`[RL Report] 💾 Using cached data (< 24 hours old)`);
+      return { 
+        subscription: shopDoc.subscription, 
+        optimization_status: shopDoc.optimization_status 
+      };
+    }
+
+    const jwt = extractJWT(shopDoc.api_token);
+    if (!jwt) {
+      console.log(`[RL Report] ⚠️ Could not extract JWT`);
+      return null;
+    }
+
+    const reportData = await fetchReportOverview(shop, jwt);
+    if (!reportData) {
+      console.log(`[RL Report] ⚠️ Failed to fetch report data`);
+      return null;
+    }
+
+    console.log(`[RL Report] 📊 Plan:`, reportData.plan_details?.title);
+    console.log(`[RL Report] 📈 Score:`, reportData.speed_score?.avg_score);
+
+    const subscription = {
+      plan_name: reportData.plan_details?.title,
+      pay_type: reportData.plan_details?.pay_type,
+      fetched_at: new Date()
+    };
+
+    const optimization_status = {
+      avg_score: reportData.speed_score?.avg_score,
+      optimized_url_count: reportData.speed_score?.optimized_url_count,
+      fetched_at: new Date()
+    };
+
+    shopDoc.subscription = subscription;
+    shopDoc.optimization_status = optimization_status;
+    const saved = await shopDoc.save();
+
+    console.log(`[RL Report] ✅ Synced data for ${shop}`);
+    console.log(`[RL Report] 💾 Saved:`, JSON.stringify({ subscription, optimization_status }, null, 2));
+
+    return { subscription, optimization_status };
+
+  } catch (error) {
+    console.error(`[RL Report] ❌ Sync error:`, error.message);
+    console.error(`[RL Report] ❌ Stack:`, error.stack);
+    return null;
+  }
+}
+
+module.exports = { syncReportData, fetchReportOverview, extractJWT, isCacheValid };
