@@ -3,6 +3,7 @@ const router = express.Router();
 const jwt = require("jsonwebtoken");
 const ShopModel = require("../models/Shop");
 const { shopifyRequest } = require("../utils/shopifyApi");
+const { syncReportData } = require("../utils/rlReportService");
 
 // Helper function to inject defer script
 async function injectDeferScript(shop, did, accessToken) {
@@ -382,6 +383,11 @@ router.post("/save-token", async (req, res) => {
     );
 
     console.log(`[RL] ✅ Token saved for ${shop}:`, { has_api_token: !!shopRecord.api_token, did: shopRecord.short_id });
+
+    // 🔄 Sync subscription & optimization data in background (don't wait)
+    syncReportData(shop).catch(err => {
+      console.error(`[RL] ⚠️ Background sync failed:`, err.message);
+    });
 
     res.json({ 
       ok: true, 
