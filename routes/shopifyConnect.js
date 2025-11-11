@@ -109,23 +109,35 @@ async function injectDeferScript(shop, did, accessToken) {
 
 // ====== RL CALLBACK ======
 router.get("/rl-callback", async (req, res) => {
+  console.log("[RL] ========================================");
+  console.log("[RL] CALLBACK RECEIVED");
+  console.log("[RL] ========================================");
+  console.log("[RL] Full URL:", req.url);
+  console.log("[RL] Query params:", JSON.stringify(req.query, null, 2));
+  console.log("[RL] Referer:", req.get('referer'));
+  console.log("[RL] User-Agent:", req.get('user-agent'));
+  
   try {
     const { shop, host, 'rl-token': rlToken } = req.query;
-    console.log("[RL] Callback received:", { hasRlToken: !!rlToken, shop });
+    console.log("[RL] Extracted params:", { hasRlToken: !!rlToken, shop, host });
 
     if (!shop || !rlToken) {
-      console.log("[RL] Missing shop or rl-token");
-      return res.status(400).send("Invalid callback parameters");
+      console.log("[RL] ❌ Missing shop or rl-token");
+      return res.status(400).send("Invalid callback parameters: missing shop or rl-token");
     }
 
     // Decode token
+    console.log("[RL] Decoding rl-token...");
     const decoded = JSON.parse(Buffer.from(rlToken, 'base64').toString('utf8'));
     console.log("[RL] Decoded token:", { 
       hasDid: !!decoded.did, 
-      hasApiToken: !!decoded.api_token 
+      hasApiToken: !!decoded.api_token,
+      did: decoded.did,
+      account_id: decoded.account_id 
     });
 
     // Save tokens to MongoDB
+    console.log("[RL] Saving to MongoDB...");
     const shopData = await ShopModel.findOneAndUpdate(
       { shop },
       { 
@@ -147,6 +159,7 @@ router.get("/rl-callback", async (req, res) => {
 
     // Sync to RL Core
     try {
+      console.log("[RL] Syncing to RL Core...");
       const { syncShopToCore } = require('../utils/rlCoreApi');
       await syncShopToCore({
         shop,
@@ -163,6 +176,7 @@ router.get("/rl-callback", async (req, res) => {
     // Inject scripts if we have BOTH tokens
     if (shopData.access_token) {
       try {
+        console.log("[RL] Attempting script injection...");
         const injectResult = await injectDeferScript(
           shop, 
           decoded.did, 
@@ -190,11 +204,14 @@ router.get("/rl-callback", async (req, res) => {
     }
 
     // Redirect to dashboard
-    const redirectUrl = `/?shop=${shop}&host=${host}&embedded=1&connected=1`;
+    const redirectUrl = `/?shop=${shop}&host=${host || ''}&embedded=1&connected=1`;
+    console.log("[RL] Redirecting to:", redirectUrl);
+    console.log("[RL] ========================================");
     res.redirect(redirectUrl);
 
   } catch (error) {
-    console.error("[RL] Callback error:", error);
+    console.error("[RL] ❌ Callback error:", error);
+    console.error("[RL] Stack:", error.stack);
     res.status(500).send("Callback failed: " + error.message);
   }
 });
@@ -203,6 +220,7 @@ router.get("/rl-callback", async (req, res) => {
 router.get("/rl-connect", async (req, res) => {
   const { shop, host } = req.query;
   
+  console.log(`[RL] ========================================`);
   console.log(`[RL] Connect request for: ${shop}`);
   
   if (!shop) {
@@ -229,7 +247,9 @@ router.get("/rl-connect", async (req, res) => {
     connectUrl.searchParams.set('plugin_v', '1.0.0');
 
     const finalUrl = connectUrl.toString();
-    console.log(`[RL] Redirecting to RabbitLoader: ${finalUrl}`);
+    console.log(`[RL] Redirect URL that will be sent: ${redirectUrl.toString()}`);
+    console.log(`[RL] Full RabbitLoader URL: ${finalUrl}`);
+    console.log("[RL] ========================================");
 
     res.redirect(finalUrl);
     
@@ -241,28 +261,7 @@ router.get("/rl-connect", async (req, res) => {
     });
   }
 });
-// Get shop status (for checking RL connection)
-router.get("/api/shop-status", async (req, res) => {
-  const { shop } = req.query;
-  if (!shop) {
-    return res.status(400).json({ error: "Shop parameter required" });
-  }
 
-  try {
-    const shopRecord = await ShopModel.findOne({ shop });
-    if (!shopRecord) {
-      return res.json({ api_token: null, short_id: null });
-    }
-
-    res.json({
-      api_token: shopRecord.api_token,
-      short_id: shopRecord.short_id,
-      connected_at: shopRecord.connected_at
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
 // Disconnect from RabbitLoader
 router.get("/rl-disconnect", async (req, res) => {
   const { shop } = req.query;
