@@ -139,7 +139,8 @@ app.use("/dashboard", dashboardRoutes);
 app.use("/api/dashboard", dashboardProxyRoutes);
 app.use("/api/performance", performanceRoutes);
 app.use('/crawler', shopifyCrawler);  // ✅ mounted cleanly
-app.use('/rl', rlReportRoutes);
+app.use('/api/rl', rlReportRoutes);
+
 
 
 
