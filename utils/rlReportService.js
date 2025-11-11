@@ -102,9 +102,8 @@ async function syncReportData(shop) {
 
     shopDoc.subscription = subscription;
     shopDoc.optimization_status = optimization_status;
-    await shopDoc.save();
-
-    console.log(`[RL Report] ✅ Synced data for ${shop}`);
+    const saved = await shopDoc.save();
+    console.log(`[RL Report] ✅ Synced data for ${shop}`, saved.subscription, saved.optimization_status);
     return { subscription, optimization_status };
 
   } catch (error) {
