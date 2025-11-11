@@ -128,6 +128,8 @@ const dashboardRoutes = require("./routes/dashboard");
 const dashboardProxyRoutes = require("./routes/dashboardProxy");
 const performanceRoutes = require("./routes/performance");
 const shopifyCrawler = require('./routes/shopifyCrawler');  // ✅ only once
+const rlReportRoutes = require('./routes/rlReport');
+
 //
 // ====== Mount Routes ======
 app.use("/shopify", shopifyRoutes);
@@ -137,6 +139,8 @@ app.use("/dashboard", dashboardRoutes);
 app.use("/api/dashboard", dashboardProxyRoutes);
 app.use("/api/performance", performanceRoutes);
 app.use('/crawler', shopifyCrawler);  // ✅ mounted cleanly
+app.use('/rl', rlReportRoutes);
+
 
 
 // ====== Root Route (Embedded Dashboard) ======
