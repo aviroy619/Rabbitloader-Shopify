@@ -1,9 +1,6 @@
 const axios = require('axios');
 const Shop = require('../models/Shop');
 
-/**
- * Extract JWT from base64-encoded api_token
- */
 function extractJWT(encodedToken) {
   try {
     if (encodedToken.startsWith('eyJ')) {
@@ -18,9 +15,6 @@ function extractJWT(encodedToken) {
   }
 }
 
-/**
- * Fetch RabbitLoader Report Overview
- */
 async function fetchReportOverview(shop, jwtToken) {
   try {
     console.log(`[RL Report] Fetching overview for: ${shop}`);
@@ -43,18 +37,12 @@ async function fetchReportOverview(shop, jwtToken) {
   }
 }
 
-/**
- * Check if cache is still valid (< 24 hours old)
- */
 function isCacheValid(lastFetch) {
   if (!lastFetch) return false;
   const hoursPassed = (Date.now() - new Date(lastFetch).getTime()) / (1000 * 60 * 60);
   return hoursPassed < 24;
 }
 
-/**
- * Sync subscription & optimization data from RabbitLoader
- */
 async function syncReportData(shop) {
   try {
     console.log(`[RL Report] Syncing data for shop: ${shop}`);
@@ -67,9 +55,9 @@ async function syncReportData(shop) {
 
     if (isCacheValid(shopDoc.optimization_status?.fetched_at)) {
       console.log(`[RL Report] 💾 Using cached data (< 24 hours old)`);
-      return {
-        subscription: shopDoc.subscription,
-        optimization_status: shopDoc.optimization_status
+      return { 
+        subscription: shopDoc.subscription, 
+        optimization_status: shopDoc.optimization_status 
       };
     }
 
@@ -103,18 +91,17 @@ async function syncReportData(shop) {
     shopDoc.subscription = subscription;
     shopDoc.optimization_status = optimization_status;
     const saved = await shopDoc.save();
-    console.log(`[RL Report] ✅ Synced data for ${shop}`, saved.subscription, saved.optimization_status);
+
+    console.log(`[RL Report] ✅ Synced data for ${shop}`);
+    console.log(`[RL Report] 💾 Saved:`, JSON.stringify({ subscription, optimization_status }, null, 2));
+
     return { subscription, optimization_status };
 
   } catch (error) {
     console.error(`[RL Report] ❌ Sync error:`, error.message);
+    console.error(`[RL Report] ❌ Stack:`, error.stack);
     return null;
   }
 }
 
-module.exports = {
-  syncReportData,
-  fetchReportOverview,
-  extractJWT,
-  isCacheValid
-};
+module.exports = { syncReportData, fetchReportOverview, extractJWT, isCacheValid };
