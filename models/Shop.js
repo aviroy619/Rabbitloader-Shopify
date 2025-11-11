@@ -42,6 +42,18 @@ const ShopSchema = new mongoose.Schema({
   short_id: String,
   api_token: String,
   connected_at: Date,
+  // === SUBSCRIPTION & OPTIMIZATION STATUS ===
+  subscription: {
+    plan_name: String,
+    pay_type: String,
+    fetched_at: { type: Date }
+  },
+
+  optimization_status: {
+    avg_score: Number,
+    optimized_url_count: Number,
+    fetched_at: { type: Date }
+  },
   history: Array,
   script_injected: { type: Boolean, default: false },
   script_injection_attempted: { type: Boolean, default: false },
